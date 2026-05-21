@@ -1,5 +1,17 @@
 """Transcreve a live e gera um TXT com timestamps."""
+import os
 from pathlib import Path
+
+# Fix Windows: adiciona DLLs do CUDA ao path
+if os.name == "nt":
+    venv_nvidia = Path(__file__).parent.parent / ".venv" / "Lib" / "site-packages" / "nvidia"
+    for sub in ["cublas", "cudnn"]:
+        bin_path = venv_nvidia / sub / "bin"
+        if bin_path.exists():
+            os.add_dll_directory(str(bin_path))
+        else:
+            print(f"⚠ Path não encontrado: {bin_path}")
+
 from datetime import timedelta
 from faster_whisper import WhisperModel
 
@@ -10,7 +22,7 @@ OUTPUT.parent.mkdir(parents=True, exist_ok=True)
 # medium = boa qualidade em pt-BR, roda em CPU sem morrer (~3GB RAM)
 # Se tem GPU NVIDIA: troca pra "large-v3" + device="cuda" + compute_type="float16"
 print("Carregando modelo...")
-model = WhisperModel("large-v3", device="cuda", compute_type="float16")
+model = WhisperModel("medium", device="cuda", compute_type="int8_float16")
 
 print(f"Transcrevendo {INPUT.name}... (vai demorar)")
 segments, info = model.transcribe(
