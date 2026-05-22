@@ -118,9 +118,10 @@ Está em `prompts/segmentacao.md`. Objetivo: a LLM recebe a transcrição comple
 - ✅ Scripts aceitam argumento de arquivo (multi-live sem editar código)
 - ✅ Identidade visual mínima pronta
 - ✅ 1º vídeo publicado: Arthur do Val sobre Penélope (19/05/2026)
-- ✅ 4 vídeos prontos do Renan Santos / Poder360 (21/05/2026) — aguardando upload
+- ✅ 4 vídeos prontos do Renan Santos / Poder360 (21/05/2026)
 - ✅ Conta YouTube verificada
-- ⏳ Thumbnail do vídeo 01 do Renan (Flávio/STF/rachadinha) — em produção no Canva
+- ✅ Vídeo 01 do Renan (Flávio/STF/rachadinha) — agendado para 22/05/2026 às 18h
+- ⏳ Thumbnails + agendamento dos vídeos 02, 03 e 04 do Renan — 1 por dia
 
 ## Roadmap pós-MVP
 
