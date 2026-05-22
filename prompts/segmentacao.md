@@ -26,6 +26,13 @@ Identifique 2 a 4 blocos temáticos CONTÍNUOS da live (não compilação de tre
 4. **Fim natural**: termina com conclusão de raciocínio, frase de impacto ou pausa clara. NUNCA cortar antes de uma conclusão.
 5. **Autossuficiência**: o espectador entende o corte sem ter visto o resto da live.
 6. **Gancho**: tem pelo menos um momento forte (declaração polêmica, dado impactante, frase de efeito, embate) que pode virar thumbnail/título.
+7. **Duração contextual**: ajuste a duração-alvo conforme o tipo de conteúdo:
+   - Comentário de notícia/reação a fato do dia: 8-12 minutos
+   - Entrevista analítica/podcast/exposição de tese: 10-14 minutos
+   - Eventos públicos/discursos de figuras políticas: 6-10 minutos
+   
+   Se o conteúdo não permitir blocos dessa duração com coesão, prefira
+   MENOS blocos coesos a MAIS blocos curtos fragmentados.
 
 ## REGRAS RÍGIDAS
 

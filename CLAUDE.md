@@ -4,7 +4,7 @@
 
 ## O projeto
 
-Canal de YouTube de cortes de lives, debates e eventos do **Partido Missão (legenda 14)**, partido brasileiro de direita liberal fundado em 2025, ligado ao MBL. O canal pega lives longas (1-2h) das principais figuras do partido (Renan Santos, Kim Kataguiri, Arthur do Val, Guto Zacarias, Amanda Vettorazzo) e gera **2-4 vídeos longos (10-22min) por live**, cada um focado em um tema específico, otimizados para monetização no YouTube Partner Program.
+Canal de YouTube de cortes de lives, entrevistas, debates e eventos do **Partido Missão (legenda 14)**, partido brasileiro de direita liberal fundado em 2025, ligado ao MBL. O canal pega vídeos longos (lives de 1-2h ou entrevistas de 30-60min) das principais figuras do partido (Renan Santos, Kim Kataguiri, Arthur do Val, Guto Zacarias, Amanda Vettorazzo) e gera **2-4 vídeos por fonte**, cada um focado em um tema específico, otimizados para monetização no YouTube Partner Program. Para lives longas o alvo é 10-22min por corte; para entrevistas curtas os cortes ficam menores (4-6min) — ambos os formatos são válidos.
 
 **Nome do canal:** Missão em Cortes  
 **Handle proposto:** @missaoemcortes
@@ -31,12 +31,13 @@ Canal de YouTube de cortes de lives, debates e eventos do **Partido Missão (leg
 
 ```
 missao-em-cortes/
-├── inputs/                          # Lives baixadas (mp4)
-│   └── live_teste.mp4
+├── inputs/                          # Vídeos baixados (mp4)
+│   ├── live_teste.mp4
+│   └── renan_entrevista.mp4
 ├── outputs/                          # Tudo gerado pelo pipeline
-│   ├── live_teste_transcricao.txt
-│   ├── live_teste_blocos.json
-│   ├── cortes/                       # corte_NN_<slug>.mp4 (com blur aplicado)
+│   ├── <stem>_transcricao.txt        # ex: renan_entrevista_transcricao.txt
+│   ├── <stem>_blocos.json            # ex: renan_entrevista_blocos.json
+│   ├── cortes/<stem>/                # subpasta por vídeo — evita colisão entre lives
 │   ├── cards/                        # card_NN.png e card_NN.mp4
 │   └── finalizados/                  # video_NN_<slug>.mp4 (intro+card+corte+outro)
 ├── assets/
@@ -61,12 +62,14 @@ missao-em-cortes/
 
 | # | Etapa | Script / Comando | Tempo aprox. | Custo |
 |---|---|---|---|---|
-| 1 | Download da live | `yt-dlp -f "136+140" -o "inputs/live_teste.mp4" URL` | 1-3min | grátis |
-| 2 | Transcrição | `uv run py scripts/02_transcribe.py` | 8-15min (GTX 1650) | grátis (local) |
-| 3 | Segmentação via LLM | `uv run py scripts/03_segmentar.py` | 30-90s | ~$0.20 |
-| 4 | Cortes + blur | `uv run py scripts/04_cortar.py` | 5-10min | grátis |
-| 5 | Cards de contexto | `uv run py scripts/05_cards.py` | <1min | grátis |
-| 6 | Montagem final | `uv run py scripts/06_montar.py` | 10-15min | grátis |
+| 1 | Download | `yt-dlp -f "299+140" -o "inputs/<stem>.mp4" URL` | 1-3min | grátis |
+| 2 | Transcrição | `uv run py scripts/02_transcribe.py inputs/<stem>.mp4` | 8-15min (GTX 1650) | grátis (local) |
+| 3 | Segmentação via LLM | `uv run py scripts/03_segmentar.py outputs/<stem>_transcricao.txt` | 30-90s | ~$0.20 |
+| 4 | Cortes | `uv run py scripts/04_cortar.py outputs/<stem>_blocos.json` | 5-10min | grátis |
+| 5 | Cards de contexto | `uv run py scripts/05_cards.py outputs/<stem>_blocos.json` | <1min | grátis |
+| 6 | Montagem final | `uv run py scripts/06_montar.py outputs/<stem>_blocos.json` | 10-15min | grátis |
+
+Flags opcionais no step 4: `--blur` aplica blur nos overlays via ffmpeg (padrão: sem blur — tratar no CapCut com zoom).
 
 **Total por live:** ~30-45min de processamento, ~$0.20 de API.
 
@@ -90,8 +93,9 @@ Cada parte contribui pro "valor agregado" exigido pelo YouTube Partner Program (
 
 ## Tratamento de overlays da live original
 
-A live original tem overlays nos cantos (contador de membros, valete.plus, QR code) que ficam desatualizados após o evento. Aplicamos **blur localizado** via ffmpeg em vez de tarja preta:
+Overlays desatualizados (contador de membros, valete.plus, QR code) têm duas abordagens:
 
+**Opção A — Blur via ffmpeg** (lives MBL com overlays mapeados, ex: Arthur do Val): rodar `04_cortar.py` com `--blur`. Coordenadas pra 1280x720 Arthur do Val:
 ```
 [0:v]split=3[base][a1][a2];
 [a1]crop=247:130:1033:20,boxblur=20:1[b1];
@@ -100,7 +104,9 @@ A live original tem overlays nos cantos (contador de membros, valete.plus, QR co
 [tmp][b2]overlay=1080:555[outv]
 ```
 
-Coordenadas pra resolução **1280x720**. Logo do MBL (canto superior esquerdo) é preservado intencionalmente como crédito ético à fonte. **Coordenadas variam conforme a fonte da live** — Arthur do Val (estúdio MBL), Kim Kataguiri (canal próprio), Renan Santos, eventos do partido. Cada um pode demandar mapping diferente.
+**Opção B — Zoom no CapCut** (entrevistas externas ou quando as coordenadas não estão mapeadas): editar o corte no CapCut após o step 4, salvar de volta na mesma subpasta com o mesmo nome, depois rodar steps 5 e 6.
+
+Logo do MBL (canto superior esquerdo) é preservado intencionalmente como crédito ético à fonte. **Coordenadas variam conforme a fonte** — cada canal pode demandar mapping diferente.
 
 ## Prompt de segmentação (resumo)
 
@@ -109,12 +115,12 @@ Está em `prompts/segmentacao.md`. Objetivo: a LLM recebe a transcrição comple
 ## Estado atual (Maio 2026)
 
 - ✅ Pipeline MVP funcionando ponta-a-ponta
-- ✅ 3 cortes gerados a partir de live do Arthur do Val (19/05/2026)
+- ✅ Scripts aceitam argumento de arquivo (multi-live sem editar código)
 - ✅ Identidade visual mínima pronta
-- ✅ Blur de overlays aplicado
-- ⏳ Thumbnail final do primeiro vídeo (Canva)
-- ⏳ Conta YouTube verificada por SMS (necessário pra >15min upload)
-- ⏳ Primeiro vídeo no ar (não listado primeiro, depois público)
+- ✅ 1º vídeo publicado: Arthur do Val sobre Penélope (19/05/2026)
+- ✅ 4 vídeos prontos do Renan Santos / Poder360 (21/05/2026) — aguardando upload
+- ✅ Conta YouTube verificada
+- ⏳ Thumbnail do vídeo 01 do Renan (Flávio/STF/rachadinha) — em produção no Canva
 
 ## Roadmap pós-MVP
 
@@ -160,6 +166,12 @@ Está em `prompts/segmentacao.md`. Objetivo: a LLM recebe a transcrição comple
 | Canva Pro (opcional) | $13 |
 | YouTube/domínio | grátis (por enquanto) |
 | **Total mínimo** | **~$5/mês** |
+
+## Notas técnicas (Windows)
+
+- Todos os scripts têm `sys.stdout.reconfigure(encoding='utf-8')` no topo — necessário pra emojis e caracteres especiais não quebrarem no terminal Windows (cp1252)
+- Permissões do Claude Code ficam em `.claude/settings.local.json` (não commitado)
+- Formato de download recomendado: `-f "299+140"` (1080p60 mp4 + m4a 129k)
 
 ## Notas finais
 
