@@ -1,5 +1,7 @@
 """Lê a transcrição, manda pro Claude e gera JSON com blocos temáticos."""
 import json
+import sys
+sys.stdout.reconfigure(encoding='utf-8')
 from pathlib import Path
 from anthropic import Anthropic
 from dotenv import load_dotenv
@@ -8,8 +10,11 @@ load_dotenv()
 
 ROOT = Path(__file__).parent.parent
 PROMPT = ROOT / "prompts" / "segmentacao.md"
-INPUT = ROOT / "outputs" / "live_teste_transcricao.txt"
-OUTPUT = ROOT / "outputs" / "live_teste_blocos.json"
+
+input_arg = sys.argv[1] if len(sys.argv) > 1 else str(ROOT / "outputs" / "live_teste_transcricao.txt")
+INPUT = Path(input_arg)
+stem = INPUT.stem.replace("_transcricao", "")  # ex: "renan_entrevista"
+OUTPUT = ROOT / "outputs" / f"{stem}_blocos.json"
 
 prompt_sistema = PROMPT.read_text(encoding="utf-8")
 transcricao = INPUT.read_text(encoding="utf-8")
@@ -62,15 +67,15 @@ except json.JSONDecodeError as e:
 
 # Validação mínima
 assert "blocos" in data, "Resposta sem chave 'blocos'"
-print(f"\n✓ {len(data['blocos'])} blocos identificados:\n")
+print(f"\nOK {len(data['blocos'])} blocos identificados:\n")
 
 for b in data["blocos"]:
     for campo in ["timestamp_inicio", "timestamp_fim", "tema", "titulo_sugerido", "score_potencial"]:
         assert campo in b, f"Bloco {b.get('id')} sem campo '{campo}'"
-    print(f"  [{b['timestamp_inicio']} → {b['timestamp_fim']}] "
-          f"({b['duracao_minutos']:.1f}min · score {b['score_potencial']}/10)")
+    print(f"  [{b['timestamp_inicio']} -> {b['timestamp_fim']}] "
+          f"({b['duracao_minutos']:.1f}min - score {b['score_potencial']}/10)")
     print(f"    {b['tema']}")
-    print(f"    → {b['titulo_sugerido']}\n")
+    print(f"    -> {b['titulo_sugerido']}\n")
 
 OUTPUT.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-print(f"✓ Salvo em {OUTPUT}")
+print(f"OK Salvo em {OUTPUT}")

@@ -1,11 +1,15 @@
 """Gera card de contexto (PNG + MP4 5s) pra cada bloco."""
+import sys
+sys.stdout.reconfigure(encoding='utf-8')
 from pathlib import Path
 import json
 import subprocess
 from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).parent.parent
-BLOCOS_JSON = ROOT / "outputs" / "live_teste_blocos.json"
+
+input_arg = sys.argv[1] if len(sys.argv) > 1 else str(ROOT / "outputs" / "live_teste_blocos.json")
+BLOCOS_JSON = Path(input_arg)
 OUT_DIR = ROOT / "outputs" / "cards"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -28,8 +32,8 @@ AMARELO = (245, 197, 24)
 BRANCO = (255, 255, 255)
 
 # Metadados da live (parametriza por arquivo se quiser depois)
-DATA_LIVE = "19/05/2026"  # AJUSTAR conforme a live real
-EVENTO = "LIVE MBL"
+DATA_LIVE = "21/05/2026"
+EVENTO = "ENTREVISTA Poder360"
 
 # Mesma resolução dos cortes (importante pro concat depois)
 LARGURA, ALTURA = 1280, 720
@@ -90,7 +94,7 @@ def gerar_card(bloco, output_png):
     )
     
     img.save(output_png)
-    print(f"  ✓ PNG: {output_png.name}")
+    print(f"  OK PNG: {output_png.name}")
 
 def png_para_mp4(png_path, mp4_path, duracao=5):
     """Converte PNG estático em MP4 com áudio silencioso (pro concat)."""
@@ -105,7 +109,7 @@ def png_para_mp4(png_path, mp4_path, duracao=5):
         str(mp4_path)
     ]
     subprocess.run(cmd, check=True)
-    print(f"  ✓ MP4: {mp4_path.name}")
+    print(f"  OK MP4: {mp4_path.name}")
 
 # Main
 with BLOCOS_JSON.open(encoding="utf-8") as f:
@@ -119,4 +123,4 @@ for b in data["blocos"]:
     png_para_mp4(OUT_DIR / f"{nome_base}.png", OUT_DIR / f"{nome_base}.mp4")
     print()
 
-print(f"✓ Cards salvos em {OUT_DIR}")
+print(f"OK Cards salvos em {OUT_DIR}")

@@ -2,16 +2,21 @@
 import json
 import re
 import subprocess
+import sys
+sys.stdout.reconfigure(encoding='utf-8')
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
-BLOCOS_JSON = ROOT / "outputs" / "live_teste_blocos.json"
+
+input_arg = sys.argv[1] if len(sys.argv) > 1 else str(ROOT / "outputs" / "live_teste_blocos.json")
+BLOCOS_JSON = Path(input_arg)
+stem = BLOCOS_JSON.stem.replace("_blocos", "")  # ex: "renan_entrevista"
 INTRO = ROOT / "assets" / "intro.mp4"
 OUTRO = ROOT / "assets" / "outro.mp4"
 INTRO_NORM = ROOT / "assets" / "intro_norm.mp4"
 OUTRO_NORM = ROOT / "assets" / "outro_norm.mp4"
 CARDS_DIR = ROOT / "outputs" / "cards"
-CORTES_DIR = ROOT / "outputs" / "cortes"
+CORTES_DIR = ROOT / "outputs" / "cortes" / stem
 OUT_DIR = ROOT / "outputs" / "finalizados"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -66,7 +71,7 @@ for b in data["blocos"]:
     card = CARDS_DIR / f"card_{b['id']:02d}.mp4"
     cortes = list(CORTES_DIR.glob(f"corte_{b['id']:02d}_*.mp4"))
     if not cortes:
-        print(f"⚠ Bloco {b['id']}: corte não encontrado, pulando")
+        print(f"[!] Bloco {b['id']}: corte não encontrado, pulando")
         continue
     corte = cortes[0]
     
@@ -104,7 +109,7 @@ for b in data["blocos"]:
     
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        print(f"  ✗ ERRO:\n{result.stderr[-800:]}")
+        print(f"  ERRO ERRO:\n{result.stderr[-800:]}")
     else:
         size_mb = saida.stat().st_size / (1024 * 1024)
         duration_s = subprocess.run(
@@ -112,7 +117,7 @@ for b in data["blocos"]:
              "-of", "default=noprint_wrappers=1:nokey=1", str(saida)],
             capture_output=True, text=True
         ).stdout.strip()
-        print(f"  ✓ {saida.name}")
+        print(f"  OK {saida.name}")
         print(f"    {size_mb:.1f} MB · {float(duration_s)/60:.1f} min")
 
-print(f"\n✓ Vídeos finais salvos em {OUT_DIR}")
+print(f"\nOK Vídeos finais salvos em {OUT_DIR}")
