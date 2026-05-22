@@ -10,7 +10,8 @@ ROOT = Path(__file__).parent.parent
 
 input_arg = sys.argv[1] if len(sys.argv) > 1 else str(ROOT / "outputs" / "live_teste_blocos.json")
 BLOCOS_JSON = Path(input_arg)
-OUT_DIR = ROOT / "outputs" / "cards"
+stem = BLOCOS_JSON.stem.replace("_blocos", "")
+OUT_DIR = ROOT / "outputs" / "cards" / stem
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # Tenta Anton primeiro; fallback pra Impact (Windows)

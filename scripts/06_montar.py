@@ -15,9 +15,9 @@ INTRO = ROOT / "assets" / "intro.mp4"
 OUTRO = ROOT / "assets" / "outro.mp4"
 INTRO_NORM = ROOT / "assets" / "intro_norm.mp4"
 OUTRO_NORM = ROOT / "assets" / "outro_norm.mp4"
-CARDS_DIR = ROOT / "outputs" / "cards"
+CARDS_DIR = ROOT / "outputs" / "cards" / stem
 CORTES_DIR = ROOT / "outputs" / "cortes" / stem
-OUT_DIR = ROOT / "outputs" / "finalizados"
+OUT_DIR = ROOT / "outputs" / "finalizados" / stem
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 def slug(texto):
