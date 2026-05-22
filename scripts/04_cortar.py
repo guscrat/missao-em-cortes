@@ -39,18 +39,31 @@ for b in data["blocos"]:
     print(f"  {b['timestamp_inicio']} → {b['timestamp_fim']} ({b['duracao_minutos']:.1f}min)")
     print(f"  Reencodando para {nome}...")
     
+    # Blur localizado nos overlays (em vez de drawbox preto)
+    # Sintaxe: split → crop em cada área → boxblur → overlay de volta
+    MASCARAS = (
+        "[0:v]split=3[base][a1][a2];"
+        "[a1]crop=247:130:1033:20,boxblur=20:1[b1];"      # contador novos membros
+        "[a2]crop=200:160:1080:555,boxblur=20:1[b2];"     # qr code
+        "[base][b1]overlay=1033:20[tmp];"
+        "[tmp][b2]overlay=1080:555[outv]"
+    )
+
     cmd = [
-        "ffmpeg", "-y",                       # -y sobrescreve sem perguntar
-        "-ss", f"{inicio_s:.3f}",             # início (antes de -i = seek rápido)
+        "ffmpeg", "-y",
+        "-ss", f"{inicio_s:.3f}",
         "-i", str(VIDEO),
-        "-t", f"{duracao:.3f}",               # duração
-        "-c:v", "libx264",                    # re-encode vídeo (garante corte limpo)
-        "-preset", "fast",                     # velocidade x qualidade
-        "-crf", "20",                          # qualidade (18-23, menor = melhor)
+        "-t", f"{duracao:.3f}",
+        "-filter_complex", MASCARAS,
+        "-map", "[outv]",
+        "-map", "0:a",                        # áudio do input original
+        "-c:v", "libx264",
+        "-preset", "fast",
+        "-crf", "20",
         "-c:a", "aac",
         "-b:a", "128k",
-        "-movflags", "+faststart",            # otimiza pra streaming web
-        "-loglevel", "warning",                # menos verbose
+        "-movflags", "+faststart",
+        "-loglevel", "warning",
         str(saida),
     ]
     
