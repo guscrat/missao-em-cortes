@@ -33,6 +33,12 @@ Identifique 2 a 4 blocos temáticos CONTÍNUOS da live (não compilação de tre
    
    Se o conteúdo não permitir blocos dessa duração com coesão, prefira
    MENOS blocos coesos a MAIS blocos curtos fragmentados.
+8. **Cold open**: identifique dentro do bloco o trecho de 15-30 segundos com a declaração de maior impacto — frase polêmica, revelação bombástica, ataque direto, dado chocante ou conclusão emocional. Esse trecho será reproduzido no INÍCIO do vídeo final pra prender o espectador antes da intro do canal. Deve:
+   - Ter início e fim em pontos naturais (frase completa)
+   - Funcionar como gancho independente (entender mesmo sem contexto prévio)
+   - Preferencialmente conter uma das frases listadas em "ganchos"
+   - NÃO iniciar com marcadores de discurso ("né", "olha", "então", "é", "mas") — começar limpo
+   - Ter entre 15 e 30 segundos (idealmente 18-25s)
 
 ## REGRAS RÍGIDAS
 
@@ -65,7 +71,14 @@ Responda APENAS com o JSON abaixo, sem markdown, sem texto antes ou depois.
       "titulo_sugerido": "título de YouTube com gancho (máx 70 chars)",
       "score_potencial": 8,
       "tags": ["partido missão", "kim kataguiri", "segurança pública"],
-      "justificativa_corte": "por que esse início e esse fim são pontos naturais"
+      "justificativa_corte": "por que esse início e esse fim são pontos naturais",
+      "cold_open": {
+        "timestamp_inicio": "HH:MM:SS",
+        "timestamp_fim": "HH:MM:SS",
+        "duracao_segundos": 22.0,
+        "frase": "transcrição literal do trecho de 15-30s",
+        "justificativa": "por que esse trecho funciona como gancho independente"
+      }
     }
   ],
   "observacoes": "comentários gerais sobre a live e blocos descartados e por quê"

@@ -15,14 +15,14 @@ Canal de YouTube de cortes de lives, entrevistas, debates e eventos do **Partido
 - Linha editorial: direita liberal, anti-bolsonarista crítica
 - Títulos podem ser ousados/com gancho, **sem distorcer o que foi dito**
 - Mantém crédito visual à fonte original (logo MBL/Valete preservado nos cortes)
-- Borra overlays desatualizados das lives (contador de membros, QR codes pontuais)
+- Overlays desatualizados tratados no CapCut com zoom (não via ffmpeg)
 
 ## Stack técnica
 
 - **Python 3.10+** com **uv** (gerenciador de dependências)
 - **faster-whisper** — transcrição local (modelo `medium`, GPU NVIDIA via CUDA)
 - **Anthropic API** — segmentação temática via `claude-sonnet-4-6` (~$0.20/live)
-- **ffmpeg** — corte, blur de overlays, montagem final
+- **ffmpeg** — corte com fades, montagem final
 - **Pillow (PIL)** — geração programática de cards de contexto
 - **yt-dlp** — download das lives do YouTube
 - **Canva** — intro, outro e template de thumbnail (externos ao pipeline)
@@ -37,9 +37,9 @@ missao-em-cortes/
 ├── outputs/                          # Tudo gerado pelo pipeline
 │   ├── <stem>_transcricao.txt        # ex: renan_entrevista_transcricao.txt
 │   ├── <stem>_blocos.json            # ex: renan_entrevista_blocos.json
-│   ├── cortes/<stem>/                # subpasta por vídeo — evita colisão entre lives
+│   ├── cortes/<stem>/                # corte_NN_<slug>.mp4 + cold_NN_<slug>.mp4
 │   ├── cards/                        # card_NN.png e card_NN.mp4
-│   └── finalizados/                  # video_NN_<slug>.mp4 (intro+card+corte+outro)
+│   └── finalizados/                  # video_NN_<slug>.mp4 (cold+intro+card+corte+outro)
 ├── assets/
 │   ├── intro.mp4                     # do Canva, sem áudio
 │   ├── intro_norm.mp4                # normalizado com áudio silencioso
@@ -69,7 +69,7 @@ missao-em-cortes/
 | 5 | Cards de contexto | `uv run py scripts/05_cards.py outputs/<stem>_blocos.json` | <1min | grátis |
 | 6 | Montagem final | `uv run py scripts/06_montar.py outputs/<stem>_blocos.json` | 10-15min | grátis |
 
-Flags opcionais no step 4: `--blur` aplica blur nos overlays via ffmpeg (padrão: sem blur — tratar no CapCut com zoom).
+O step 4 gera **dois arquivos por bloco**: `corte_NN_<slug>.mp4` (corte completo, fade out 0.5s) e `cold_NN_<slug>.mp4` (cold open 15-30s, fade in+out 0.4s). Se o JSON não tiver `cold_open`, gera só o corte e loga um aviso.
 
 **Total por live:** ~30-45min de processamento, ~$0.20 de API.
 
@@ -86,31 +86,22 @@ Flags opcionais no step 4: `--blur` aplica blur nos overlays via ffmpeg (padrão
 ## Estrutura do vídeo final
 
 ```
-[Intro 5s] → [Card de contexto 5s] → [Corte 10-22min] → [Outro 5s]
+[Cold open 15-30s] → [Intro 5s] → [Card de contexto 5s] → [Corte 10-22min] → [Outro 5s]
 ```
+
+O cold open é o trecho de maior impacto do bloco, exibido antes da intro pra prender o espectador nos primeiros segundos. Se `cold_NN_*.mp4` não existir na pasta de cortes, o `06_montar.py` monta sem ele e loga um aviso.
 
 Cada parte contribui pro "valor agregado" exigido pelo YouTube Partner Program (que pune `reused content` desde Jul/2025).
 
 ## Tratamento de overlays da live original
 
-Overlays desatualizados (contador de membros, valete.plus, QR code) têm duas abordagens:
+Overlays desatualizados (contador de membros, valete.plus, QR code) são tratados **no CapCut com zoom** após o step 4: editar o `corte_NN_*.mp4` no CapCut, salvar de volta na mesma subpasta com o mesmo nome, depois rodar steps 5 e 6.
 
-**Opção A — Blur via ffmpeg** (lives MBL com overlays mapeados, ex: Arthur do Val): rodar `04_cortar.py` com `--blur`. Coordenadas pra 1280x720 Arthur do Val:
-```
-[0:v]split=3[base][a1][a2];
-[a1]crop=247:130:1033:20,boxblur=20:1[b1];
-[a2]crop=200:160:1080:555,boxblur=20:1[b2];
-[base][b1]overlay=1033:20[tmp];
-[tmp][b2]overlay=1080:555[outv]
-```
-
-**Opção B — Zoom no CapCut** (entrevistas externas ou quando as coordenadas não estão mapeadas): editar o corte no CapCut após o step 4, salvar de volta na mesma subpasta com o mesmo nome, depois rodar steps 5 e 6.
-
-Logo do MBL (canto superior esquerdo) é preservado intencionalmente como crédito ético à fonte. **Coordenadas variam conforme a fonte** — cada canal pode demandar mapping diferente.
+Logo do MBL (canto superior esquerdo) é preservado intencionalmente como crédito ético à fonte.
 
 ## Prompt de segmentação (resumo)
 
-Está em `prompts/segmentacao.md`. Objetivo: a LLM recebe a transcrição completa com timestamps e retorna JSON com 2-4 blocos temáticos de 8-15min, com início e fim em pontos naturais (não cortar no meio de frase ou raciocínio), título sugerido, score de potencial viral, ganchos e tags. Modelo: `claude-sonnet-4-6`.
+Está em `prompts/segmentacao.md`. Objetivo: a LLM recebe a transcrição completa com timestamps e retorna JSON com 2-4 blocos temáticos de 8-15min, com início e fim em pontos naturais (não cortar no meio de frase ou raciocínio), título sugerido, score de potencial viral, ganchos, tags e **`cold_open`** (trecho de 15-30s de maior impacto dentro do bloco, com timestamps próprios). Modelo: `claude-sonnet-4-6`.
 
 ## Estado atual (Maio 2026)
 
@@ -118,10 +109,11 @@ Está em `prompts/segmentacao.md`. Objetivo: a LLM recebe a transcrição comple
 - ✅ Scripts aceitam argumento de arquivo (multi-live sem editar código)
 - ✅ Identidade visual mínima pronta
 - ✅ 1º vídeo publicado: Arthur do Val sobre Penélope (19/05/2026)
-- ✅ 4 vídeos prontos do Renan Santos / Poder360 (21/05/2026)
 - ✅ Conta YouTube verificada
-- ✅ Vídeo 01 do Renan (Flávio/STF/rachadinha) — agendado para 22/05/2026 às 18h
-- ⏳ Thumbnails + agendamento dos vídeos 02, 03 e 04 do Renan — 1 por dia
+- ✅ Vídeo 01 do Renan (Flávio/STF/rachadinha) — publicado 22/05/2026
+- ✅ Cold open implementado no pipeline (prompt + 04_cortar.py + 06_montar.py)
+- ✅ Vídeo 02 do Renan (plano de governo / Bolsa Família) — publicado 23/05/2026
+- ⏳ Vídeos 03 e 04 do Renan — agendamento pendente (1 por dia)
 
 ## Roadmap pós-MVP
 
@@ -129,7 +121,7 @@ Está em `prompts/segmentacao.md`. Objetivo: a LLM recebe a transcrição comple
 - Capítulos com timestamps na descrição
 - Tipografia animada no intro (motion graphics no Canva)
 - Configuração de fonte por canal/speaker (YAML com coordenadas de overlay por fonte)
-- Narração própria de 20-30s no início do vídeo (aumenta muito valor agregado pra YPP)
+- ~~Narração própria de 20-30s no início~~ — substituído pelo cold open automático
 
 ### Médio prazo
 - Diarização na transcrição (separar speakers automaticamente)
