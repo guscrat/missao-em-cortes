@@ -1,0 +1,11 @@
+{
+  "mbl_arthur": {
+    "overlays": [
+      {"x": 1033, "y": 20, "w": 247, "h": 130, "desc": "contador membros"},
+      {"x": 1080, "y": 555, "w": 200, "h": 160, "desc": "qr code"}
+    ]
+  },
+  "renan_solo": {
+    "overlays": []
+  }
+}

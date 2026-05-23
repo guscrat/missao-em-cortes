@@ -11,6 +11,5 @@ dependencies = [
     "nvidia-cudnn-cu12>=9.22.0.52",
     "pillow>=12.2.0",
     "python-dotenv>=1.2.2",
-    "python-ffmpeg>=2.0.12",
     "yt-dlp>=2026.3.17",
 ]
