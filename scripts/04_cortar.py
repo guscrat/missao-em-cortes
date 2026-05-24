@@ -22,6 +22,13 @@ COLD_PADDING_S    = 0.5   # margem menor nas duas pontas do cold open
 FADE_COLD_D       = 0.4   # duração do fade in/out no cold open (s)
 FADE_CORTE_OUT_D  = 0.5   # duração do fade out no corte completo (s)
 
+# Blur de overlays: ativar para lives MBL (contador de membros + QR code)
+USE_BLUR = False
+BLUR_MASKS = [
+    ("247:130:1033:20",  "1033:20"),   # contador de novos membros (topo direito)
+    ("200:160:1080:555", "1080:555"),  # QR code / valete.plus (canto inferior direito)
+]
+
 
 def slug(texto: str) -> str:
     s = texto.lower()
@@ -37,22 +44,51 @@ def hhmmss_para_segundos(ts: str) -> float:
 
 def build_cmd(inicio_s: float, duracao: float, saida: Path,
               fade_in_d: float | None, fade_out_d: float) -> list:
-    """Monta comando ffmpeg com fades opcionais. Sem blur — tratar no CapCut."""
     fo_start = max(0.0, duracao - fade_out_d)
 
     if fade_in_d is not None:
-        vf = f"fade=t=in:st=0:d={fade_in_d},fade=t=out:st={fo_start:.3f}:d={fade_out_d}"
+        fade_chain = f"fade=t=in:st=0:d={fade_in_d},fade=t=out:st={fo_start:.3f}:d={fade_out_d}"
         af = f"afade=t=in:st=0:d={fade_in_d},afade=t=out:st={fo_start:.3f}:d={fade_out_d}"
     else:
-        vf = f"fade=t=out:st={fo_start:.3f}:d={fade_out_d}"
+        fade_chain = f"fade=t=out:st={fo_start:.3f}:d={fade_out_d}"
         af = f"afade=t=out:st={fo_start:.3f}:d={fade_out_d}"
+
+    if USE_BLUR:
+        n = len(BLUR_MASKS)
+        splits = f"[0:v]split={n + 1}[base]" + "".join(f"[a{i}]" for i in range(n)) + ";"
+        crops  = "".join(
+            f"[a{i}]crop={crop},boxblur=20:1[b{i}];"
+            for i, (crop, _) in enumerate(BLUR_MASKS)
+        )
+        overlays = ""
+        src = "base"
+        for i, (_, pos) in enumerate(BLUR_MASKS):
+            dst = f"tmp{i}" if i < n - 1 else "v_blur"
+            overlays += f"[{src}][b{i}]overlay={pos}[{dst}];"
+            src = dst
+        fc = splits + crops + overlays + f"[v_blur]{fade_chain}[outv]"
+        return [
+            "ffmpeg", "-y",
+            "-ss", f"{inicio_s:.3f}",
+            "-i", str(VIDEO),
+            "-t", f"{duracao:.3f}",
+            "-filter_complex", fc,
+            "-map", "[outv]",
+            "-map", "0:a",
+            "-af", af,
+            "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+            "-c:a", "aac", "-b:a", "128k",
+            "-movflags", "+faststart",
+            "-loglevel", "warning",
+            str(saida),
+        ]
 
     return [
         "ffmpeg", "-y",
         "-ss", f"{inicio_s:.3f}",
         "-i", str(VIDEO),
         "-t", f"{duracao:.3f}",
-        "-vf", vf,
+        "-vf", fade_chain,
         "-af", af,
         "-c:v", "libx264", "-preset", "fast", "-crf", "20",
         "-c:a", "aac", "-b:a", "128k",

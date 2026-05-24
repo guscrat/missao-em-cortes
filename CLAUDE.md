@@ -15,7 +15,7 @@ Canal de YouTube de cortes de lives, entrevistas, debates e eventos do **Partido
 - Linha editorial: direita liberal, anti-bolsonarista crítica
 - Títulos podem ser ousados/com gancho, **sem distorcer o que foi dito**
 - Mantém crédito visual à fonte original (logo MBL/Valete preservado nos cortes)
-- Overlays desatualizados tratados no CapCut com zoom (não via ffmpeg)
+- Overlays desatualizados: opção programática via `USE_BLUR` no `04_cortar.py` (boxblur ffmpeg) ou no CapCut com zoom
 
 ## Stack técnica
 
@@ -95,7 +95,12 @@ Cada parte contribui pro "valor agregado" exigido pelo YouTube Partner Program (
 
 ## Tratamento de overlays da live original
 
-Overlays desatualizados (contador de membros, valete.plus, QR code) são tratados **no CapCut com zoom** após o step 4: editar o `corte_NN_*.mp4` no CapCut, salvar de volta na mesma subpasta com o mesmo nome, depois rodar steps 5 e 6.
+O `04_cortar.py` tem suporte a **blur programático** de overlays via ffmpeg (`filter_complex` + `boxblur=20`). Ativar setando `USE_BLUR = True` no topo do script. As regiões estão em `BLUR_MASKS` como tuplas `(crop_rect, overlay_pos)`, pré-configuradas para as lives MBL:
+
+- Contador de novos membros (topo direito)
+- QR code / valete.plus (canto inferior direito)
+
+**Alternativa manual:** editar o `corte_NN_*.mp4` no CapCut com zoom, salvar de volta na mesma subpasta com o mesmo nome, depois rodar steps 5 e 6.
 
 Logo do MBL (canto superior esquerdo) é preservado intencionalmente como crédito ético à fonte.
 
@@ -113,7 +118,9 @@ Está em `prompts/segmentacao.md`. Objetivo: a LLM recebe a transcrição comple
 - ✅ Vídeo 01 do Renan (Flávio/STF/rachadinha) — publicado 22/05/2026
 - ✅ Cold open implementado no pipeline (prompt + 04_cortar.py + 06_montar.py)
 - ✅ Vídeo 02 do Renan (plano de governo / Bolsa Família) — publicado 23/05/2026
-- ⏳ Vídeos 03 e 04 do Renan — agendamento pendente (1 por dia)
+- ✅ `04_cortar.py` com blur programático de overlays via ffmpeg (`USE_BLUR` flag + `BLUR_MASKS`)
+- ✅ renan_live2 segmentado — 4 blocos: long house/masculinidade, Ciro Nogueira/Piauí, MBL como Roma (score 9), Datafolha/metodologia
+- ⏳ Vídeos 03-06 do Renan (renan_live2) — corte + montagem + agendamento pendentes
 
 ## Roadmap pós-MVP
 
@@ -132,7 +139,7 @@ Está em `prompts/segmentacao.md`. Objetivo: a LLM recebe a transcrição comple
 ### Longo prazo
 - Automação de upload via YouTube Data API
 - Pipeline em batch (processar várias lives em sequência)
-- Detecção automática de overlays via Claude com vision
+- Detecção automática de regiões de overlay via Claude com vision (blur básico já existe via `USE_BLUR`)
 - Métricas: correlacionar score do LLM com views/retenção reais
 
 ## Convenções pra colaboração com Claude Code
