@@ -52,6 +52,7 @@ missao-em-cortes/
 │   ├── 02_transcribe.py
 │   ├── 03_segmentar.py
 │   ├── 04_cortar.py
+│   ├── 04b_polir.py                  # opcional: jump cut de silêncios/fillers via LLM
 │   ├── 05_cards.py
 │   ├── 06_montar.py
 │   ├── 07_thumb.py                   # thumbs semi-automáticas (off-pipeline)
@@ -70,12 +71,15 @@ missao-em-cortes/
 | 2 | Transcrição | `uv run py scripts/02_transcribe.py inputs/<stem>.mp4` | 8-15min (GTX 1650) | grátis (local) |
 | 3 | Segmentação via LLM | `uv run py scripts/03_segmentar.py outputs/<stem>_transcricao.txt` | 30-90s | ~$0.20 |
 | 4 | Cortes | `uv run py scripts/04_cortar.py outputs/<stem>_blocos.json` | 5-10min | grátis |
+| 4b* | Polimento (jump cut) | `uv run py scripts/04b_polir.py outputs/<stem>_blocos.json` | 15-25min | ~$0.20 |
 | 5 | Cards de contexto | `uv run py scripts/05_cards.py outputs/<stem>_blocos.json` | <1min | grátis |
-| 6 | Montagem final | `uv run py scripts/06_montar.py outputs/<stem>_blocos.json` | 10-15min | grátis |
+| 6 | Montagem final | `uv run py scripts/06_montar.py outputs/<stem>_blocos.json [--polido]` | 10-15min | grátis |
 | 7* | Thumbs (off-pipeline) | `uv run py scripts/07_thumb.py outputs/<stem>_blocos.json` | <1min | grátis |
 | 8 | Descrições pro YouTube | `uv run py scripts/08_descricao.py outputs/<stem>_blocos.json` | <5s | grátis |
 
 O step 4 gera **dois arquivos por bloco**: `corte_NN_<slug>.mp4` (corte completo, fade out 0.5s) e `cold_NN_<slug>.mp4` (cold open 15-30s, fade in+out 0.4s). Se o JSON não tiver `cold_open`, gera só o corte e loga um aviso.
+
+O step 4b é **opcional** — pra cada `corte_NN_*.mp4` ele: (1) re-transcreve com word-level timestamps, (2) manda pro Claude com prompt conservador pra listar intervalos de silêncio >3s, fillers extremos e problemas técnicos, (3) aplica jump cut via `ffmpeg filter_complex select/aselect` e salva `corte_NN_<slug>_polido.mp4` na mesma pasta. Filtro defensivo descarta intervalos com motivo "ignorar/manter/abaixo do limiar". Suporta `--bloco=N` pra reprocessar só um bloco. Cold opens **não** são polidos. Pra usar os polidos na montagem: `06_montar.py outputs/<stem>_blocos.json --polido` (gera `video_NN_<slug>_polido.mp4`).
 
 O step 7 é opcional e não afeta a montagem — gera 3 variantes de thumb por bloco (`thumb_NN_a/b/c.png`) com frames extraídos a 25/50/75% do cold open. Você escolhe a melhor variante e finaliza no Canva (colar collage de figuras na metade direita). Layout: frame do speaker deslocado pra direita (`FRAME_X=150`), título adaptativo (fonte 96→64 dependendo do comprimento), gradient escuro embaixo pra contraste.
 
@@ -134,7 +138,8 @@ Está em `prompts/segmentacao.md`. Objetivo: a LLM recebe a transcrição comple
 - ✅ `05_cards.py` simplificado — removidos metadados de evento/data do card de contexto
 - ✅ `07_thumb.py` — geração semi-automática de thumb (3 variantes por bloco com frames do cold open + layout adaptativo + gradient pra texto), metade direita preta pro collage no Canva
 - ✅ `08_descricao.py` — gera txt com título/descrição/tags/hashtags pronto pra YouTube Studio (sem chamada de API, reaproveita campos do `blocos.json`)
-- ✅ arthur_flavio_trump processado (lFJ1DSOjUw0) — 4 vídeos finalizados, thumbs e descrições geradas (28/05/2026)
+- ✅ `04b_polir.py` — polimento opcional via LLM: re-transcreve word-level, Claude conservador lista intervalos de silêncio/filler/problema técnico, ffmpeg aplica jump cut. `06_montar.py` ganhou flag `--polido`. Custo: ~$0.20/live.
+- ✅ arthur_flavio_trump processado (lFJ1DSOjUw0) — 4 vídeos finalizados (+ versões polidas disponíveis), thumbs e descrições geradas (28/05/2026). Polimento removeu ~2min totais de tempo morto.
 
 ## Roadmap pós-MVP
 
@@ -177,7 +182,7 @@ Está em `prompts/segmentacao.md`. Objetivo: a LLM recebe a transcrição comple
 
 | Item | Custo mensal |
 |---|---|
-| Anthropic API (~20 lives/mês) | ~$4-5 |
+| Anthropic API (~20 lives/mês, com polimento) | ~$8-9 |
 | Canva Pro (opcional) | $13 |
 | YouTube/domínio | grátis (por enquanto) |
 | **Total mínimo** | **~$5/mês** |

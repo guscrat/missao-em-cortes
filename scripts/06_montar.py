@@ -8,7 +8,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
 
-input_arg = sys.argv[1] if len(sys.argv) > 1 else str(ROOT / "outputs" / "live_teste_blocos.json")
+args = [a for a in sys.argv[1:] if not a.startswith("--")]
+flags = [a for a in sys.argv[1:] if a.startswith("--")]
+USE_POLIDO = "--polido" in flags
+
+input_arg = args[0] if args else str(ROOT / "outputs" / "live_teste_blocos.json")
 BLOCOS_JSON = Path(input_arg)
 stem = BLOCOS_JSON.stem.replace("_blocos", "")
 INTRO = ROOT / "assets" / "intro.mp4"
@@ -106,13 +110,22 @@ with BLOCOS_JSON.open(encoding="utf-8") as f:
 
 for b in data["blocos"]:
     card   = CARDS_DIR / f"card_{b['id']:02d}.mp4"
-    cortes = list(CORTES_DIR.glob(f"corte_{b['id']:02d}_*.mp4"))
-    if not cortes:
-        print(f"\n[!] Bloco {b['id']}: corte não encontrado, pulando")
-        continue
+    if USE_POLIDO:
+        cortes = sorted(CORTES_DIR.glob(f"corte_{b['id']:02d}_*_polido.mp4"))
+        if not cortes:
+            print(f"\n[!] Bloco {b['id']}: corte polido não encontrado, pulando "
+                  f"(rode 04b_polir.py antes ou tire o --polido)")
+            continue
+    else:
+        cortes = [p for p in CORTES_DIR.glob(f"corte_{b['id']:02d}_*.mp4")
+                  if "_polido" not in p.stem]
+        if not cortes:
+            print(f"\n[!] Bloco {b['id']}: corte não encontrado, pulando")
+            continue
     corte = cortes[0]
 
-    saida = OUT_DIR / f"video_{b['id']:02d}_{slug(b['tema'])}.mp4"
+    sufixo = "_polido" if USE_POLIDO else ""
+    saida = OUT_DIR / f"video_{b['id']:02d}_{slug(b['tema'])}{sufixo}.mp4"
 
     # Cold open opcional
     colds = list(CORTES_DIR.glob(f"cold_{b['id']:02d}_*.mp4"))
