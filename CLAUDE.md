@@ -38,8 +38,9 @@ missao-em-cortes/
 │   ├── <stem>_transcricao.txt        # ex: renan_entrevista_transcricao.txt
 │   ├── <stem>_blocos.json            # ex: renan_entrevista_blocos.json
 │   ├── cortes/<stem>/                # corte_NN_<slug>.mp4 + cold_NN_<slug>.mp4
-│   ├── cards/                        # card_NN.png e card_NN.mp4
-│   └── finalizados/                  # video_NN_<slug>.mp4 (cold+intro+card+corte+outro)
+│   ├── cards/<stem>/                 # card_NN.png e card_NN.mp4
+│   ├── thumbs/<stem>/                # thumb_NN_a/b/c.png (3 variantes pra escolher)
+│   └── finalizados/<stem>/           # video_NN_<slug>.mp4 (cold+intro+card+corte+outro)
 ├── assets/
 │   ├── intro.mp4                     # do Canva, sem áudio
 │   ├── intro_norm.mp4                # normalizado com áudio silencioso
@@ -51,7 +52,8 @@ missao-em-cortes/
 │   ├── 03_segmentar.py
 │   ├── 04_cortar.py
 │   ├── 05_cards.py
-│   └── 06_montar.py
+│   ├── 06_montar.py
+│   └── 07_thumb.py                   # thumbs semi-automáticas (off-pipeline)
 ├── prompts/
 │   └── segmentacao.md                # Prompt do LLM pra topic segmentation
 ├── .env                              # ANTHROPIC_API_KEY
@@ -68,8 +70,11 @@ missao-em-cortes/
 | 4 | Cortes | `uv run py scripts/04_cortar.py outputs/<stem>_blocos.json` | 5-10min | grátis |
 | 5 | Cards de contexto | `uv run py scripts/05_cards.py outputs/<stem>_blocos.json` | <1min | grátis |
 | 6 | Montagem final | `uv run py scripts/06_montar.py outputs/<stem>_blocos.json` | 10-15min | grátis |
+| 7* | Thumbs (off-pipeline) | `uv run py scripts/07_thumb.py outputs/<stem>_blocos.json` | <1min | grátis |
 
 O step 4 gera **dois arquivos por bloco**: `corte_NN_<slug>.mp4` (corte completo, fade out 0.5s) e `cold_NN_<slug>.mp4` (cold open 15-30s, fade in+out 0.4s). Se o JSON não tiver `cold_open`, gera só o corte e loga um aviso.
+
+O step 7 é opcional e não afeta a montagem — gera 3 variantes de thumb por bloco (`thumb_NN_a/b/c.png`) com frames extraídos a 25/50/75% do cold open. Você escolhe a melhor variante e finaliza no Canva (colar collage de figuras na metade direita). Layout: frame do speaker deslocado pra direita (`FRAME_X=150`), título adaptativo (fonte 96→64 dependendo do comprimento), gradient escuro embaixo pra contraste.
 
 **Total por live:** ~30-45min de processamento, ~$0.20 de API.
 
@@ -121,6 +126,9 @@ Está em `prompts/segmentacao.md`. Objetivo: a LLM recebe a transcrição comple
 - ✅ `04_cortar.py` com blur programático de overlays via ffmpeg (`USE_BLUR` flag + `BLUR_MASKS`)
 - ✅ renan_live2 segmentado — 4 blocos: long house/masculinidade, Ciro Nogueira/Piauí, MBL como Roma (score 9), Datafolha/metodologia
 - ⏳ Vídeos 03-06 do Renan (renan_live2) — corte + montagem + agendamento pendentes
+- ✅ `05_cards.py` simplificado — removidos metadados de evento/data do card de contexto
+- ✅ `07_thumb.py` — geração semi-automática de thumb (3 variantes por bloco com frames do cold open + layout adaptativo + gradient pra texto), metade direita preta pro collage no Canva
+- ✅ arthur_flavio_trump processado (lFJ1DSOjUw0) — 4 blocos cortados, thumbs base geradas (28/05/2026)
 
 ## Roadmap pós-MVP
 
@@ -133,7 +141,8 @@ Está em `prompts/segmentacao.md`. Objetivo: a LLM recebe a transcrição comple
 ### Médio prazo
 - Diarização na transcrição (separar speakers automaticamente)
 - Legendas burned-in nos momentos de impacto (aumenta retenção)
-- Templates de thumbnail dinâmicos via PIL (com frame do vídeo + texto)
+- ~~Templates de thumbnail dinâmicos via PIL (com frame do vídeo + texto)~~ — implementado em `07_thumb.py` (semi-automático, collage manual no Canva)
+- Detecção automática de rosto no frame da thumb (face_recognition) pra escolher melhor variante sem 3 opções
 - Geração automática de descrição + tags + capítulos via LLM
 
 ### Longo prazo

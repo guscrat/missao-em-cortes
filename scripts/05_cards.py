@@ -32,10 +32,6 @@ PRETO = (10, 10, 10)
 AMARELO = (245, 197, 24)
 BRANCO = (255, 255, 255)
 
-# Metadados da live (parametriza por arquivo se quiser depois)
-DATA_LIVE = "21/05/2026"
-EVENTO = "ENTREVISTA Poder360"
-
 # Mesma resolução dos cortes (importante pro concat depois)
 LARGURA, ALTURA = 1280, 720
 
@@ -58,7 +54,6 @@ def gerar_card(bloco, output_png):
     draw = ImageDraw.Draw(img)
     
     fonte_tema = get_font(100)
-    fonte_meta = get_font(35)
     fonte_marca = get_font(28)
     fonte_badge = get_font(32)
     
@@ -85,15 +80,7 @@ def gerar_card(bloco, output_png):
         x = (LARGURA - (bbox[2] - bbox[0])) // 2
         cor = AMARELO if i == 0 else BRANCO
         draw.text((x, y0 + i * line_h), linha, font=fonte_tema, fill=cor)
-    
-    # Metadados embaixo
-    meta = f"{EVENTO}  •  {DATA_LIVE}"
-    bbox = draw.textbbox((0, 0), meta, font=fonte_meta)
-    draw.text(
-        ((LARGURA - (bbox[2] - bbox[0])) // 2, y0 + total_h + 30),
-        meta, font=fonte_meta, fill=BRANCO
-    )
-    
+
     img.save(output_png)
     print(f"  OK PNG: {output_png.name}")
 
