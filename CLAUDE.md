@@ -37,6 +37,7 @@ missao-em-cortes/
 ├── outputs/                          # Tudo gerado pelo pipeline
 │   ├── <stem>_transcricao.txt        # ex: renan_entrevista_transcricao.txt
 │   ├── <stem>_blocos.json            # ex: renan_entrevista_blocos.json
+│   ├── <stem>_descricoes.txt         # titulo+descricao+tags por bloco pro YouTube
 │   ├── cortes/<stem>/                # corte_NN_<slug>.mp4 + cold_NN_<slug>.mp4
 │   ├── cards/<stem>/                 # card_NN.png e card_NN.mp4
 │   ├── thumbs/<stem>/                # thumb_NN_a/b/c.png (3 variantes pra escolher)
@@ -53,7 +54,8 @@ missao-em-cortes/
 │   ├── 04_cortar.py
 │   ├── 05_cards.py
 │   ├── 06_montar.py
-│   └── 07_thumb.py                   # thumbs semi-automáticas (off-pipeline)
+│   ├── 07_thumb.py                   # thumbs semi-automáticas (off-pipeline)
+│   └── 08_descricao.py               # gera txt com titulo+descricao+tags pro YouTube
 ├── prompts/
 │   └── segmentacao.md                # Prompt do LLM pra topic segmentation
 ├── .env                              # ANTHROPIC_API_KEY
@@ -71,10 +73,13 @@ missao-em-cortes/
 | 5 | Cards de contexto | `uv run py scripts/05_cards.py outputs/<stem>_blocos.json` | <1min | grátis |
 | 6 | Montagem final | `uv run py scripts/06_montar.py outputs/<stem>_blocos.json` | 10-15min | grátis |
 | 7* | Thumbs (off-pipeline) | `uv run py scripts/07_thumb.py outputs/<stem>_blocos.json` | <1min | grátis |
+| 8 | Descrições pro YouTube | `uv run py scripts/08_descricao.py outputs/<stem>_blocos.json` | <5s | grátis |
 
 O step 4 gera **dois arquivos por bloco**: `corte_NN_<slug>.mp4` (corte completo, fade out 0.5s) e `cold_NN_<slug>.mp4` (cold open 15-30s, fade in+out 0.4s). Se o JSON não tiver `cold_open`, gera só o corte e loga um aviso.
 
 O step 7 é opcional e não afeta a montagem — gera 3 variantes de thumb por bloco (`thumb_NN_a/b/c.png`) com frames extraídos a 25/50/75% do cold open. Você escolhe a melhor variante e finaliza no Canva (colar collage de figuras na metade direita). Layout: frame do speaker deslocado pra direita (`FRAME_X=150`), título adaptativo (fonte 96→64 dependendo do comprimento), gradient escuro embaixo pra contraste.
+
+O step 8 gera `<stem>_descricoes.txt` com, pra cada bloco: título sugerido (com contagem de chars), descrição (resumo + ganchos como bullets), créditos do canal, hashtags e lista de tags pronta pra colar no YouTube Studio. **Sem chamada de API** — reaproveita o que o LLM já produziu no `blocos.json`. Deixa placeholder `[COLAR URL DA LIVE AQUI]` pra preencher antes do upload.
 
 **Total por live:** ~30-45min de processamento, ~$0.20 de API.
 
@@ -128,7 +133,8 @@ Está em `prompts/segmentacao.md`. Objetivo: a LLM recebe a transcrição comple
 - ⏳ Vídeos 03-06 do Renan (renan_live2) — corte + montagem + agendamento pendentes
 - ✅ `05_cards.py` simplificado — removidos metadados de evento/data do card de contexto
 - ✅ `07_thumb.py` — geração semi-automática de thumb (3 variantes por bloco com frames do cold open + layout adaptativo + gradient pra texto), metade direita preta pro collage no Canva
-- ✅ arthur_flavio_trump processado (lFJ1DSOjUw0) — 4 blocos cortados, thumbs base geradas (28/05/2026)
+- ✅ `08_descricao.py` — gera txt com título/descrição/tags/hashtags pronto pra YouTube Studio (sem chamada de API, reaproveita campos do `blocos.json`)
+- ✅ arthur_flavio_trump processado (lFJ1DSOjUw0) — 4 vídeos finalizados, thumbs e descrições geradas (28/05/2026)
 
 ## Roadmap pós-MVP
 
@@ -143,7 +149,7 @@ Está em `prompts/segmentacao.md`. Objetivo: a LLM recebe a transcrição comple
 - Legendas burned-in nos momentos de impacto (aumenta retenção)
 - ~~Templates de thumbnail dinâmicos via PIL (com frame do vídeo + texto)~~ — implementado em `07_thumb.py` (semi-automático, collage manual no Canva)
 - Detecção automática de rosto no frame da thumb (face_recognition) pra escolher melhor variante sem 3 opções
-- Geração automática de descrição + tags + capítulos via LLM
+- ~~Geração automática de descrição + tags via LLM~~ — `08_descricao.py` faz isso reaproveitando o LLM do step 3 (sem nova chamada). Capítulos com timestamps ainda pendentes (requer mapeamento de subtópicos dentro de cada bloco).
 
 ### Longo prazo
 - Automação de upload via YouTube Data API
