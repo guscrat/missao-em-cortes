@@ -15,7 +15,7 @@ Canal de YouTube de cortes de lives, entrevistas, debates e eventos do **Partido
 - Linha editorial: direita liberal, anti-bolsonarista crítica
 - Títulos podem ser ousados/com gancho, **sem distorcer o que foi dito**
 - Mantém crédito visual à fonte original (logo MBL/Valete preservado nos cortes)
-- Overlays desatualizados: opção programática via `USE_BLUR` no `04_cortar.py` (boxblur ffmpeg) ou no CapCut com zoom
+- Overlays desatualizados: removidos via zoom programático (`USE_ZOOM`/`ZOOM_CROP` no `04_cortar.py`), sem blur — ver "Tratamento de overlays"
 
 ## Stack técnica
 
@@ -57,7 +57,8 @@ missao-em-cortes/
 │   ├── 05_cards.py
 │   ├── 06_montar.py
 │   ├── 07_thumb.py                   # thumbs semi-automáticas (off-pipeline)
-│   └── 08_descricao.py               # gera txt com titulo+descricao+tags pro YouTube
+│   ├── 08_descricao.py               # gera txt com titulo+descricao+tags pro YouTube
+│   └── calibrar_zoom.py              # off-pipeline: calibra visualmente o ZOOM_CROP anti-overlay
 ├── prompts/
 │   └── segmentacao.md                # Prompt do LLM pra topic segmentation
 ├── .env                              # ANTHROPIC_API_KEY
@@ -112,14 +113,17 @@ Cada parte contribui pro "valor agregado" exigido pelo YouTube Partner Program (
 
 ## Tratamento de overlays da live original
 
-O `04_cortar.py` tem suporte a **blur programático** de overlays via ffmpeg (`filter_complex` + `boxblur=20`). Ativar setando `USE_BLUR = True` no topo do script. As regiões estão em `BLUR_MASKS` como tuplas `(crop_rect, overlay_pos)`, pré-configuradas para as lives MBL:
+O `04_cortar.py` remove os overlays via **zoom programático** (`crop` + `scale`), sem blur. Ativado por `USE_ZOOM = True` com o recorte em `ZOOM_CROP` (`crop=w:h:x:y` na fonte 1080p, aplicado antes do `scale=1280:720`). O truque: deslocar o recorte 16:9 pra direita encaixa a janela **entre** os overlays das duas bordas das lives MBL:
 
-- Contador de novos membros (topo direito)
-- QR code / valete.plus (canto inferior direito)
+- **valete.plus** (círculo, topo-esquerdo) → sai pela esquerda
+- **contador de membros** (topo-direito) → sai pela direita
+- **QR code / SmartCast** (base-direita) → sai pela direita
 
-**Alternativa manual:** editar o `corte_NN_*.mp4` no CapCut com zoom, salvar de volta na mesma subpasta com o mesmo nome, depois rodar steps 5 e 6.
+A parede neon "Academia MBL" é **cenário do estúdio** (não overlay) e fica. O zoom aplica-se ao corte **e** ao cold open. Valor atual `1476:830:200:100` (zoom ~1.30, mantém 59% do quadro), calibrado na renan_live2.
 
-Logo do MBL (canto superior esquerdo) é preservado intencionalmente como crédito ético à fonte.
+**Calibração visual:** `uv run py scripts/calibrar_zoom.py <video> [--zoom=..] [--fx=..] [--fy=..]` gera previews antes/depois em `outputs/_calibracao/` pra dialar o recorte numa fonte nova antes de fixar o `ZOOM_CROP`. Se uma live tiver layout diferente, recalibre e ajuste a constante (ou, futuramente, mover pra config por fonte — ver roadmap).
+
+**Alternativa manual:** editar o `corte_NN_*.mp4` no CapCut, salvar de volta na mesma subpasta com o mesmo nome, depois rodar steps 5 e 6.
 
 ## Prompt de segmentação (resumo)
 
@@ -135,7 +139,7 @@ Está em `prompts/segmentacao.md`. Objetivo: a LLM recebe a transcrição comple
 - ✅ Vídeo 01 do Renan (Flávio/STF/rachadinha) — publicado 22/05/2026
 - ✅ Cold open implementado no pipeline (prompt + 04_cortar.py + 06_montar.py)
 - ✅ Vídeo 02 do Renan (plano de governo / Bolsa Família) — publicado 23/05/2026
-- ✅ `04_cortar.py` com blur programático de overlays via ffmpeg (`USE_BLUR` flag + `BLUR_MASKS`)
+- ✅ `04_cortar.py` com remoção de overlays via **zoom programático** (`USE_ZOOM`/`ZOOM_CROP`) — substituiu o blur. Recorte 16:9 deslocado pra direita tira valete.plus (esq) + contador/QR (dir) sem blur. Calibrado com `scripts/calibrar_zoom.py` (02/06/2026)
 - ✅ renan_live2 segmentado — 4 blocos: long house/masculinidade, Ciro Nogueira/Piauí, MBL como Roma (score 9), Datafolha/metodologia
 - ⏳ Vídeos 03-06 do Renan (renan_live2) — corte + montagem + agendamento pendentes
 - ✅ `05_cards.py` simplificado — removidos metadados de evento/data do card de contexto
@@ -164,7 +168,7 @@ Está em `prompts/segmentacao.md`. Objetivo: a LLM recebe a transcrição comple
 ### Longo prazo
 - Automação de upload via YouTube Data API
 - Pipeline em batch (processar várias lives em sequência)
-- Detecção automática de regiões de overlay via Claude com vision (blur básico já existe via `USE_BLUR`)
+- Detecção automática de regiões de overlay via Claude com vision (remoção via zoom já existe via `USE_ZOOM`/`ZOOM_CROP`, calibrada à mão com `calibrar_zoom.py`)
 - Métricas: correlacionar score do LLM com views/retenção reais
 
 ## Convenções pra colaboração com Claude Code

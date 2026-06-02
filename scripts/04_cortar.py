@@ -30,12 +30,14 @@ AENC = ["-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2"]
 SCALE_PAD = ("scale=1280:720:force_original_aspect_ratio=decrease,"
              "pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30")
 
-# Blur de overlays: ativar para lives MBL (contador de membros + QR code)
-USE_BLUR = False
-BLUR_MASKS = [
-    ("247:130:1033:20",  "1033:20"),   # contador de novos membros (topo direito)
-    ("200:160:1080:555", "1080:555"),  # QR code / valete.plus (canto inferior direito)
-]
+# Anti-overlay (lives MBL): zoom leve com recorte deslocado pra direita corta os 3
+# overlays sem blur — o valete.plus (círculo, topo-esq) sai pela esquerda; o contador
+# (topo-dir) e o QR (base-dir) saem pela direita. A parede "Academia MBL" (cenário)
+# fica. Calibrado na renan_live2 via scripts/calibrar_zoom.py (variante "a", zoom 1.30,
+# mantém 59% do quadro). Aplica-se ao corte E ao cold open.
+# Se uma fonte tiver layout diferente, recalibre o crop e ajuste ZOOM_CROP.
+USE_ZOOM = True
+ZOOM_CROP = "1476:830:200:100"  # crop=w:h:x:y na fonte 1080p, antes do scale 1280:720
 
 
 def slug(texto: str) -> str:
@@ -61,42 +63,19 @@ def build_cmd(inicio_s: float, duracao: float, saida: Path,
         fade_chain = f"fade=t=out:st={fo_start:.3f}:d={fade_out_d}"
         af = f"afade=t=out:st={fo_start:.3f}:d={fade_out_d}"
 
-    if USE_BLUR:
-        # Blur nas coordenadas da fonte original (1080p), DEPOIS escala pro canônico.
-        n = len(BLUR_MASKS)
-        splits = f"[0:v]split={n + 1}[base]" + "".join(f"[a{i}]" for i in range(n)) + ";"
-        crops  = "".join(
-            f"[a{i}]crop={crop},boxblur=20:1[b{i}];"
-            for i, (crop, _) in enumerate(BLUR_MASKS)
-        )
-        overlays = ""
-        src = "base"
-        for i, (_, pos) in enumerate(BLUR_MASKS):
-            dst = f"tmp{i}" if i < n - 1 else "v_blur"
-            overlays += f"[{src}][b{i}]overlay={pos}[{dst}];"
-            src = dst
-        fc = splits + crops + overlays + f"[v_blur]{SCALE_PAD},{fade_chain}[outv]"
-        return [
-            "ffmpeg", "-y",
-            "-ss", f"{inicio_s:.3f}",
-            "-i", str(VIDEO),
-            "-t", f"{duracao:.3f}",
-            "-filter_complex", fc,
-            "-map", "[outv]",
-            "-map", "0:a",
-            "-af", af,
-            *VENC, *AENC,
-            "-movflags", "+faststart",
-            "-loglevel", "warning",
-            str(saida),
-        ]
+    # Zoom anti-overlay (crop+scale) ou scale+pad padrão. Os dois terminam no
+    # formato canônico 1280x720, então o resto do pipeline não muda.
+    if USE_ZOOM:
+        geo = f"crop={ZOOM_CROP},scale=1280:720,setsar=1,fps=30"
+    else:
+        geo = SCALE_PAD
 
     return [
         "ffmpeg", "-y",
         "-ss", f"{inicio_s:.3f}",
         "-i", str(VIDEO),
         "-t", f"{duracao:.3f}",
-        "-vf", f"{SCALE_PAD},{fade_chain}",
+        "-vf", f"{geo},{fade_chain}",
         "-af", af,
         *VENC, *AENC,
         "-movflags", "+faststart",
