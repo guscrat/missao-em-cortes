@@ -84,15 +84,17 @@ def gerar_card(bloco, output_png):
     img.save(output_png)
     print(f"  OK PNG: {output_png.name}")
 
-def png_para_mp4(png_path, mp4_path, duracao=5):
-    """Converte PNG estático em MP4 com áudio silencioso (pro concat)."""
+def png_para_mp4(png_path, mp4_path, duracao=3):
+    """Converte PNG estático em MP4 no formato canônico do pipeline (pro concat -c copy)."""
     cmd = [
         "ffmpeg", "-y",
         "-loop", "1", "-i", str(png_path),
         "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
         "-t", str(duracao),
-        "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p", "-r", "30",
-        "-c:a", "aac", "-b:a", "128k",
+        "-vf", "setsar=1,fps=30",
+        "-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "23",
+        "-b:v", "0", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
         "-shortest", "-loglevel", "warning",
         str(mp4_path)
     ]

@@ -22,6 +22,14 @@ COLD_PADDING_S    = 0.5   # margem menor nas duas pontas do cold open
 FADE_COLD_D       = 0.4   # duração do fade in/out no cold open (s)
 FADE_CORTE_OUT_D  = 0.5   # duração do fade out no corte completo (s)
 
+# Formato canônico do pipeline (1280x720, 30fps, yuv420p, aac 44100 stereo).
+# Tudo sai nesse formato pra que o 06_montar concatene sem re-encodar (-c copy).
+VENC = ["-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "23",
+        "-b:v", "0", "-pix_fmt", "yuv420p"]
+AENC = ["-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2"]
+SCALE_PAD = ("scale=1280:720:force_original_aspect_ratio=decrease,"
+             "pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30")
+
 # Blur de overlays: ativar para lives MBL (contador de membros + QR code)
 USE_BLUR = False
 BLUR_MASKS = [
@@ -54,6 +62,7 @@ def build_cmd(inicio_s: float, duracao: float, saida: Path,
         af = f"afade=t=out:st={fo_start:.3f}:d={fade_out_d}"
 
     if USE_BLUR:
+        # Blur nas coordenadas da fonte original (1080p), DEPOIS escala pro canônico.
         n = len(BLUR_MASKS)
         splits = f"[0:v]split={n + 1}[base]" + "".join(f"[a{i}]" for i in range(n)) + ";"
         crops  = "".join(
@@ -66,7 +75,7 @@ def build_cmd(inicio_s: float, duracao: float, saida: Path,
             dst = f"tmp{i}" if i < n - 1 else "v_blur"
             overlays += f"[{src}][b{i}]overlay={pos}[{dst}];"
             src = dst
-        fc = splits + crops + overlays + f"[v_blur]{fade_chain}[outv]"
+        fc = splits + crops + overlays + f"[v_blur]{SCALE_PAD},{fade_chain}[outv]"
         return [
             "ffmpeg", "-y",
             "-ss", f"{inicio_s:.3f}",
@@ -76,8 +85,7 @@ def build_cmd(inicio_s: float, duracao: float, saida: Path,
             "-map", "[outv]",
             "-map", "0:a",
             "-af", af,
-            "-c:v", "libx264", "-preset", "fast", "-crf", "20",
-            "-c:a", "aac", "-b:a", "128k",
+            *VENC, *AENC,
             "-movflags", "+faststart",
             "-loglevel", "warning",
             str(saida),
@@ -88,10 +96,9 @@ def build_cmd(inicio_s: float, duracao: float, saida: Path,
         "-ss", f"{inicio_s:.3f}",
         "-i", str(VIDEO),
         "-t", f"{duracao:.3f}",
-        "-vf", fade_chain,
+        "-vf", f"{SCALE_PAD},{fade_chain}",
         "-af", af,
-        "-c:v", "libx264", "-preset", "fast", "-crf", "20",
-        "-c:a", "aac", "-b:a", "128k",
+        *VENC, *AENC,
         "-movflags", "+faststart",
         "-loglevel", "warning",
         str(saida),

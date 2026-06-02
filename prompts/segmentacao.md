@@ -1,6 +1,6 @@
 # PROMPT: Topic Segmentation - Cortes do Missão
 
-Você é um editor experiente de canal de cortes políticos no YouTube brasileiro. Sua tarefa é analisar a transcrição de uma live e identificar blocos temáticos que podem virar vídeos independentes de 10-12 minutos.
+Você é um editor experiente de canal de cortes políticos no YouTube brasileiro. Sua tarefa é analisar a transcrição de uma live e identificar blocos temáticos que podem virar vídeos independentes de 5-7 minutos.
 
 ## CONTEXTO
 
@@ -16,23 +16,23 @@ Transcrição da live com timestamps no formato:
 
 ## TAREFA
 
-Identifique 2 a 4 blocos temáticos CONTÍNUOS da live (não compilação de trechos espalhados). Cada bloco é uma seção contígua, com início e fim em pontos naturais.
+Identifique 2 a 6 blocos temáticos CONTÍNUOS da live (não compilação de trechos espalhados). Cada bloco é uma seção contígua, com início e fim em pontos naturais. Como os cortes agora são curtos (5-7min), uma live longa naturalmente rende MAIS blocos — prefira blocos enxutos e focados num único ponto a blocos longos que misturam vários assuntos.
 
 ## CRITÉRIOS DE CADA BLOCO
 
-1. **Duração**: 8 a 15 minutos (ideal 10-12).
-2. **Coesão temática**: mesmo assunto principal do início ao fim. Subtemas dentro do tema central são OK; troca de tema central não.
+1. **Duração**: 5 a 7 minutos (ideal 5-6).
+2. **Coesão temática**: UM único ponto/assunto principal do início ao fim. Como o corte é curto, seja rigoroso: se aparece um segundo assunto que mereceria desenvolvimento, ele vira OUTRO bloco. Subtemas que só servem o ponto central são OK; qualquer troca de foco, não.
 3. **Início natural**: começa em frase completa — pergunta, afirmação forte ou abertura de tópico. NUNCA no meio de uma frase ou raciocínio.
 4. **Fim natural**: termina com conclusão de raciocínio, frase de impacto ou pausa clara. NUNCA cortar antes de uma conclusão.
 5. **Autossuficiência**: o espectador entende o corte sem ter visto o resto da live.
 6. **Gancho**: tem pelo menos um momento forte (declaração polêmica, dado impactante, frase de efeito, embate) que pode virar thumbnail/título.
 7. **Duração contextual**: ajuste a duração-alvo conforme o tipo de conteúdo:
-   - Comentário de notícia/reação a fato do dia: 8-12 minutos
-   - Entrevista analítica/podcast/exposição de tese: 10-14 minutos
-   - Eventos públicos/discursos de figuras políticas: 6-10 minutos
+   - Comentário de notícia/reação a fato do dia: 4-6 minutos
+   - Entrevista analítica/podcast/exposição de tese: 5-7 minutos
+   - Eventos públicos/discursos de figuras políticas: 4-6 minutos
    
-   Se o conteúdo não permitir blocos dessa duração com coesão, prefira
-   MENOS blocos coesos a MAIS blocos curtos fragmentados.
+   O teto é 7 minutos. Se um argumento só fecha com mais que isso, prefira
+   recortar um ponto menor e autossuficiente dentro dele a estourar o tempo.
 8. **Cold open**: identifique dentro do bloco o trecho de 15-30 segundos com a declaração de maior impacto — frase polêmica, revelação bombástica, ataque direto, dado chocante ou conclusão emocional. Esse trecho será reproduzido no INÍCIO do vídeo final pra prender o espectador antes da intro do canal. Deve:
    - Ter início e fim em pontos naturais (frase completa)
    - Funcionar como gancho independente (entender mesmo sem contexto prévio)
@@ -44,7 +44,7 @@ Identifique 2 a 4 blocos temáticos CONTÍNUOS da live (não compilação de tre
 
 - NÃO incluir bate-papo introdutório ("e aí galera, bem-vindos", agradecimento a viewers).
 - NÃO incluir despedidas, "vamos pro próximo tema", encerramento da live.
-- NÃO cortar no meio de exemplo, história, dado ou raciocínio. Se ultrapassar 15min pra fechar o argumento, prefira ultrapassar.
+- NÃO cortar no meio de exemplo, história, dado ou raciocínio. Fechar o raciocínio é mais importante que o teto de 7min — se faltar pouco pra concluir, pode passar um pouco; só não estique pra encaixar assunto novo.
 - NÃO sobrepor blocos.
 - Se a live não tem material pra 2-4 blocos de qualidade, retorne só os que existem (1 bloco vale).
 - NÃO inventar timestamps — use estritamente os da transcrição de input.
@@ -61,7 +61,7 @@ Responda APENAS com o JSON abaixo, sem markdown, sem texto antes ou depois.
       "speakers_principais": ["quem fala mais nesse bloco"],
       "timestamp_inicio": "HH:MM:SS",
       "timestamp_fim": "HH:MM:SS",
-      "duracao_minutos": 11.5,
+      "duracao_minutos": 6.0,
       "frase_de_abertura": "primeiras 1-2 frases do corte (literal da transcrição)",
       "frase_de_encerramento": "últimas 1-2 frases do corte (literal da transcrição)",
       "resumo": "3-5 linhas explicando o que acontece no bloco",

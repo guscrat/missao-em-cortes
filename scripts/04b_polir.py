@@ -46,7 +46,12 @@ BLOCOS_JSON = Path(input_arg)
 stem = BLOCOS_JSON.stem.replace("_blocos", "")
 CORTES_DIR = ROOT / "outputs" / "cortes" / stem
 OUT_JSON = ROOT / "outputs" / f"{stem}_polimento.json"
+WORDS_JSON = ROOT / "outputs" / f"{stem}_words.json"  # do 02_transcribe: evita re-transcrever
 DEBUG_DIR = ROOT / "outputs" / "_debug"
+
+# Devem casar com os paddings do 04_cortar.py (pra mapear timestamp global -> relativo ao corte)
+PADDING_INICIO_S = 1.0
+PADDING_FIM_S    = 2.0
 
 PROMPT_SISTEMA = """Você é um editor de vídeo do canal Missão em Cortes.
 
@@ -87,17 +92,40 @@ REGRAS DA LISTA:
 - NÃO invente intervalos
 """
 
-print("Carregando whisper medium (word-level)...")
-model = WhisperModel("medium", device="cuda", compute_type="int8_float16")
 client = Anthropic()
+
+# Whisper carregado sob demanda: só é preciso no fallback (quando falta o words.json)
+_model = None
+
+
+def get_model():
+    global _model
+    if _model is None:
+        print("Carregando whisper medium (word-level)...")
+        _model = WhisperModel("medium", device="cuda", compute_type="int8_float16")
+    return _model
+
+
+def hhmmss_para_segundos(ts: str) -> float:
+    h, m, s = ts.split(":")
+    return int(h) * 3600 + int(m) * 60 + float(s)
+
+
+def duracao_video(path: Path) -> float:
+    out = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
+        capture_output=True, text=True
+    ).stdout.strip()
+    return float(out)
 
 
 def transcrever_word_level(video_path):
-    segments, info = model.transcribe(
+    segments, info = get_model().transcribe(
         str(video_path),
         language="pt",
         vad_filter=True,
-        beam_size=5,
+        beam_size=2,
         word_timestamps=True,
         condition_on_previous_text=False,
     )
@@ -115,6 +143,38 @@ def transcrever_word_level(video_path):
 
 def palavras_para_texto(palavras):
     return "\n".join(f"[{w['start']:7.2f}-{w['end']:7.2f}] {w['word']}" for w in palavras)
+
+
+def palavras_do_corte(bloco, corte):
+    """Devolve (palavras_relativas_ao_corte, duracao_s).
+
+    Reaproveita os word-timestamps globais do 02_transcribe (words.json), fatiando
+    pelo intervalo do bloco e remapeando os tempos pra relativos ao início do corte.
+    Sem o words.json, cai pro fallback de re-transcrever o corte com whisper.
+
+    Obs: assume que o corte_NN.mp4 não foi cortado/encurtado manualmente (CapCut com
+    zoom mantém o tempo alinhado; trim manual desalinharia — nesse caso apague o
+    words.json pra forçar a re-transcrição).
+    """
+    dur = duracao_video(corte)
+
+    if WORDS_JSON.exists():
+        with WORDS_JSON.open(encoding="utf-8") as f:
+            todas = json.load(f).get("words", [])
+        inicio_s = max(0, hhmmss_para_segundos(bloco["timestamp_inicio"]) - PADDING_INICIO_S)
+        fim_s    = hhmmss_para_segundos(bloco["timestamp_fim"]) + PADDING_FIM_S
+        palavras = [
+            {"word": w["word"],
+             "start": max(0.0, w["start"] - inicio_s),
+             "end":   max(0.0, w["end"] - inicio_s)}
+            for w in todas if inicio_s <= w["start"] < fim_s
+        ]
+        print(f"  {len(palavras)} palavras reaproveitadas do words.json (sem re-transcrever)")
+        return palavras, dur
+
+    print(f"  words.json ausente — re-transcrevendo o corte (fallback)")
+    palavras, _ = transcrever_word_level(corte)
+    return palavras, dur
 
 
 PALAVRAS_FILTRO = ("ignorar", "manter", "abaixo do limiar", "abaixo do limite",
@@ -184,8 +244,9 @@ def aplicar_jumpcut(input_mp4, output_mp4, intervalos):
         "-i", str(input_mp4),
         "-filter_complex", fc,
         "-map", "[v]", "-map", "[a]",
-        "-c:v", "libx264", "-preset", "fast", "-crf", "20",
-        "-c:a", "aac", "-b:a", "128k",
+        "-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "23",
+        "-b:v", "0", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
         "-movflags", "+faststart",
         "-loglevel", "warning",
         str(output_mp4),
@@ -225,8 +286,8 @@ for b in data["blocos"]:
         print(f"  AVISO: corte_{b['id']:02d}_*.mp4 nao encontrado em {CORTES_DIR}")
         continue
 
-    palavras, dur = transcrever_word_level(corte)
-    print(f"  {len(palavras)} palavras transcritas em {dur:.1f}s de video")
+    palavras, dur = palavras_do_corte(b, corte)
+    print(f"  corte tem {dur:.1f}s de vídeo")
 
     print(f"  Chamando Claude (conservador)...")
     try:
