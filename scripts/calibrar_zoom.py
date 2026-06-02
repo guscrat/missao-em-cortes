@@ -20,6 +20,7 @@ Saídas em outputs/_calibracao/zoom_preview_a/b/c.png
 """
 import sys
 sys.stdout.reconfigure(encoding='utf-8')
+import json
 import subprocess
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
@@ -49,7 +50,8 @@ def parse_args():
     zooms = [float(z) for z in flags.get("zoom", "1.15,1.22,1.30").split(",")]
     fx = float(flags.get("fx", 0.0))
     fy = float(flags.get("fy", 0.4))
-    return video, ts, zooms, fx, fy
+    salvar = flags.get("salvar")  # stem pra gravar o crop em config/zoom.json
+    return video, ts, zooms, fx, fy, salvar
 
 
 def get_font(size):
@@ -120,8 +122,20 @@ def render_preview(orig, zoom, fx, fy, saida):
     return cw, ch, cx, cy, keep_pct
 
 
+def salvar_crop(stem, cw, ch, cx, cy):
+    cfg_path = ROOT / "config" / "zoom.json"
+    cfg = {}
+    if cfg_path.exists():
+        with cfg_path.open(encoding="utf-8") as f:
+            cfg = json.load(f)
+    cfg[stem] = f"{cw}:{ch}:{cx}:{cy}"
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg_path.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"\nSalvo em config/zoom.json: \"{stem}\": \"{cw}:{ch}:{cx}:{cy}\"")
+
+
 def main():
-    video, ts, zooms, fx, fy = parse_args()
+    video, ts, zooms, fx, fy, salvar = parse_args()
     if not video.exists():
         print(f"[!] Vídeo não encontrado: {video}")
         sys.exit(1)
@@ -135,6 +149,14 @@ def main():
         print(f"[{letras[i]}] zoom={zoom:g}  crop={cw}:{ch}:{cx}:{cy}  "
               f"mantém {keep:.0f}%  ->  {saida.name}")
         print(f"     filtro ffmpeg: crop={cw}:{ch}:{cx}:{cy},scale={ALVO_W}:{ALVO_H}")
+
+    if salvar:
+        if len(zooms) == 1:
+            cw, ch, cx, cy = crop_rect(zooms[0], fx, fy)
+            salvar_crop(salvar, cw, ch, cx, cy)
+        else:
+            print(f"\n[!] --salvar precisa de um único --zoom (você passou {len(zooms)}). "
+                  f"Rode de novo com o zoom escolhido pra gravar.")
 
     print(f"\nAbra os previews em {OUT_DIR} e me diga qual zoom/pan agrada "
           f"(ou peça pra ajustar fx/fy/zoom).")

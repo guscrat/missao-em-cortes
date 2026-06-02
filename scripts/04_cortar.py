@@ -30,14 +30,22 @@ AENC = ["-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2"]
 SCALE_PAD = ("scale=1280:720:force_original_aspect_ratio=decrease,"
              "pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30")
 
-# Anti-overlay (lives MBL): zoom leve com recorte deslocado pra direita corta os 3
-# overlays sem blur — o valete.plus (círculo, topo-esq) sai pela esquerda; o contador
-# (topo-dir) e o QR (base-dir) saem pela direita. A parede "Academia MBL" (cenário)
-# fica. Calibrado na renan_live2 via scripts/calibrar_zoom.py (variante "a", zoom 1.30,
-# mantém 59% do quadro). Aplica-se ao corte E ao cold open.
-# Se uma fonte tiver layout diferente, recalibre o crop e ajuste ZOOM_CROP.
-USE_ZOOM = True
-ZOOM_CROP = "1476:830:200:100"  # crop=w:h:x:y na fonte 1080p, antes do scale 1280:720
+# Anti-overlay: zoom (crop+scale) que tira os overlays das lives sem blur. O recorte
+# é POR FONTE (estúdios diferentes têm overlays em posições diferentes), lido de
+# config/zoom.json por stem. Calibre fontes novas com scripts/calibrar_zoom.py.
+# Stem sem entrada no config roda SEM zoom (só scale+pad) e loga um aviso.
+# O zoom aplica-se ao corte E ao cold open.
+ZOOM_CONFIG = ROOT / "config" / "zoom.json"
+ZOOM_CROP = None
+if ZOOM_CONFIG.exists():
+    with ZOOM_CONFIG.open(encoding="utf-8") as f:
+        ZOOM_CROP = json.load(f).get(stem)
+USE_ZOOM = ZOOM_CROP is not None
+if USE_ZOOM:
+    print(f"Zoom anti-overlay: crop={ZOOM_CROP} (fonte '{stem}')")
+else:
+    print(f"[!] '{stem}' sem zoom calibrado em {ZOOM_CONFIG.name} — cortando SEM zoom "
+          f"(overlays podem aparecer). Calibre com scripts/calibrar_zoom.py")
 
 
 def slug(texto: str) -> str:

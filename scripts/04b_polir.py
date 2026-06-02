@@ -199,12 +199,14 @@ def chamar_claude(palavras, duracao, bloco_id):
     if raw.startswith("```"):
         raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
         raw = raw.rsplit("```", 1)[0].strip()
-    if not raw.startswith("{"):
-        s, e = raw.find("{"), raw.rfind("}")
-        if s != -1 and e != -1:
-            raw = raw[s:e + 1]
+    # Extrai o PRIMEIRO objeto JSON válido a partir do primeiro '{', ignorando
+    # texto/objetos extras que o modelo às vezes adiciona depois (ex: ele "pensa em
+    # voz alta" e cospe outro JSON). raw_decode para no fim do 1º objeto completo.
+    start = raw.find("{")
     try:
-        data = json.loads(raw)
+        if start == -1:
+            raise json.JSONDecodeError("nenhum '{' na resposta", raw, 0)
+        data, _ = json.JSONDecoder().raw_decode(raw[start:])
     except json.JSONDecodeError as e:
         DEBUG_DIR.mkdir(parents=True, exist_ok=True)
         dump = DEBUG_DIR / f"raw_polimento_{stem}_b{bloco_id:02d}.txt"
