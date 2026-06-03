@@ -5,16 +5,18 @@ sys.stdout.reconfigure(encoding='utf-8')
 from pathlib import Path
 from anthropic import Anthropic
 from dotenv import load_dotenv
+from _paths import achar_pasta, stem_de
 
 load_dotenv()
 
 ROOT = Path(__file__).parent.parent
 PROMPT = ROOT / "prompts" / "segmentacao.md"
 
-input_arg = sys.argv[1] if len(sys.argv) > 1 else str(ROOT / "outputs" / "live_teste_transcricao.txt")
-INPUT = Path(input_arg)
-stem = INPUT.stem.replace("_transcricao", "")  # ex: "renan_entrevista"
-OUTPUT = ROOT / "outputs" / f"{stem}_blocos.json"
+input_arg = sys.argv[1] if len(sys.argv) > 1 else "live_teste"
+PASTA = achar_pasta(input_arg)
+stem = stem_de(PASTA)
+INPUT = PASTA / "transcricao.txt"
+OUTPUT = PASTA / "blocos.json"
 
 prompt_sistema = PROMPT.read_text(encoding="utf-8")
 transcricao = INPUT.read_text(encoding="utf-8")
@@ -62,8 +64,9 @@ if not raw.startswith("{"):
 try:
     data = json.loads(raw)
 except json.JSONDecodeError as e:
-    (ROOT / "outputs" / "raw_response.txt").write_text(raw, encoding="utf-8")
-    raise RuntimeError(f"JSON inválido: {e}. Raw salvo em outputs/raw_response.txt")
+    dump = PASTA / "raw_response.txt"
+    dump.write_text(raw, encoding="utf-8")
+    raise RuntimeError(f"JSON inválido: {e}. Raw salvo em {dump}")
 
 # Validação mínima
 assert "blocos" in data, "Resposta sem chave 'blocos'"

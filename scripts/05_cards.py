@@ -5,13 +5,15 @@ from pathlib import Path
 import json
 import subprocess
 from PIL import Image, ImageDraw, ImageFont
+from _paths import achar_pasta, stem_de
 
 ROOT = Path(__file__).parent.parent
 
-input_arg = sys.argv[1] if len(sys.argv) > 1 else str(ROOT / "outputs" / "live_teste_blocos.json")
-BLOCOS_JSON = Path(input_arg)
-stem = BLOCOS_JSON.stem.replace("_blocos", "")
-OUT_DIR = ROOT / "outputs" / "cards" / stem
+input_arg = sys.argv[1] if len(sys.argv) > 1 else "live_teste"
+PASTA = achar_pasta(input_arg)
+stem = stem_de(PASTA)
+BLOCOS_JSON = PASTA / "blocos.json"
+OUT_DIR = PASTA / "cards"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # Tenta Anton primeiro; fallback pra Impact (Windows)

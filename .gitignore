@@ -3,3 +3,6 @@ outputs/
 .env
 .venv
 .claude/
+__pycache__/
+assets/*_norm.mp4
+assets/intro_trim.mp4

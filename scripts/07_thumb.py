@@ -14,14 +14,16 @@ from pathlib import Path
 import json
 import subprocess
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
+from _paths import achar_pasta, stem_de
 
 ROOT = Path(__file__).parent.parent
 
-input_arg = sys.argv[1] if len(sys.argv) > 1 else str(ROOT / "outputs" / "live_teste_blocos.json")
-BLOCOS_JSON = Path(input_arg)
-stem = BLOCOS_JSON.stem.replace("_blocos", "")
-CORTES_DIR = ROOT / "outputs" / "cortes" / stem
-OUT_DIR = ROOT / "outputs" / "thumbs" / stem
+input_arg = sys.argv[1] if len(sys.argv) > 1 else "live_teste"
+PASTA = achar_pasta(input_arg)
+stem = stem_de(PASTA)
+BLOCOS_JSON = PASTA / "blocos.json"
+CORTES_DIR = PASTA / "cortes"
+OUT_DIR = PASTA / "thumbs"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 FONT_PATHS = [

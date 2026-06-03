@@ -5,6 +5,7 @@ import subprocess
 import sys
 sys.stdout.reconfigure(encoding='utf-8')
 from pathlib import Path
+from _paths import achar_pasta, stem_de
 
 ROOT = Path(__file__).parent.parent
 
@@ -12,9 +13,10 @@ args = [a for a in sys.argv[1:] if not a.startswith("--")]
 flags = [a for a in sys.argv[1:] if a.startswith("--")]
 USE_POLIDO = "--polido" in flags
 
-input_arg = args[0] if args else str(ROOT / "outputs" / "live_teste_blocos.json")
-BLOCOS_JSON = Path(input_arg)
-stem = BLOCOS_JSON.stem.replace("_blocos", "")
+input_arg = args[0] if args else "live_teste"
+PASTA = achar_pasta(input_arg)
+stem = stem_de(PASTA)
+BLOCOS_JSON = PASTA / "blocos.json"
 INTRO = ROOT / "assets" / "intro.mp4"
 OUTRO = ROOT / "assets" / "outro.mp4"
 INTRO_NORM = ROOT / "assets" / "intro_norm.mp4"
@@ -31,9 +33,9 @@ VENC = ["-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "23",
 AENC = ["-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2"]
 SCALE_PAD = ("scale=1280:720:force_original_aspect_ratio=decrease,"
              "pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30")
-CARDS_DIR  = ROOT / "outputs" / "cards" / stem
-CORTES_DIR = ROOT / "outputs" / "cortes" / stem
-OUT_DIR    = ROOT / "outputs" / "finalizados" / stem
+CARDS_DIR  = PASTA / "cards"
+CORTES_DIR = PASTA / "cortes"
+OUT_DIR    = PASTA / "finalizados"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 

@@ -29,6 +29,7 @@ import subprocess
 from faster_whisper import WhisperModel
 from anthropic import Anthropic
 from dotenv import load_dotenv
+from _paths import achar_pasta, stem_de
 
 load_dotenv()
 
@@ -45,12 +46,13 @@ for f in flags:
 # já que os intervalos são por tempo/áudio e não mudam com o enquadramento.
 reaplicar = "--reaplicar" in flags
 
-input_arg = args[0] if args else str(ROOT / "outputs" / "live_teste_blocos.json")
-BLOCOS_JSON = Path(input_arg)
-stem = BLOCOS_JSON.stem.replace("_blocos", "")
-CORTES_DIR = ROOT / "outputs" / "cortes" / stem
-OUT_JSON = ROOT / "outputs" / f"{stem}_polimento.json"
-WORDS_JSON = ROOT / "outputs" / f"{stem}_words.json"  # do 02_transcribe: evita re-transcrever
+input_arg = args[0] if args else "live_teste"
+PASTA = achar_pasta(input_arg)
+stem = stem_de(PASTA)
+BLOCOS_JSON = PASTA / "blocos.json"
+CORTES_DIR = PASTA / "cortes"
+OUT_JSON = PASTA / "polimento.json"
+WORDS_JSON = PASTA / "words.json"  # do 02_transcribe: evita re-transcrever
 DEBUG_DIR = ROOT / "outputs" / "_debug"
 
 # Devem casar com os paddings do 04_cortar.py (pra mapear timestamp global -> relativo ao corte)

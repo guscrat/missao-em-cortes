@@ -10,13 +10,15 @@ sys.stdout.reconfigure(encoding='utf-8')
 from pathlib import Path
 import json
 import re
+from _paths import achar_pasta, stem_de
 
 ROOT = Path(__file__).parent.parent
 
-input_arg = sys.argv[1] if len(sys.argv) > 1 else str(ROOT / "outputs" / "live_teste_blocos.json")
-BLOCOS_JSON = Path(input_arg)
-stem = BLOCOS_JSON.stem.replace("_blocos", "")
-OUT = ROOT / "outputs" / f"{stem}_descricoes.txt"
+input_arg = sys.argv[1] if len(sys.argv) > 1 else "live_teste"
+PASTA = achar_pasta(input_arg)
+stem = stem_de(PASTA)
+BLOCOS_JSON = PASTA / "blocos.json"
+OUT = PASTA / "descricoes.txt"
 
 # Tags fixas do canal — vao em toda descricao
 TAGS_BASE = [

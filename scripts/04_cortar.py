@@ -5,14 +5,16 @@ import sys
 sys.stdout.reconfigure(encoding='utf-8')
 import re
 from pathlib import Path
+from _paths import achar_pasta, stem_de
 
 ROOT = Path(__file__).parent.parent
 
-input_arg = sys.argv[1] if len(sys.argv) > 1 else str(ROOT / "outputs" / "live_teste_blocos.json")
-BLOCOS_JSON = Path(input_arg)
-stem = BLOCOS_JSON.stem.replace("_blocos", "")
+input_arg = sys.argv[1] if len(sys.argv) > 1 else "live_teste"
+PASTA = achar_pasta(input_arg)
+stem = stem_de(PASTA)
+BLOCOS_JSON = PASTA / "blocos.json"
 VIDEO = ROOT / "inputs" / f"{stem}.mp4"
-OUT_DIR = ROOT / "outputs" / "cortes" / stem
+OUT_DIR = PASTA / "cortes"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 PADDING_INICIO_S  = 1.0   # folga antes do início do corte completo
