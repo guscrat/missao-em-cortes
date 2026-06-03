@@ -40,6 +40,10 @@ only_bloco = None
 for f in flags:
     if f.startswith("--bloco="):
         only_bloco = int(f.split("=", 1)[1])
+# --reaplicar: reusa os intervalos já salvos no polimento.json e só re-aplica o
+# jump cut aos cortes (sem whisper, sem API). Útil após re-cortar (ex: mudou o zoom),
+# já que os intervalos são por tempo/áudio e não mudam com o enquadramento.
+reaplicar = "--reaplicar" in flags
 
 input_arg = args[0] if args else str(ROOT / "outputs" / "live_teste_blocos.json")
 BLOCOS_JSON = Path(input_arg)
@@ -272,7 +276,15 @@ if OUT_JSON.exists():
 else:
     polimento = {"blocos": []}
 
-if only_bloco is not None:
+# Intervalos já salvos, por id (usado pelo --reaplicar)
+salvos_por_id = {pb["id"]: pb.get("intervalos_remover", []) for pb in polimento["blocos"]}
+
+if reaplicar and not salvos_por_id:
+    print(f"[!] --reaplicar sem polimento.json salvo em {OUT_JSON.name}. "
+          f"Rode primeiro sem --reaplicar pra gerar os intervalos.")
+    sys.exit(1)
+
+if only_bloco is not None and not reaplicar:
     print(f"Modo --bloco={only_bloco}: processando só esse bloco")
     polimento["blocos"] = [b for b in polimento["blocos"] if b["id"] != only_bloco]
 
@@ -288,17 +300,25 @@ for b in data["blocos"]:
         print(f"  AVISO: corte_{b['id']:02d}_*.mp4 nao encontrado em {CORTES_DIR}")
         continue
 
-    palavras, dur = palavras_do_corte(b, corte)
-    print(f"  corte tem {dur:.1f}s de vídeo")
+    if reaplicar:
+        if b["id"] not in salvos_por_id:
+            print(f"  AVISO: bloco {b['id']} não está no polimento.json salvo — pulando")
+            continue
+        intervalos = salvos_por_id[b["id"]]
+        dur = duracao_video(corte)
+        print(f"  Reaplicando {len(intervalos)} intervalo(s) salvos (sem API)")
+    else:
+        palavras, dur = palavras_do_corte(b, corte)
+        print(f"  corte tem {dur:.1f}s de vídeo")
 
-    print(f"  Chamando Claude (conservador)...")
-    try:
-        intervalos, usage = chamar_claude(palavras, dur, b["id"])
-        total_in_tokens += usage.input_tokens
-        total_out_tokens += usage.output_tokens
-    except Exception as e:
-        print(f"  ERRO Claude: {e}. Pulando este bloco.")
-        continue
+        print(f"  Chamando Claude (conservador)...")
+        try:
+            intervalos, usage = chamar_claude(palavras, dur, b["id"])
+            total_in_tokens += usage.input_tokens
+            total_out_tokens += usage.output_tokens
+        except Exception as e:
+            print(f"  ERRO Claude: {e}. Pulando este bloco.")
+            continue
 
     if not intervalos:
         print(f"  Nenhum trecho pra cortar — copiando original")
@@ -318,17 +338,21 @@ for b in data["blocos"]:
         print(f"  ERRO ffmpeg: {e}")
         continue
 
-    polimento["blocos"].append({
-        "id": b["id"],
-        "tema": b["tema"],
-        "corte_original": corte.name,
-        "corte_polido": saida.name,
-        "duracao_original_s": dur,
-        "tempo_removido_s": sum(iv["t_fim"] - iv["t_inicio"] for iv in intervalos),
-        "intervalos_remover": intervalos,
-    })
+    if not reaplicar:
+        polimento["blocos"].append({
+            "id": b["id"],
+            "tema": b["tema"],
+            "corte_original": corte.name,
+            "corte_polido": saida.name,
+            "duracao_original_s": dur,
+            "tempo_removido_s": sum(iv["t_fim"] - iv["t_inicio"] for iv in intervalos),
+            "intervalos_remover": intervalos,
+        })
 
-OUT_JSON.write_text(json.dumps(polimento, indent=2, ensure_ascii=False), encoding="utf-8")
-print(f"\nOK Polimento salvo em {OUT_JSON}")
-custo_usd = (total_in_tokens / 1_000_000) * 3 + (total_out_tokens / 1_000_000) * 15
-print(f"Custo total: input {total_in_tokens:,} tok · output {total_out_tokens:,} tok (~${custo_usd:.2f})")
+if reaplicar:
+    print(f"\nOK Jump cut reaplicado a partir de {OUT_JSON.name} (sem chamada de API)")
+else:
+    OUT_JSON.write_text(json.dumps(polimento, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"\nOK Polimento salvo em {OUT_JSON}")
+    custo_usd = (total_in_tokens / 1_000_000) * 3 + (total_out_tokens / 1_000_000) * 15
+    print(f"Custo total: input {total_in_tokens:,} tok · output {total_out_tokens:,} tok (~${custo_usd:.2f})")
