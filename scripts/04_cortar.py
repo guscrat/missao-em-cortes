@@ -49,6 +49,19 @@ else:
     print(f"[!] '{stem}' sem zoom calibrado em {ZOOM_CONFIG.name} — cortando SEM zoom "
           f"(overlays podem aparecer). Calibre com scripts/calibrar_zoom.py")
 
+# Logo do canal (marca queimada). Aplicada ao corte E ao cold open, por cima do
+# zoom/scale (sobre o quadro final 1280x720), canto superior-direito. Se o arquivo
+# não existir, roda sem logo. Posição oposta à marca d'água do YouTube.
+LOGO = ROOT / "assets" / "logoCanal.png"
+USE_LOGO = LOGO.exists()
+LOGO_W = 110          # largura do selo em px (logo é quadrada 150x150)
+LOGO_MARGIN = 28      # margem das bordas em px
+LOGO_POS = f"W-w-{LOGO_MARGIN}:{LOGO_MARGIN}"   # superior-direito
+if USE_LOGO:
+    print(f"Logo do canal: {LOGO.name} ({LOGO_W}px, superior-direito)")
+else:
+    print(f"[!] {LOGO.name} não encontrada — cortando SEM logo do canal")
+
 
 def slug(texto: str) -> str:
     s = texto.lower()
@@ -80,18 +93,24 @@ def build_cmd(inicio_s: float, duracao: float, saida: Path,
     else:
         geo = SCALE_PAD
 
-    return [
-        "ffmpeg", "-y",
-        "-ss", f"{inicio_s:.3f}",
-        "-i", str(VIDEO),
-        "-t", f"{duracao:.3f}",
-        "-vf", f"{geo},{fade_chain}",
-        "-af", af,
-        *VENC, *AENC,
-        "-movflags", "+faststart",
-        "-loglevel", "warning",
-        str(saida),
-    ]
+    cmd = ["ffmpeg", "-y", "-ss", f"{inicio_s:.3f}", "-i", str(VIDEO)]
+
+    if USE_LOGO:
+        # Logo entra como 2º input e é sobreposta via filter_complex (overlay
+        # repete o frame único pela duração toda). Áudio também passa pelo
+        # filtergraph pra poder usar -map junto com a saída de vídeo rotulada.
+        cmd += ["-i", str(LOGO), "-t", f"{duracao:.3f}",
+                "-filter_complex",
+                f"[0:v]{geo},{fade_chain}[base];"
+                f"[1:v]scale={LOGO_W}:-1[lg];"
+                f"[base][lg]overlay={LOGO_POS}[v];"
+                f"[0:a]{af}[a]",
+                "-map", "[v]", "-map", "[a]"]
+    else:
+        cmd += ["-t", f"{duracao:.3f}", "-vf", f"{geo},{fade_chain}", "-af", af]
+
+    cmd += [*VENC, *AENC, "-movflags", "+faststart", "-loglevel", "warning", str(saida)]
+    return cmd
 
 
 def run_ffmpeg(cmd: list, saida: Path, label: str) -> None:

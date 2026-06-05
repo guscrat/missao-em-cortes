@@ -2,5 +2,6 @@
   "_comment": "Zoom anti-overlay por fonte. Valor = crop=w:h:x:y na fonte 1080p, aplicado antes do scale 1280:720 no 04_cortar.py. Calibre fontes novas com: uv run py scripts/calibrar_zoom.py <video> --zoom=N --fx=F --fy=F --salvar=<stem>. Stem sem entrada aqui roda SEM zoom (so scale+pad) e loga um aviso.",
   "renan_live2": "1476:830:200:100",
   "renan_vorcaro": "1476:830:200:100",
-  "arthur_flavio_taxar": "1454:818:196:58"
+  "arthur_flavio_taxar": "1454:818:196:58",
+  "renan_flow": "1668:938:252:50"
 }
