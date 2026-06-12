@@ -8,9 +8,10 @@ Pra cada corte_NN_*.mp4 ja gerado pelo 04_cortar.py:
   4. Funde os intervalos e aplica jump cut via ffmpeg filter_complex select/aselect
   5. Salva como corte_NN_<slug>_polido.mp4 na mesma pasta
 
-Uso: uv run py scripts/04b_polir.py <stem> [--bloco=N] [--reaplicar]
+Uso: uv run py scripts/04b_polir.py <stem> [--bloco=N] [--reaplicar] [--sem-llm]
 
-Custo estimado: ~$0.10-0.15/live (depende do tamanho dos cortes)
+Custo estimado: ~$0.10-0.15/live (depende do tamanho dos cortes).
+Com --sem-llm: $0 (só o passo 2 — silêncios programáticos; pula o Claude).
 """
 import os
 import sys
@@ -47,6 +48,9 @@ for f in flags:
 # jump cut aos cortes (sem whisper, sem API). Útil após re-cortar (ex: mudou o zoom),
 # já que os intervalos são por tempo/áudio e não mudam com o enquadramento.
 reaplicar = "--reaplicar" in flags
+# --sem-llm: só a detecção programática de silêncios (custo $0). Abre mão dos
+# cortes que exigem julgamento (fillers extremos, problemas técnicos).
+sem_llm = "--sem-llm" in flags
 
 input_arg = args[0] if args else "live_teste"
 PASTA = achar_pasta(input_arg)
@@ -102,10 +106,18 @@ REGRAS DA LISTA:
 - NÃO invente intervalos
 """
 
-client = Anthropic()
+# Client criado sob demanda: --sem-llm/--reaplicar rodam sem ANTHROPIC_API_KEY
+_client = None
 
 # Whisper carregado sob demanda: só é preciso no fallback (quando falta o words.json)
 _model = None
+
+
+def get_client():
+    global _client
+    if _client is None:
+        _client = Anthropic()
+    return _client
 
 
 def get_model():
@@ -240,7 +252,7 @@ def chamar_claude(palavras, duracao, bloco_id):
         f"Transcrição word-level:\n{texto}\n\n"
         "Identifique intervalos pra remover seguindo os critérios do sistema."
     )
-    response = client.messages.create(
+    response = get_client().messages.create(
         model="claude-sonnet-4-6",
         max_tokens=4000,
         system=PROMPT_SISTEMA,
@@ -361,15 +373,18 @@ for b in data["blocos"]:
             print(f"  {len(silencios)} silêncio(s) >{GAP_SILENCIO_S:g}s detectados "
                   f"automaticamente ({t_sil:.1f}s, sem API)")
 
-        print(f"  Chamando Claude (conservador)...")
-        try:
-            intervalos_llm, usage = chamar_claude(palavras, dur, b["id"])
-            total_in_tokens += usage.input_tokens
-            total_out_tokens += usage.output_tokens
-        except Exception as e:
-            print(f"  ERRO Claude: {e}. Pulando este bloco.")
-            continue
-        intervalos = mesclar_intervalos(silencios + intervalos_llm)
+        if sem_llm:
+            intervalos = mesclar_intervalos(silencios)
+        else:
+            print(f"  Chamando Claude (conservador)...")
+            try:
+                intervalos_llm, usage = chamar_claude(palavras, dur, b["id"])
+                total_in_tokens += usage.input_tokens
+                total_out_tokens += usage.output_tokens
+            except Exception as e:
+                print(f"  ERRO Claude: {e}. Pulando este bloco.")
+                continue
+            intervalos = mesclar_intervalos(silencios + intervalos_llm)
 
     if not intervalos:
         print(f"  Nenhum trecho pra cortar — copiando original")
@@ -408,5 +423,8 @@ else:
     polimento["blocos"].sort(key=lambda pb: pb["id"])
     OUT_JSON.write_text(json.dumps(polimento, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"\nOK Polimento salvo em {OUT_JSON}")
-    custo_usd = (total_in_tokens / 1_000_000) * 3 + (total_out_tokens / 1_000_000) * 15
-    print(f"Custo total: input {total_in_tokens:,} tok · output {total_out_tokens:,} tok (~${custo_usd:.2f})")
+    if sem_llm:
+        print("Custo total: $0 (modo --sem-llm, só silêncios programáticos)")
+    else:
+        custo_usd = (total_in_tokens / 1_000_000) * 3 + (total_out_tokens / 1_000_000) * 15
+        print(f"Custo total: input {total_in_tokens:,} tok · output {total_out_tokens:,} tok (~${custo_usd:.2f})")
