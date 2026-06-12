@@ -5,6 +5,7 @@ import subprocess
 import sys
 sys.stdout.reconfigure(encoding='utf-8')
 from pathlib import Path
+from _ffmpeg import VENC, AENC, SCALE_PAD
 from _paths import achar_pasta, stem_de
 
 ROOT = Path(__file__).parent.parent
@@ -26,13 +27,6 @@ INTRO_TRIM = ROOT / "assets" / "intro_trim.mp4"
 # Encurta a intro pra prender mais cedo (asset do Canva tem 5s). 0 = não cortar.
 INTRO_SEGUNDOS = 3.0
 
-# Formato canônico do pipeline (igual ao 04/05). Com tudo nesse formato, a montagem
-# concatena com -c copy (instantâneo) em vez de re-encodar o vídeo inteiro.
-VENC = ["-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "23",
-        "-b:v", "0", "-pix_fmt", "yuv420p"]
-AENC = ["-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2"]
-SCALE_PAD = ("scale=1280:720:force_original_aspect_ratio=decrease,"
-             "pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30")
 CARDS_DIR  = PASTA / "cards"
 CORTES_DIR = PASTA / "cortes"
 OUT_DIR    = PASTA / "finalizados"
@@ -43,6 +37,42 @@ def slug(texto):
     s = re.sub(r"[^\w\s-]", "", texto.lower())
     s = re.sub(r"[\s_-]+", "_", s)
     return s.strip("_")[:50]
+
+
+def duracao_s(video_path: Path) -> float:
+    out = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", str(video_path)],
+        capture_output=True, text=True
+    ).stdout.strip()
+    return float(out)
+
+
+def atualizado(saida: Path, entrada: Path) -> bool:
+    """True se a saída existe e é mais nova que a entrada (não precisa regerar)."""
+    return saida.exists() and saida.stat().st_mtime >= entrada.stat().st_mtime
+
+
+def descrever_formato(video_path: Path) -> str:
+    """Resumo compacto dos streams (pra apontar qual segmento quebrou o -c copy)."""
+    out = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries",
+         "stream=codec_type,codec_name,width,height,r_frame_rate,pix_fmt,sample_rate,channels",
+         "-of", "json", str(video_path)],
+        capture_output=True, text=True
+    ).stdout
+    try:
+        streams = json.loads(out)["streams"]
+    except (json.JSONDecodeError, KeyError):
+        return "(ffprobe falhou)"
+    partes = []
+    for s in streams:
+        if s.get("codec_type") == "video":
+            partes.append(f"{s.get('codec_name')} {s.get('width')}x{s.get('height')} "
+                          f"{s.get('r_frame_rate')}fps {s.get('pix_fmt')}")
+        elif s.get("codec_type") == "audio":
+            partes.append(f"{s.get('codec_name')} {s.get('sample_rate')}Hz {s.get('channels')}ch")
+    return " | ".join(partes) or "(sem streams)"
 
 
 def tem_stream_audio(video_path: Path) -> bool:
@@ -132,18 +162,24 @@ def build_concat_cmd(segments: list[tuple[Path, bool]], saida: Path) -> list:
     ]
 
 
-# === Normaliza intro e outro (uma vez só) ===
-print("Normalizando assets do Canva...")
-intro_tem_audio = normalizar_asset(INTRO, INTRO_NORM)
-outro_tem_audio = normalizar_asset(OUTRO, OUTRO_NORM)
-print(f"  Intro: áudio {'presente' if intro_tem_audio else 'gerado silencioso'}")
-print(f"  Outro: áudio {'presente' if outro_tem_audio else 'gerado silencioso'}")
+# === Normaliza intro e outro (só se o asset do Canva mudou) ===
+print("Preparando assets do Canva...")
+for entrada, saida, nome in [(INTRO, INTRO_NORM, "Intro"), (OUTRO, OUTRO_NORM, "Outro")]:
+    if atualizado(saida, entrada):
+        print(f"  {nome}: {saida.name} reaproveitado (asset não mudou)")
+    else:
+        tem_audio = normalizar_asset(entrada, saida)
+        print(f"  {nome}: normalizado · áudio {'presente' if tem_audio else 'gerado silencioso'}")
 
-# Encurta a intro (asset do Canva ~5s) pra prender o espectador mais cedo
+# Encurta a intro (asset do Canva ~5s) pra prender o espectador mais cedo.
+# Regera se o norm mudou OU se INTRO_SEGUNDOS foi alterado (checa pela duração).
 if INTRO_SEGUNDOS and INTRO_SEGUNDOS > 0:
-    trim_video(INTRO_NORM, INTRO_TRIM, INTRO_SEGUNDOS)
+    if atualizado(INTRO_TRIM, INTRO_NORM) and abs(duracao_s(INTRO_TRIM) - INTRO_SEGUNDOS) < 0.2:
+        print(f"  Intro: trim de {INTRO_SEGUNDOS:g}s reaproveitado")
+    else:
+        trim_video(INTRO_NORM, INTRO_TRIM, INTRO_SEGUNDOS)
+        print(f"  Intro: cortada pra {INTRO_SEGUNDOS:g}s")
     INTRO_FINAL = INTRO_TRIM
-    print(f"  Intro: cortada pra {INTRO_SEGUNDOS:g}s")
 else:
     INTRO_FINAL = INTRO_NORM
 
@@ -202,7 +238,10 @@ for b in data["blocos"]:
     result = montar_copy([p for p, _ in segments], saida, lista_tmp)
     modo = "copy"
     if result.returncode != 0:
-        print(f"  concat -c copy falhou — re-encodando (fallback)...")
+        print(f"  concat -c copy falhou — formato dos segmentos (procure o destoante):")
+        for p, _ in segments:
+            print(f"    {p.name}: {descrever_formato(p)}")
+        print(f"  re-encodando (fallback)...")
         result = subprocess.run(build_concat_cmd(segments, saida),
                                 capture_output=True, text=True)
         modo = "re-encode"
@@ -211,13 +250,8 @@ for b in data["blocos"]:
     if result.returncode != 0:
         print(f"  ERRO:\n{result.stderr[-800:]}")
     else:
-        size_mb    = saida.stat().st_size / (1024 * 1024)
-        duration_s = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-             "-of", "default=noprint_wrappers=1:nokey=1", str(saida)],
-            capture_output=True, text=True
-        ).stdout.strip()
+        size_mb = saida.stat().st_size / (1024 * 1024)
         print(f"  OK {saida.name} ({modo})")
-        print(f"    {size_mb:.1f} MB · {float(duration_s)/60:.1f} min")
+        print(f"    {size_mb:.1f} MB · {duracao_s(saida)/60:.1f} min")
 
 print(f"\nOK Vídeos finais salvos em {OUT_DIR}")

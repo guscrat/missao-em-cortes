@@ -46,10 +46,6 @@ LARGURA, ALTURA = 1280, 720
 FRAME_W = 760  # frame ocupa a metade esquerda + um pouco
 FRAME_X = 150  # desloca o frame pra direita pra "centralizar" mais o speaker
 
-def ts_to_seconds(ts):
-    h, m, s = ts.split(":")
-    return int(h) * 3600 + int(m) * 60 + int(s)
-
 def duracao_segundos(video):
     probe = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",

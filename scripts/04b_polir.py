@@ -1,13 +1,14 @@
-"""Polimento dos cortes: re-transcreve word-level + Claude conservador + jump cut.
+"""Polimento dos cortes: silencios programaticos + Claude conservador + jump cut.
 
 Pra cada corte_NN_*.mp4 ja gerado pelo 04_cortar.py:
-  1. Re-transcreve com faster-whisper + word_timestamps=True
-  2. Envia palavras com timestamps pro Claude (postura conservadora)
-  3. Claude devolve intervalos pra REMOVER (silencios >3s, fillers extremos, problemas tecnicos)
-  4. Aplica jump cut via ffmpeg filter_complex select/aselect
+  1. Reaproveita os word-timestamps do words.json (fallback: re-transcreve com whisper)
+  2. Detecta silencios >3s PROGRAMATICAMENTE (gap entre palavras — sem API)
+  3. Envia palavras pro Claude (conservador), que devolve so o que exige julgamento:
+     fillers extremos e problemas tecnicos
+  4. Funde os intervalos e aplica jump cut via ffmpeg filter_complex select/aselect
   5. Salva como corte_NN_<slug>_polido.mp4 na mesma pasta
 
-Uso: uv run py scripts/04b_polir.py outputs/<stem>_blocos.json
+Uso: uv run py scripts/04b_polir.py <stem> [--bloco=N] [--reaplicar]
 
 Custo estimado: ~$0.10-0.15/live (depende do tamanho dos cortes)
 """
@@ -29,6 +30,7 @@ import subprocess
 from faster_whisper import WhisperModel
 from anthropic import Anthropic
 from dotenv import load_dotenv
+from _ffmpeg import VENC, AENC
 from _paths import achar_pasta, stem_de
 
 load_dotenv()
@@ -65,10 +67,12 @@ Recebe a transcrição word-level (cada linha: [start-end] palavra) de um corte.
 Sua tarefa: identificar TRECHOS pra REMOVER que melhorem o fluxo SEM perder contexto.
 
 CRITÉRIOS (SEJA CONSERVADOR — prefira deixar passar a cortar demais):
-1. Silêncios > 3 segundos detectáveis pela ausência de palavras na transcrição (problemas técnicos, hesitações longas, pausas pra ler tela)
-2. Problemas técnicos óbvios ditos pelo speaker ("ah, espera, deixa eu arrumar a câmera", "sumiu o som", "a internet caiu")
-3. Cadeias longas de fillers que atrapalham ("éééé éééé éééé éééé", "hmmm hmmm hmmm" prolongados)
-4. Trechos onde o speaker está visivelmente procurando conteúdo sem falar nada relevante (rolando feed, abrindo link)
+1. Problemas técnicos óbvios ditos pelo speaker ("ah, espera, deixa eu arrumar a câmera", "sumiu o som", "a internet caiu")
+2. Cadeias longas de fillers que atrapalham ("éééé éééé éééé éééé", "hmmm hmmm hmmm" prolongados)
+3. Trechos onde o speaker está visivelmente procurando conteúdo sem falar nada relevante (rolando feed, abrindo link)
+
+NÃO liste silêncios: gaps >3s entre palavras já são removidos automaticamente por
+um passo anterior do pipeline — não precisa caçar buracos nos timestamps.
 
 NUNCA REMOVA:
 - Pausas curtas (<3s) — fazem parte do ritmo
@@ -108,7 +112,11 @@ def get_model():
     global _model
     if _model is None:
         print("Carregando whisper medium (word-level)...")
-        _model = WhisperModel("medium", device="cuda", compute_type="int8_float16")
+        try:
+            _model = WhisperModel("medium", device="cuda", compute_type="int8_float16")
+        except Exception as e:
+            print(f"[!] CUDA indisponível ({e}) — caindo pra CPU (4-5x mais lento)")
+            _model = WhisperModel("medium", device="cpu", compute_type="int8")
     return _model
 
 
@@ -183,6 +191,43 @@ def palavras_do_corte(bloco, corte):
     return palavras, dur
 
 
+# Silêncios são detectados PROGRAMATICAMENTE (gap entre palavras consecutivas):
+# determinístico e grátis. O LLM fica só com o que exige julgamento (fillers,
+# problemas técnicos, speaker procurando conteúdo).
+GAP_SILENCIO_S    = 3.0   # gap mínimo entre palavras pra virar corte
+MARGEM_SILENCIO_S = 0.3   # respiro mantido em cada ponta do gap
+PROTECAO_INICIO_S = 30.0  # nunca cortar os primeiros 30s (mesma regra do prompt)
+
+
+def detectar_silencios(palavras):
+    """Intervalos de silêncio >GAP_SILENCIO_S entre palavras consecutivas."""
+    out = []
+    for a, b in zip(palavras, palavras[1:]):
+        gap = b["start"] - a["end"]
+        if gap <= GAP_SILENCIO_S:
+            continue
+        ini = a["end"] + MARGEM_SILENCIO_S
+        fim = b["start"] - MARGEM_SILENCIO_S
+        if ini < PROTECAO_INICIO_S:
+            continue
+        out.append({"t_inicio": round(ini, 3), "t_fim": round(fim, 3),
+                    "motivo": f"silêncio de {gap:.1f}s (detectado automaticamente)"})
+    return out
+
+
+def mesclar_intervalos(intervalos):
+    """Ordena por início e funde sobreposições (silêncios + intervalos do LLM)."""
+    ivs = sorted(intervalos, key=lambda iv: iv["t_inicio"])
+    out = []
+    for iv in ivs:
+        if out and iv["t_inicio"] <= out[-1]["t_fim"]:
+            if iv["t_fim"] > out[-1]["t_fim"]:
+                out[-1]["t_fim"] = iv["t_fim"]
+            continue
+        out.append(dict(iv))
+    return out
+
+
 PALAVRAS_FILTRO = ("ignorar", "manter", "abaixo do limiar", "abaixo do limite",
                    "pequeno demais", "dentro do limite", "limítrofe")
 
@@ -252,9 +297,7 @@ def aplicar_jumpcut(input_mp4, output_mp4, intervalos):
         "-i", str(input_mp4),
         "-filter_complex", fc,
         "-map", "[v]", "-map", "[a]",
-        "-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "23",
-        "-b:v", "0", "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
+        *VENC, *AENC,
         "-movflags", "+faststart",
         "-loglevel", "warning",
         str(output_mp4),
@@ -288,7 +331,6 @@ if reaplicar and not salvos_por_id:
 
 if only_bloco is not None and not reaplicar:
     print(f"Modo --bloco={only_bloco}: processando só esse bloco")
-    polimento["blocos"] = [b for b in polimento["blocos"] if b["id"] != only_bloco]
 
 total_in_tokens = 0
 total_out_tokens = 0
@@ -313,14 +355,21 @@ for b in data["blocos"]:
         palavras, dur = palavras_do_corte(b, corte)
         print(f"  corte tem {dur:.1f}s de vídeo")
 
+        silencios = detectar_silencios(palavras)
+        if silencios:
+            t_sil = sum(iv["t_fim"] - iv["t_inicio"] for iv in silencios)
+            print(f"  {len(silencios)} silêncio(s) >{GAP_SILENCIO_S:g}s detectados "
+                  f"automaticamente ({t_sil:.1f}s, sem API)")
+
         print(f"  Chamando Claude (conservador)...")
         try:
-            intervalos, usage = chamar_claude(palavras, dur, b["id"])
+            intervalos_llm, usage = chamar_claude(palavras, dur, b["id"])
             total_in_tokens += usage.input_tokens
             total_out_tokens += usage.output_tokens
         except Exception as e:
             print(f"  ERRO Claude: {e}. Pulando este bloco.")
             continue
+        intervalos = mesclar_intervalos(silencios + intervalos_llm)
 
     if not intervalos:
         print(f"  Nenhum trecho pra cortar — copiando original")
@@ -341,6 +390,8 @@ for b in data["blocos"]:
         continue
 
     if not reaplicar:
+        # Substitui a entrada anterior do bloco (se houver) em vez de duplicar
+        polimento["blocos"] = [pb for pb in polimento["blocos"] if pb["id"] != b["id"]]
         polimento["blocos"].append({
             "id": b["id"],
             "tema": b["tema"],
@@ -354,6 +405,7 @@ for b in data["blocos"]:
 if reaplicar:
     print(f"\nOK Jump cut reaplicado a partir de {OUT_JSON.name} (sem chamada de API)")
 else:
+    polimento["blocos"].sort(key=lambda pb: pb["id"])
     OUT_JSON.write_text(json.dumps(polimento, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"\nOK Polimento salvo em {OUT_JSON}")
     custo_usd = (total_in_tokens / 1_000_000) * 3 + (total_out_tokens / 1_000_000) * 15

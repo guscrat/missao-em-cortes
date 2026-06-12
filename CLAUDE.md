@@ -33,7 +33,8 @@ Canal de YouTube de cortes de lives, entrevistas, debates e eventos do **Partido
 missao-em-cortes/
 ├── inputs/                          # Vídeos baixados (mp4)
 │   ├── live_teste.mp4
-│   └── renan_entrevista.mp4
+│   ├── renan_entrevista.mp4
+│   └── <stem>.url                    # URL da fonte (salva pelo 01_baixar, lida pelo 08)
 ├── outputs/                          # Tudo gerado pelo pipeline — UMA PASTA POR VÍDEO
 │   ├── <AAAA-MM-DD>_<stem>/          # ex: 2026-06-03_renan_vorcaro/ (data = processamento)
 │   │   ├── transcricao.txt
@@ -55,6 +56,8 @@ missao-em-cortes/
 │   ├── outro_norm.mp4
 │   └── fonts/Anton-Regular.ttf
 ├── scripts/                          # Pipeline numerado
+│   ├── pipeline.py                   # orquestrador: roda (02)→03→04→(4b)→05→06→07→08 em sequência
+│   ├── 01_baixar.py                  # yt-dlp + salva inputs/<stem>.url
 │   ├── 02_transcribe.py
 │   ├── 03_segmentar.py
 │   ├── 04_cortar.py
@@ -65,6 +68,7 @@ missao-em-cortes/
 │   ├── 08_descricao.py               # gera txt com titulo+descricao+tags pro YouTube
 │   ├── calibrar_zoom.py              # off-pipeline: calibra visualmente o ZOOM_CROP anti-overlay
 │   ├── _paths.py                     # resolve outputs/<data>_<stem>/ por stem (helper compartilhado)
+│   ├── _ffmpeg.py                    # formato canônico (VENC/AENC/SCALE_PAD) compartilhado pelos steps 4/4b/5/6
 │   └── _migrar_outputs.py            # one-off: migrou a estrutura antiga pro layout por vídeo
 ├── prompts/
 │   └── segmentacao.md                # Prompt do LLM pra topic segmentation
@@ -76,7 +80,7 @@ missao-em-cortes/
 
 | # | Etapa | Script / Comando | Tempo aprox. | Custo |
 |---|---|---|---|---|
-| 1 | Download | `yt-dlp -f "299+140" -o "inputs/<stem>.mp4" URL` | 1-3min | grátis |
+| 1 | Download | `uv run py scripts/01_baixar.py URL <stem>` | 1-3min | grátis |
 | 2 | Transcrição | `uv run py scripts/02_transcribe.py inputs/<stem>.mp4` | ~6-12min (GTX 1650) | grátis (local) |
 | 3 | Segmentação via LLM | `uv run py scripts/03_segmentar.py <stem>` | 30-90s | ~$0.20 |
 | 4 | Cortes | `uv run py scripts/04_cortar.py <stem>` | ~2-4min (NVENC) | grátis |
@@ -86,19 +90,21 @@ missao-em-cortes/
 | 7* | Thumbs (off-pipeline) | `uv run py scripts/07_thumb.py <stem>` | <1min | grátis |
 | 8 | Descrições pro YouTube | `uv run py scripts/08_descricao.py <stem>` | <5s | grátis |
 
+> **Orquestrador:** `uv run py scripts/pipeline.py <stem> [--polir] [--desde=N]` roda os steps 2→8 em sequência (mesmos scripts, para na primeira falha e mostra o `--desde` pra retomar). Sem `--desde`, pula o step 2 se a transcrição já existe. `--polir` inclui o 04b e monta com `--polido`. O download (step 1) fica de fora — rode antes, uma vez.
+
 > **Organização dos outputs:** uma pasta por vídeo em `outputs/<AAAA-MM-DD>_<stem>/` (data de processamento; prefixo ISO faz a ordenação alfabética = cronológica). Os steps 3-8 recebem só o **stem** (ex: `renan_vorcaro`) e o `scripts/_paths.py` resolve a pasta. Se houver mais de uma pasta pro mesmo stem (ambíguo), o script **falha alto** e lista as opções em vez de adivinhar — passe então o nome completo da pasta (ex: `2026-06-03_renan_vorcaro`). O step 2 (transcrição) recebe o caminho do vídeo em `inputs/` e cria/reusa a pasta do stem. Reprocessar um stem **reusa** a mesma pasta (não duplica).
 
 O step 4 gera **dois arquivos por bloco**: `corte_NN_<slug>.mp4` (corte completo, fade out 0.5s) e `cold_NN_<slug>.mp4` (cold open 15-30s, fade in+out 0.4s). Se o JSON não tiver `cold_open`, gera só o corte e loga um aviso.
 
-O step 4b é **opcional** — pra cada `corte_NN_*.mp4` ele: (1) reaproveita os word-level timestamps do `words.json` (gerado no step 2), fatiando pelo intervalo do bloco — **não re-transcreve** (cai pra re-transcrição via whisper só se o words.json não existir), (2) manda pro Claude com prompt conservador pra listar intervalos de silêncio >3s, fillers extremos e problemas técnicos, (3) aplica jump cut via `ffmpeg filter_complex select/aselect` e salva `corte_NN_<slug>_polido.mp4` na mesma pasta. Filtro defensivo descarta intervalos com motivo "ignorar/manter/abaixo do limiar". Suporta `--bloco=N` pra reprocessar só um bloco. Os intervalos ficam em `polimento.json`; `--reaplicar` re-aplica os intervalos salvos aos cortes sem chamar o LLM (útil após re-cortar, ex: mudou o zoom). Cold opens **não** são polidos. Pra usar os polidos na montagem: `06_montar.py <stem> --polido` (gera `video_NN_<slug>_polido.mp4`).
+O step 4b é **opcional** — pra cada `corte_NN_*.mp4` ele: (1) reaproveita os word-level timestamps do `words.json` (gerado no step 2), fatiando pelo intervalo do bloco — **não re-transcreve** (cai pra re-transcrição via whisper só se o words.json não existir), (2) detecta silêncios >3s **programaticamente** (gap entre palavras consecutivas — determinístico, sem API, nunca nos primeiros 30s), (3) manda pro Claude com prompt conservador só o que exige julgamento (fillers extremos e problemas técnicos), funde os intervalos e aplica jump cut via `ffmpeg filter_complex select/aselect` e salva `corte_NN_<slug>_polido.mp4` na mesma pasta. Filtro defensivo descarta intervalos com motivo "ignorar/manter/abaixo do limiar". Suporta `--bloco=N` pra reprocessar só um bloco. Os intervalos ficam em `polimento.json`; `--reaplicar` re-aplica os intervalos salvos aos cortes sem chamar o LLM (útil após re-cortar, ex: mudou o zoom). Cold opens **não** são polidos. Pra usar os polidos na montagem: `06_montar.py <stem> --polido` (gera `video_NN_<slug>_polido.mp4`).
 
 O step 7 é opcional e não afeta a montagem — gera 3 variantes de thumb por bloco (`thumb_NN_a/b/c.png`) com frames extraídos a 25/50/75% do cold open. Você escolhe a melhor variante e finaliza no Canva (colar collage de figuras na metade direita). Layout: frame do speaker deslocado pra direita (`FRAME_X=150`), título adaptativo (fonte 96→64 dependendo do comprimento), gradient escuro embaixo pra contraste.
 
-O step 8 gera `descricoes.txt` (na pasta do vídeo) com, pra cada bloco: título sugerido (com contagem de chars), descrição (resumo + ganchos como bullets), créditos do canal, hashtags e lista de tags pronta pra colar no YouTube Studio. **Sem chamada de API** — reaproveita o que o LLM já produziu no `blocos.json`. Deixa placeholder `[COLAR URL DA LIVE AQUI]` pra preencher antes do upload.
+O step 8 gera `descricoes.txt` (na pasta do vídeo) com, pra cada bloco: título sugerido (com contagem de chars), descrição (resumo + ganchos como bullets), créditos do canal, hashtags e lista de tags pronta pra colar no YouTube Studio. **Sem chamada de API** — reaproveita o que o LLM já produziu no `blocos.json`. A URL da fonte é preenchida automaticamente a partir de `inputs/<stem>.url` (salva pelo `01_baixar.py`); sem o arquivo, deixa o placeholder `[COLAR URL DA LIVE AQUI]` e avisa no log.
 
 **Total por live:** ~15-25min de processamento, ~$0.20 de API (estimativa pós-otimização NVENC/concat-copy — validar na próxima live processada).
 
-> **Formato canônico:** todo o pipeline (steps 4, 4b, 5, 6) produz vídeo **1280x720, 30fps, yuv420p, H.264 via NVENC (GPU), áudio AAC 44100 Hz stereo**. Isso é o que permite o `06_montar` concatenar com `-c copy` (instantâneo) em vez de re-encodar o vídeo inteiro. Se algum segmento sair fora do padrão, o montar detecta a falha do `-c copy` e cai automaticamente pro fallback de re-encode (`filter_complex`). Pra trocar de volta pra CPU/libx264, edite os blocos `VENC`/`AENC` no topo dos scripts.
+> **Formato canônico:** todo o pipeline (steps 4, 4b, 5, 6) produz vídeo **1280x720, 30fps, yuv420p, H.264 via NVENC (GPU), áudio AAC 44100 Hz stereo**. Isso é o que permite o `06_montar` concatenar com `-c copy` (instantâneo) em vez de re-encodar o vídeo inteiro. Se algum segmento sair fora do padrão, o montar imprime o formato de cada segmento (pra apontar o destoante), detecta a falha do `-c copy` e cai automaticamente pro fallback de re-encode (`filter_complex`). As constantes `VENC`/`AENC`/`SCALE_PAD` vivem em `scripts/_ffmpeg.py` (compartilhado) — pra trocar pra CPU/libx264, edite só lá.
 
 ## Identidade visual
 
@@ -160,6 +166,9 @@ Está em `prompts/segmentacao.md`. Objetivo: a LLM recebe a transcrição comple
 - ✅ **Otimização de performance do pipeline (02/06/2026)**: (1) **NVENC** (encoder na GPU) em todos os ffmpeg dos steps 4/4b/5/6 — libera a CPU e acelera; (2) **montagem sem re-encode** — todos os segmentos saem no formato canônico e o `06_montar` concatena com `-c copy` (fallback automático pra re-encode se falhar); (3) **04b não re-transcreve** — reaproveita `words.json` gerado no step 2; (4) `beam_size` da transcrição 5→2. Estimativa: tempo total de ~30-45min pra ~15-25min. Validar na próxima live.
 - ✅ **Outputs reorganizados — pasta por vídeo (03/06/2026)**: de `outputs/<tipo>/<stem>/` + arquivos soltos pra `outputs/<AAAA-MM-DD>_<stem>/` (tudo do vídeo num lugar, ordenado por data). Steps 3-8 recebem só o stem; `scripts/_paths.py` resolve a pasta e **falha alto se ambíguo** (nunca roda no vídeo errado). Migração feita com `scripts/_migrar_outputs.py`. Processou 2 vídeos novos hoje: `arthur_flavio_taxar` (E Detalhe, zoom 1.32) e `renan_vorcaro` (live de reação com overlays pesados — crop do Renan, blocos de tela-compartilhada pra revisar manualmente).
 
+- ✅ **QoL e robustez (12/06/2026)**: `scripts/pipeline.py` (orquestrador dos steps 2-8 com `--polir`/`--desde`); `scripts/01_baixar.py` (download + salva `inputs/<stem>.url`, que o `08_descricao.py` usa pra preencher a URL da fonte sozinho); `04b_polir.py` não duplica mais blocos no `polimento.json` em re-runs; `04_cortar.py` sai com exit 1 e resumo se algum ffmpeg falhar; `02_transcribe.py` valida o input antes de carregar o modelo.
+- ✅ **Melhorias rodada 2 (12/06/2026)**: `04b` detecta silêncios >3s programaticamente (gap entre palavras, sem API — LLM só avalia fillers/problemas técnicos); `03` valida os timestamps do LLM (fim>início, cold_open dentro do bloco, fim≤duração do vídeo; salva `blocos_invalido.json` e sai com erro em vez de gravar lixo) e loga custo em $; `06` só re-normaliza intro/outro se o asset do Canva mudou e, quando o concat `-c copy` falha, imprime o formato de cada segmento pra apontar o destoante; `scripts/_ffmpeg.py` centraliza VENC/AENC/SCALE_PAD; whisper cai pra CPU se CUDA indisponível (02/04b).
+
 ## Roadmap pós-MVP
 
 ### Curto prazo (próximas semanas)
@@ -196,7 +205,7 @@ Está em `prompts/segmentacao.md`. Objetivo: a LLM recebe a transcrição comple
 - **Canva (free ou Pro)** — pra intro/outro/thumbnail
 - **GTX 1650 ou superior** — pra rodar faster-whisper em GPU (cai pra CPU se sem GPU, mas é 4-5x mais lento)
 - **ffmpeg + cuDNN/cuBLAS no PATH** — pro pipeline rodar (no Windows, requer `nvidia-cublas-cu12` e `nvidia-cudnn-cu12` instalados via uv)
-- **NVENC (encoder H.264 na GPU)** — os steps 4/4b/5/6 encodam via `h264_nvenc`. A GTX 1650 (Turing) suporta. Se rodar numa máquina sem NVENC, troque `VENC` no topo dos scripts pra `["-c:v","libx264","-preset","fast","-crf","20"]`
+- **NVENC (encoder H.264 na GPU)** — os steps 4/4b/5/6 encodam via `h264_nvenc`. A GTX 1650 (Turing) suporta. Se rodar numa máquina sem NVENC, troque `VENC` em `scripts/_ffmpeg.py` pra `["-c:v","libx264","-preset","fast","-crf","20","-pix_fmt","yuv420p"]`
 
 ## Custos operacionais previstos
 

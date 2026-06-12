@@ -21,6 +21,8 @@ from _paths import criar_pasta
 
 input_arg = sys.argv[1] if len(sys.argv) > 1 else "inputs/live_teste.mp4"
 INPUT = Path(input_arg)
+if not INPUT.is_file():
+    sys.exit(f"[!] Vídeo não encontrado: {INPUT}")
 stem = INPUT.stem  # ex: "renan_entrevista"
 PASTA = criar_pasta(stem)               # outputs/<AAAA-MM-DD>_<stem>/ (reusa se já existe)
 OUTPUT = PASTA / "transcricao.txt"
@@ -29,7 +31,11 @@ WORDS_OUT = PASTA / "words.json"        # word-level pro 04b_polir (evita re-tra
 # medium = boa qualidade em pt-BR, roda em CPU sem morrer (~3GB RAM)
 # Se tem GPU NVIDIA: troca pra "large-v3" + device="cuda" + compute_type="float16"
 print("Carregando modelo...")
-model = WhisperModel("medium", device="cuda", compute_type="int8_float16")
+try:
+    model = WhisperModel("medium", device="cuda", compute_type="int8_float16")
+except Exception as e:
+    print(f"[!] CUDA indisponível ({e}) — caindo pra CPU (4-5x mais lento)")
+    model = WhisperModel("medium", device="cpu", compute_type="int8")
 
 print(f"Transcrevendo {INPUT.name}... (vai demorar)")
 segments, info = model.transcribe(

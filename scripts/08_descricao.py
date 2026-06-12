@@ -20,6 +20,11 @@ stem = stem_de(PASTA)
 BLOCOS_JSON = PASTA / "blocos.json"
 OUT = PASTA / "descricoes.txt"
 
+# URL da fonte: salva pelo 01_baixar.py em inputs/<stem>.url. Sem o arquivo,
+# cai pro placeholder manual de antes.
+URL_FILE = ROOT / "inputs" / f"{stem}.url"
+URL_FONTE = URL_FILE.read_text(encoding="utf-8").strip() if URL_FILE.exists() else ""
+
 # Tags fixas do canal — vao em toda descricao
 TAGS_BASE = [
     "Missão em Cortes", "Partido Missão", "Missão 14", "MBL",
@@ -77,7 +82,7 @@ def bloco_para_texto(b):
     linhas.append("🎬 Inscreva-se no canal pra acompanhar mais cortes do Partido Missão (14).")
     if speakers:
         linhas.append(f"🎙️ Convidado(s): {', '.join(speakers)}")
-    linhas.append("📺 Conteúdo original: [COLAR URL DA LIVE AQUI]")
+    linhas.append(f"📺 Conteúdo original: {URL_FONTE or '[COLAR URL DA LIVE AQUI]'}")
     linhas.append("")
     linhas.append(" ".join(hashtags))
     linhas.append("")
@@ -96,15 +101,19 @@ cabecalho = [
     f"# Descrições — {stem}",
     f"# Fonte: {BLOCOS_JSON.name}",
     f"# {len(data['blocos'])} blocos · gerado automaticamente",
-    "# Lembrete: preencher a URL da live original em cada bloco antes de subir",
-    "",
-    "",
 ]
+if not URL_FONTE:
+    cabecalho.append("# Lembrete: preencher a URL da live original em cada bloco antes de subir")
+cabecalho += ["", ""]
 
-partes = [cabecalho_str := "\n".join(cabecalho)]
+partes = ["\n".join(cabecalho)]
 for b in data["blocos"]:
     partes.append(bloco_para_texto(b))
 
 OUT.write_text("\n".join(partes), encoding="utf-8")
 print(f"OK {len(data['blocos'])} descrições salvas em {OUT}")
+if URL_FONTE:
+    print(f"   URL da fonte preenchida: {URL_FONTE}")
+else:
+    print(f"   [!] inputs/{stem}.url não existe — preencha a URL da live à mão antes de subir")
 print(f"   Total: {len(OUT.read_text(encoding='utf-8'))} caracteres")

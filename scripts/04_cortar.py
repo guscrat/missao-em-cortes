@@ -5,6 +5,7 @@ import sys
 sys.stdout.reconfigure(encoding='utf-8')
 import re
 from pathlib import Path
+from _ffmpeg import VENC, AENC, SCALE_PAD
 from _paths import achar_pasta, stem_de
 
 ROOT = Path(__file__).parent.parent
@@ -23,14 +24,6 @@ COLD_PADDING_S    = 0.5   # margem menor nas duas pontas do cold open
 
 FADE_COLD_D       = 0.4   # duração do fade in/out no cold open (s)
 FADE_CORTE_OUT_D  = 0.5   # duração do fade out no corte completo (s)
-
-# Formato canônico do pipeline (1280x720, 30fps, yuv420p, aac 44100 stereo).
-# Tudo sai nesse formato pra que o 06_montar concatene sem re-encodar (-c copy).
-VENC = ["-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "23",
-        "-b:v", "0", "-pix_fmt", "yuv420p"]
-AENC = ["-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2"]
-SCALE_PAD = ("scale=1280:720:force_original_aspect_ratio=decrease,"
-             "pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30")
 
 # Anti-overlay: zoom (crop+scale) que tira os overlays das lives sem blur. O recorte
 # é POR FONTE (estúdios diferentes têm overlays em posições diferentes), lido de
@@ -113,10 +106,14 @@ def build_cmd(inicio_s: float, duracao: float, saida: Path,
     return cmd
 
 
+falhas = []  # acumula erros de ffmpeg pra falhar alto no final (exit 1)
+
+
 def run_ffmpeg(cmd: list, saida: Path, label: str) -> None:
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         print(f"  ERRO {label}: {result.stderr}")
+        falhas.append(label)
     else:
         size_mb = saida.stat().st_size / (1024 * 1024)
         print(f"  OK {label}: {saida.name} ({size_mb:.1f} MB)")
@@ -142,7 +139,7 @@ for b in data["blocos"]:
 
     cmd = build_cmd(inicio_s, duracao, saida_corte,
                     fade_in_d=None, fade_out_d=FADE_CORTE_OUT_D)
-    run_ffmpeg(cmd, saida_corte, "corte completo")
+    run_ffmpeg(cmd, saida_corte, f"corte completo (bloco {b['id']})")
 
     # ── Cold open ───────────────────────────────────────────────────────────
     if not b.get("cold_open"):
@@ -161,6 +158,12 @@ for b in data["blocos"]:
 
     cmd_cold = build_cmd(cold_inicio_s, cold_duracao, saida_cold,
                          fade_in_d=FADE_COLD_D, fade_out_d=FADE_COLD_D)
-    run_ffmpeg(cmd_cold, saida_cold, "cold open")
+    run_ffmpeg(cmd_cold, saida_cold, f"cold open (bloco {b['id']})")
+
+if falhas:
+    print(f"\n[!] {len(falhas)} falha(s) de ffmpeg:")
+    for f in falhas:
+        print(f"   - {f}")
+    sys.exit(1)
 
 print(f"\nOK {len(data['blocos'])} blocos processados em {OUT_DIR}")

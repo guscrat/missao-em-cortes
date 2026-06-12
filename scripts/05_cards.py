@@ -5,6 +5,7 @@ from pathlib import Path
 import json
 import subprocess
 from PIL import Image, ImageDraw, ImageFont
+from _ffmpeg import VENC, AENC
 from _paths import achar_pasta, stem_de
 
 ROOT = Path(__file__).parent.parent
@@ -94,9 +95,7 @@ def png_para_mp4(png_path, mp4_path, duracao=3):
         "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
         "-t", str(duracao),
         "-vf", "setsar=1,fps=30",
-        "-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "23",
-        "-b:v", "0", "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
+        *VENC, *AENC,
         "-shortest", "-loglevel", "warning",
         str(mp4_path)
     ]
