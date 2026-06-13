@@ -15,7 +15,7 @@ Canal de YouTube de cortes de lives, entrevistas, debates e eventos do **Partido
 - Linha editorial: direita liberal, anti-bolsonarista crítica
 - Títulos podem ser ousados/com gancho, **sem distorcer o que foi dito**
 - Mantém crédito visual à fonte original (logo MBL/Valete preservado nos cortes)
-- Overlays desatualizados: removidos via zoom programático (`USE_ZOOM`/`ZOOM_CROP` no `04_cortar.py`), sem blur — ver "Tratamento de overlays"
+- Overlays desatualizados: removidos via zoom programático por fonte (`config/zoom.json`, lido pelo `04_cortar.py`), sem blur — ver "Tratamento de overlays"
 
 ## Stack técnica
 
@@ -66,12 +66,14 @@ missao-em-cortes/
 │   ├── 06_montar.py
 │   ├── 07_thumb.py                   # thumbs semi-automáticas (off-pipeline)
 │   ├── 08_descricao.py               # gera txt com titulo+descricao+tags pro YouTube
-│   ├── calibrar_zoom.py              # off-pipeline: calibra visualmente o ZOOM_CROP anti-overlay
+│   ├── calibrar_zoom.py              # off-pipeline: calibra o crop anti-overlay (--salvar grava em config/zoom.json)
 │   ├── _paths.py                     # resolve outputs/<data>_<stem>/ por stem (helper compartilhado)
 │   ├── _ffmpeg.py                    # formato canônico (VENC/AENC/SCALE_PAD) compartilhado pelos steps 4/4b/5/6
 │   └── _migrar_outputs.py            # one-off: migrou a estrutura antiga pro layout por vídeo
 ├── prompts/
 │   └── segmentacao.md                # Prompt do LLM pra topic segmentation
+├── config/
+│   └── zoom.json                     # crop anti-overlay por stem (lido pelo 04_cortar.py)
 ├── .env                              # ANTHROPIC_API_KEY
 └── pyproject.toml
 ```
@@ -99,6 +101,8 @@ O step 4 gera **dois arquivos por bloco**: `corte_NN_<slug>.mp4` (corte completo
 O step 4b é **opcional** — pra cada `corte_NN_*.mp4` ele: (1) reaproveita os word-level timestamps do `words.json` (gerado no step 2), fatiando pelo intervalo do bloco — **não re-transcreve** (cai pra re-transcrição via whisper só se o words.json não existir), (2) detecta silêncios >3s **programaticamente** (gap entre palavras consecutivas — determinístico, sem API, nunca nos primeiros 30s), (3) manda pro Claude com prompt conservador só o que exige julgamento (fillers extremos e problemas técnicos), funde os intervalos e aplica jump cut via `ffmpeg filter_complex select/aselect` e salva `corte_NN_<slug>_polido.mp4` na mesma pasta. Filtro defensivo descarta intervalos com motivo "ignorar/manter/abaixo do limiar". Suporta `--bloco=N` pra reprocessar só um bloco e `--sem-llm` pra rodar **só a parte programática** (silêncios) sem chamar o Claude — custo $0, abre mão dos cortes de fillers/problemas técnicos. Os intervalos ficam em `polimento.json`; `--reaplicar` re-aplica os intervalos salvos aos cortes sem chamar o LLM (útil após re-cortar, ex: mudou o zoom). Cold opens **não** são polidos. Pra usar os polidos na montagem: `06_montar.py <stem> --polido` (gera `video_NN_<slug>_polido.mp4`).
 
 O step 7 é opcional e não afeta a montagem — gera 3 variantes de thumb por bloco (`thumb_NN_a/b/c.png`) com frames extraídos a 25/50/75% do cold open. Você escolhe a melhor variante e finaliza no Canva (colar collage de figuras na metade direita). Layout: frame do speaker deslocado pra direita (`FRAME_X=150`), título adaptativo (fonte 96→64 dependendo do comprimento), gradient escuro embaixo pra contraste.
+
+**Modo manual (`--bloco=N --t=MM:SS`):** quando os frames automáticos caem em **tela compartilhada** (lives onde o speaker mostra matéria/pesquisa, ex: `renan_2turn_x_lula`), as 3 variantes saem ruins. Aí você abre o corte, acha um segundo com o speaker na câmera e gera uma thumb daquele frame: `uv run py scripts/07_thumb.py <stem> --bloco=N --t=MM:SS` (aceita `MM:SS`, `HH:MM:SS` ou segundos puros) → salva `thumb_NN_manual.png`. Puxa do **corte completo** por padrão (mais momentos na câmera que o cold open curto; usa o `corte_NN_*.mp4`, não o `_polido`); `--fonte=cold` puxa do cold open. `--bloco=N` sozinho (sem `--t`) regenera só as variantes a/b/c daquele bloco. É a alternativa ao face_recognition, que segue adiado.
 
 O step 8 gera `descricoes.txt` (na pasta do vídeo) com, pra cada bloco: título sugerido (com contagem de chars), descrição (resumo + ganchos como bullets), créditos do canal, hashtags e lista de tags pronta pra colar no YouTube Studio. **Sem chamada de API** — reaproveita o que o LLM já produziu no `blocos.json`. A URL da fonte é preenchida automaticamente a partir de `inputs/<stem>.url` (salva pelo `01_baixar.py`); sem o arquivo, deixa o placeholder `[COLAR URL DA LIVE AQUI]` e avisa no log.
 
@@ -128,15 +132,15 @@ Cada parte contribui pro "valor agregado" exigido pelo YouTube Partner Program (
 
 ## Tratamento de overlays da live original
 
-O `04_cortar.py` remove os overlays via **zoom programático** (`crop` + `scale`), sem blur. Ativado por `USE_ZOOM = True` com o recorte em `ZOOM_CROP` (`crop=w:h:x:y` na fonte 1080p, aplicado antes do `scale=1280:720`). O truque: deslocar o recorte 16:9 pra direita encaixa a janela **entre** os overlays das duas bordas das lives MBL:
+O `04_cortar.py` remove os overlays via **zoom programático** (`crop` + `scale`), sem blur. O recorte é **por fonte**, lido de `config/zoom.json` pelo stem (`{"<stem>": "crop=w:h:x:y"}` na fonte 1080p, aplicado antes do `scale=1280:720`). Stem **sem entrada** no config roda SEM zoom (só scale+pad) e loga um aviso — é o motivo nº1 de um corte sair com os overlays aparecendo: faltou cadastrar a fonte. O truque do recorte: deslocar a janela 16:9 pra direita encaixa-a **entre** os overlays das duas bordas das lives MBL:
 
 - **valete.plus** (círculo, topo-esquerdo) → sai pela esquerda
 - **contador de membros** (topo-direito) → sai pela direita
 - **QR code / SmartCast** (base-direita) → sai pela direita
 
-A parede neon "Academia MBL" é **cenário do estúdio** (não overlay) e fica. O zoom aplica-se ao corte **e** ao cold open. Valor atual `1476:830:200:100` (zoom ~1.30, mantém 59% do quadro), calibrado na renan_live2.
+A parede neon "Academia MBL" é **cenário do estúdio** (não overlay) e fica. O zoom aplica-se ao corte **e** ao cold open. Fontes com o mesmo estúdio/enquadramento podem **reaproveitar** o mesmo valor (ex: `renan_live2`/`renan_vorcaro`/`renan_2turn_x_lula` = `1476:830:200:100`, zoom ~1.30); fonte com layout diferente precisa calibrar.
 
-**Calibração visual:** `uv run py scripts/calibrar_zoom.py <video> [--zoom=..] [--fx=..] [--fy=..]` gera previews antes/depois em `outputs/_calibracao/` pra dialar o recorte numa fonte nova antes de fixar o `ZOOM_CROP`. Se uma live tiver layout diferente, recalibre e ajuste a constante (ou, futuramente, mover pra config por fonte — ver roadmap).
+**Calibração visual:** `uv run py scripts/calibrar_zoom.py <video> [--zoom=..] [--fx=..] [--fy=..] [--salvar=<stem>]` gera previews antes/depois em `outputs/_calibracao/` pra dialar o recorte numa fonte nova; `--salvar=<stem>` grava direto no `config/zoom.json`. Depois de cadastrar/calibrar, re-corte com `uv run py scripts/pipeline.py <stem> --desde=4` (não re-transcreve nem re-segmenta).
 
 **Alternativa manual:** editar o `corte_NN_*.mp4` no CapCut, salvar de volta na mesma subpasta com o mesmo nome, depois rodar steps 5 e 6.
 
@@ -168,13 +172,14 @@ Está em `prompts/segmentacao.md`. Objetivo: a LLM recebe a transcrição comple
 
 - ✅ **QoL e robustez (12/06/2026)**: `scripts/pipeline.py` (orquestrador dos steps 2-8 com `--polir`/`--desde`); `scripts/01_baixar.py` (download + salva `inputs/<stem>.url`, que o `08_descricao.py` usa pra preencher a URL da fonte sozinho); `04b_polir.py` não duplica mais blocos no `polimento.json` em re-runs; `04_cortar.py` sai com exit 1 e resumo se algum ffmpeg falhar; `02_transcribe.py` valida o input antes de carregar o modelo.
 - ✅ **Melhorias rodada 2 (12/06/2026)**: `04b` detecta silêncios >3s programaticamente (gap entre palavras, sem API — LLM só avalia fillers/problemas técnicos); `03` valida os timestamps do LLM (fim>início, cold_open dentro do bloco, fim≤duração do vídeo; salva `blocos_invalido.json` e sai com erro em vez de gravar lixo) e loga custo em $; `06` só re-normaliza intro/outro se o asset do Canva mudou e, quando o concat `-c copy` falha, imprime o formato de cada segmento pra apontar o destoante; `scripts/_ffmpeg.py` centraliza VENC/AENC/SCALE_PAD; whisper cai pra CPU se CUDA indisponível (02/04b).
+- ✅ **Zoom por fonte + thumb manual (13/06/2026)**: `renan_2turn_x_lula` processado (live 2º turno x Lula, 3 blocos, `Lab_UcxeEDs`) reaproveitando o zoom do `renan_live2` (`1476:830:200:100`) — entrada nova no `config/zoom.json`, re-corte com `pipeline.py --desde=4 --polir`. **`07_thumb.py` ganhou modo manual** (`--bloco=N --t=MM:SS [--fonte=corte|cold]`): pra lives com tela compartilhada onde os frames automáticos (25/50/75% do cold open) caem na tela em vez do speaker, você escolhe o segundo na mão e gera `thumb_NN_manual.png` do corte completo. `--bloco` sozinho regenera só a/b/c daquele bloco.
 
 ## Roadmap pós-MVP
 
 ### Curto prazo (próximas semanas)
 - Capítulos com timestamps na descrição
 - Tipografia animada no intro (motion graphics no Canva)
-- Configuração de fonte por canal/speaker (YAML com coordenadas de overlay por fonte)
+- ~~Configuração de fonte por canal/speaker (coordenadas de overlay por fonte)~~ — feito pro zoom anti-overlay em `config/zoom.json` (crop por stem). Outras configs por fonte (ex: zoom de speaker) ainda podem migrar pra cá.
 - ~~Narração própria de 20-30s no início~~ — substituído pelo cold open automático
 
 ### Médio prazo

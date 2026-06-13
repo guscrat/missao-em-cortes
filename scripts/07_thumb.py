@@ -6,7 +6,15 @@ Layout semi-automatico:
   - Titulo grande no canto inferior esquerdo (amarelo + branco)
   - Metade direita preta, reservada pra collage manual no Canva
 
-Uso: uv run py scripts/07_thumb.py outputs/<stem>_blocos.json
+Uso: uv run py scripts/07_thumb.py <stem>
+     uv run py scripts/07_thumb.py <stem> --bloco=N            # so o bloco N (a/b/c)
+     uv run py scripts/07_thumb.py <stem> --bloco=N --t=MM:SS  # frame manual de um timestamp
+     uv run py scripts/07_thumb.py <stem> --bloco=N --t=4:12 --fonte=cold
+
+Modo manual (--t): pra lives com tela compartilhada, onde os frames automaticos
+(25/50/75% do cold open) caem na tela em vez do speaker. Voce abre o corte, acha
+um segundo com o speaker na camera e passa o timestamp. Puxa do corte completo
+por padrao (mais momentos na camera); --fonte=cold puxa do cold open.
 """
 import sys
 sys.stdout.reconfigure(encoding='utf-8')
@@ -18,7 +26,29 @@ from _paths import achar_pasta, stem_de
 
 ROOT = Path(__file__).parent.parent
 
-input_arg = sys.argv[1] if len(sys.argv) > 1 else "live_teste"
+args = [a for a in sys.argv[1:] if not a.startswith("--")]
+flags = [a for a in sys.argv[1:] if a.startswith("--")]
+input_arg = args[0] if args else "live_teste"
+
+# Override manual (ver docstring): --bloco=N [--t=MM:SS] [--fonte=corte|cold]
+def _parse_t(v):
+    """Aceita segundos ('252') ou MM:SS / HH:MM:SS ('4:12')."""
+    seg = 0.0
+    for p in v.split(":"):
+        seg = seg * 60 + float(p)
+    return seg
+
+bloco_manual = None
+t_manual = None
+fonte_manual = "corte"
+for f in flags:
+    if f.startswith("--bloco="):
+        bloco_manual = int(f.split("=", 1)[1])
+    elif f.startswith("--t="):
+        t_manual = _parse_t(f.split("=", 1)[1])
+    elif f.startswith("--fonte="):
+        fonte_manual = f.split("=", 1)[1].strip()
+
 PASTA = achar_pasta(input_arg)
 stem = stem_de(PASTA)
 BLOCOS_JSON = PASTA / "blocos.json"
@@ -67,7 +97,12 @@ def encontrar_cold_open(bloco_id):
     if matches:
         return matches[0]
     # fallback: corte completo
-    matches = list(CORTES_DIR.glob(f"corte_{bloco_id:02d}_*.mp4"))
+    return encontrar_corte(bloco_id)
+
+def encontrar_corte(bloco_id):
+    """Corte completo do bloco, ignorando os _polido (timestamps deslocados pelo jump cut)."""
+    matches = [m for m in CORTES_DIR.glob(f"corte_{bloco_id:02d}_*.mp4")
+               if "_polido" not in m.stem]
     return matches[0] if matches else None
 
 def quebrar_texto(texto, max_chars=14):
@@ -194,10 +229,34 @@ def gerar_thumb(bloco, output_png, frame_png=None):
 with BLOCOS_JSON.open(encoding="utf-8") as f:
     data = json.load(f)
 
+# ── Modo manual: uma thumb a partir de um timestamp escolhido ────────────────
+if t_manual is not None:
+    if bloco_manual is None:
+        sys.exit("[!] --t exige --bloco=N (qual bloco gerar)")
+    b = next((x for x in data["blocos"] if x["id"] == bloco_manual), None)
+    if b is None:
+        sys.exit(f"[!] bloco {bloco_manual} nao existe no blocos.json")
+    video = encontrar_cold_open(bloco_manual) if fonte_manual == "cold" else encontrar_corte(bloco_manual)
+    if not video:
+        sys.exit(f"[!] video do bloco {bloco_manual} (fonte={fonte_manual}) nao encontrado em {CORTES_DIR}")
+    print(f"[Bloco {bloco_manual}] {b['tema']}")
+    print(f"  Frame manual: {video.name} @ {t_manual:.1f}s")
+    tmp = OUT_DIR / f"_frame_{bloco_manual:02d}_manual.png"
+    extrair_frame(video, t_manual, tmp)
+    out = OUT_DIR / f"thumb_{bloco_manual:02d}_manual.png"
+    gerar_thumb(b, out, tmp)
+    tmp.unlink(missing_ok=True)
+    print(f"\nOK thumb manual salva: {out.name}")
+    sys.exit(0)
+
 VARIANTES = [("a", 0.25), ("b", 0.50), ("c", 0.75)]
 
-print(f"Gerando {len(data['blocos']) * len(VARIANTES)} thumbs em {OUT_DIR}\n")
-for b in data["blocos"]:
+blocos_iter = [x for x in data["blocos"] if x["id"] == bloco_manual] if bloco_manual is not None else data["blocos"]
+if bloco_manual is not None and not blocos_iter:
+    sys.exit(f"[!] bloco {bloco_manual} nao existe no blocos.json")
+
+print(f"Gerando {len(blocos_iter) * len(VARIANTES)} thumbs em {OUT_DIR}\n")
+for b in blocos_iter:
     print(f"[Bloco {b['id']}] {b['tema']}")
     cold = encontrar_cold_open(b["id"])
     if not cold:

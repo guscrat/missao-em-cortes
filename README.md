@@ -45,7 +45,7 @@ Cada step também roda sozinho (`scripts/02_transcribe.py` a `08_descricao.py`);
 
 ## O que continua manual
 
-- Escolher a variante de thumb (a/b/c) e finalizar o collage no Canva
+- Escolher a variante de thumb (a/b/c) e finalizar o collage no Canva. Se a live tem tela compartilhada e as 3 variantes saem ruins, gere a thumb de um frame escolhido na mão: `uv run py scripts/07_thumb.py <stem> --bloco=N --t=MM:SS`
 - Revisar `descricoes.txt` e subir os vídeos no YouTube Studio
 - Revisar blocos com tela compartilhada (o zoom é calibrado pro enquadramento padrão)
 
