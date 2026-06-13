@@ -25,7 +25,7 @@ Identifique 2 a 6 blocos temáticos CONTÍNUOS da live (não compilação de tre
 3. **Início natural**: começa em frase completa — pergunta, afirmação forte ou abertura de tópico. NUNCA no meio de uma frase ou raciocínio.
 4. **Fim natural**: termina com conclusão de raciocínio, frase de impacto ou pausa clara. NUNCA cortar antes de uma conclusão.
 5. **Autossuficiência**: o espectador entende o corte sem ter visto o resto da live.
-6. **Gancho**: tem pelo menos um momento forte (declaração polêmica, dado impactante, frase de efeito, embate) que pode virar thumbnail/título.
+6. **Gancho**: tem pelo menos um momento forte (declaração polêmica, dado impactante, frase de efeito, embate) que pode virar thumbnail/título. O `texto_thumb` deve destilar esse gancho em 2-5 palavras de impacto (curto e legível em miniatura) — distinto do `titulo_sugerido`, que é a frase completa pro título do YouTube.
 7. **Duração contextual**: ajuste a duração-alvo conforme o tipo de conteúdo:
    - Comentário de notícia/reação a fato do dia: 4-6 minutos
    - Entrevista analítica/podcast/exposição de tese: 5-7 minutos
@@ -69,6 +69,7 @@ Responda APENAS com o JSON abaixo, sem markdown, sem texto antes ou depois.
         "frases/momentos de impacto pra thumbnail e título"
       ],
       "titulo_sugerido": "título de YouTube com gancho (máx 70 chars)",
+      "texto_thumb": "texto da THUMBNAIL: 2 a 5 palavras, impacto máximo, CAPS. NÃO é o título — é o que aparece grande na miniatura, legível num celular. Sem nome do speaker, sem frase completa: um gancho seco (ex: 'QUEST x ATLAS: 4% OU 36%?', '\"VOCÊ É BEM EVITÁVEL\"', 'VERA OBRIGADA A CITAR'). Máx ~24 chars.",
       "score_potencial": 8,
       "tags": ["partido missão", "kim kataguiri", "segurança pública"],
       "justificativa_corte": "por que esse início e esse fim são pontos naturais",

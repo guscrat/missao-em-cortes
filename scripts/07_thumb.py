@@ -10,6 +10,11 @@ Uso: uv run py scripts/07_thumb.py <stem>
      uv run py scripts/07_thumb.py <stem> --bloco=N            # so o bloco N (a/b/c)
      uv run py scripts/07_thumb.py <stem> --bloco=N --t=MM:SS  # frame manual de um timestamp
      uv run py scripts/07_thumb.py <stem> --bloco=N --t=4:12 --fonte=cold
+     uv run py scripts/07_thumb.py <stem> --bloco=N --titulo="TEXTO CURTO"  # texto da thumb na mao
+
+Texto da thumb: usa o campo curto texto_thumb do blocos.json (2-5 palavras, gerado
+pelo LLM); na falta dele, cai pro tema. NUNCA usa o titulo_sugerido (titulo de
+YouTube, frase longa que estourava a thumb). --titulo= sobrescreve pra um bloco.
 
 Modo manual (--t): pra lives com tela compartilhada, onde os frames automaticos
 (25/50/75% do cold open) caem na tela em vez do speaker. Voce abre o corte, acha
@@ -41,6 +46,7 @@ def _parse_t(v):
 bloco_manual = None
 t_manual = None
 fonte_manual = "corte"
+TITULO_OVERRIDE = None
 for f in flags:
     if f.startswith("--bloco="):
         bloco_manual = int(f.split("=", 1)[1])
@@ -48,6 +54,11 @@ for f in flags:
         t_manual = _parse_t(f.split("=", 1)[1])
     elif f.startswith("--fonte="):
         fonte_manual = f.split("=", 1)[1].strip()
+    elif f.startswith("--titulo="):
+        TITULO_OVERRIDE = f.split("=", 1)[1]
+
+if TITULO_OVERRIDE is not None and bloco_manual is None:
+    sys.exit("[!] --titulo exige --bloco=N (o texto se aplica a um bloco so)")
 
 PASTA = achar_pasta(input_arg)
 stem = stem_de(PASTA)
@@ -120,8 +131,13 @@ def quebrar_texto(texto, max_chars=14):
     return linhas
 
 def titulo_curto(bloco):
-    """Pega antes do '|' do titulo_sugerido, sem o nome do speaker."""
-    t = bloco.get("titulo_sugerido", bloco["tema"])
+    """Texto da thumb. Prefere o campo curto texto_thumb (2-5 palavras, do LLM);
+    cai pro tema (3-6 palavras). NUNCA usa titulo_sugerido — esse e o titulo de
+    YouTube (frase longa), que estoura a thumb e tem que ser truncado. --titulo=
+    sobrescreve tudo (override manual)."""
+    if TITULO_OVERRIDE is not None:
+        return TITULO_OVERRIDE.strip().upper()
+    t = bloco.get("texto_thumb") or bloco.get("tema", "")
     return t.split("|")[0].strip().upper()
 
 def colar_frame(canvas, frame_path):
@@ -168,9 +184,14 @@ def layout_titulo(titulo):
         linhas = quebrar_texto(titulo, max_chars=max_chars)
         if len(linhas) <= 4:
             return linhas, fonte_size, line_h
-    # Ultimo recurso: forca o menor mesmo se passar de 4 linhas
-    linhas = quebrar_texto(titulo, max_chars=21)[:4]
-    return linhas, 64, 68
+    # Nao coube nem na menor fonte: texto longo demais pra thumb. Em vez de cortar
+    # no meio da frase em silencio (gera incoerencia tipo "...ZEMA E E"), avisa alto
+    # pra voce encurtar com --titulo= ou ajustar o texto_thumb no blocos.json.
+    linhas_todas = quebrar_texto(titulo, max_chars=21)
+    if len(linhas_todas) > 4:
+        print(f"  AVISO: texto da thumb longo demais ({len(linhas_todas)} linhas, truncado em 4) — "
+              f"use --titulo=\"texto curto e impactante\" ou edite texto_thumb no blocos.json")
+    return linhas_todas[:4], 64, 68
 
 def aplicar_gradiente_inferior(canvas, altura_fade=420, alpha_max=235):
     """Escurece a parte inferior do canvas pra texto ficar legivel."""
