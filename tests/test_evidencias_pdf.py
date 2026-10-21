@@ -70,3 +70,17 @@ def test_saida_customizada(tmp_path):
     destino = tmp_path / "sub_auditoria.pdf"
     ev.main([str(tmp_path), f"--saida={destino}"])
     assert destino.read_bytes().startswith(b"%PDF")
+
+
+def test_modos_P_LA_L_e_extensao_maiuscula(tmp_path):
+    Image.new("P", (300, 200)).save(tmp_path / "01_p.png")
+    Image.new("LA", (300, 200), (128, 100)).save(tmp_path / "02_la.png")
+    Image.new("L", (300, 200), 128).save(tmp_path / "03_l.PNG")
+    assert ev.main([str(tmp_path)]) == 0
+    assert len(_paginas((tmp_path / "evidencias.pdf").read_bytes())) == 3
+
+
+def test_imagem_minuscula_nao_e_ampliada(tmp_path):
+    pagina = ev._pagina(Image.new("RGB", (40, 30), "black"), 150)
+    assert pagina.getpixel((pagina.width // 2, pagina.height // 2)) == (0, 0, 0)
+    assert pagina.getpixel((pagina.width // 2 + 100, pagina.height // 2)) == (255, 255, 255)
