@@ -33,13 +33,13 @@ args = [a for a in sys.argv[1:] if not a.startswith("--")]
 flags = [a for a in sys.argv[1:] if a.startswith("--")]
 
 if not args:
-    sys.exit("Uso: uv run py scripts/pipeline.py <stem> [--polir] [--desde=N]")
+    sys.exit("Uso: uv run py scripts/pipeline.py <stem> [--polir] [--sem-llm] [--sem-legendas] [--desde=N]")
 
 alvo = args[0]                    # stem ou nome completo da pasta (os steps resolvem)
 stem = stem_de(Path(alvo))        # stem puro, pra achar inputs/<stem>.mp4
 polir = "--polir" in flags
 sem_llm = "--sem-llm" in flags
-legendas = "--sem-legendas" not in flags   # padrão ligado desde 21/10/2026
+legendas = "--sem-legendas" not in flags   # padrão: ligada
 
 desde = None
 for f in flags:
@@ -50,6 +50,13 @@ for f in flags:
 VIDEO = ROOT / "inputs" / f"{stem}.mp4"
 if desde == 4.7 and not legendas:
     print("[aviso] --desde=4c com --sem-legendas: o 04c não roda")
+# Retomar depois do 04c numa live sem legendados: o 06 não acharia corte nenhum e o
+# pipeline "terminaria OK" sem vídeo. Falha alto antes.
+if legendas and desde > 4.7 and not any(
+        p.is_dir() and any((p / "cortes" / "legendados").glob("corte_*.mp4"))
+        for p in OUTPUTS.glob(f"*_{stem}")):
+    sys.exit(f"[!] Esta live não tem cortes legendados e --desde={desde:g} pula o 04c. "
+             f"Use --desde=4c (gera as legendas) ou --sem-legendas.")
 tem_transcricao = any(
     (p / "transcricao.txt").exists() for p in OUTPUTS.glob(f"*_{stem}") if p.is_dir()
 )

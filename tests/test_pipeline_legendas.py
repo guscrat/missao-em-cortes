@@ -70,3 +70,15 @@ def test_retomada_padrao_nao_menciona_sem_legendas(monkeypatch):
     _, saida = _rodar(monkeypatch, [], falha_em="04c_legendas.py")
     assert "--sem-legendas" not in str(saida.code)
     assert "--desde=4c" in str(saida.code)
+
+
+def test_desde_depois_do_04c_sem_legendados_falha_alto(monkeypatch):
+    # stem_x não tem pasta em outputs/: nenhum corte legendado
+    cmds, saida = _rodar(monkeypatch, ["--desde=5"])
+    assert saida is not None and "--desde=4c" in str(saida.code)
+    assert cmds == []                                   # nenhum step rodou
+
+
+def test_desde_depois_do_04c_com_sem_legendas_segue(monkeypatch):
+    cmds, _ = _rodar(monkeypatch, ["--desde=5", "--sem-legendas"])
+    assert [s for s, _ in cmds][0] == "05_cards.py"
