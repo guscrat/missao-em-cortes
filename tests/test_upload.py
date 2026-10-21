@@ -322,3 +322,33 @@ def test_modo_invalido_falha_alto(cenario, monkeypatch):
 
 def test_config_do_repo_esta_em_privado():
     assert up.carregar_config()["modo"] == "privado"
+
+
+def test_privado_dry_run_mostra_privado(cenario, monkeypatch, capsys):
+    pasta, yt, _ = cenario
+    monkeypatch.setitem(up.DEFAULTS, "modo", "privado")
+    monkeypatch.setattr(up, "autenticar", lambda: pytest.fail("dry-run autenticou"))
+    assert up.main([str(pasta), "--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert "modo privado" in out and "privado" in out and "21/10" not in out
+    assert yt.uploads == []
+
+
+def test_privado_idempotente(cenario, monkeypatch):
+    pasta, yt, _ = cenario
+    monkeypatch.setitem(up.DEFAULTS, "modo", "privado")
+    up.main([str(pasta)])
+    up.main([str(pasta)])
+    assert len(yt.uploads) == 3
+    assert all("publishAt" not in u["status"] for u in yt.uploads)
+
+
+def test_privado_thumb_que_falhou_e_retentada(cenario, monkeypatch):
+    pasta, yt, banco = cenario
+    monkeypatch.setitem(up.DEFAULTS, "modo", "privado")
+    yt.thumb_falha = True
+    up.main([str(pasta), "--bloco=1"])
+    yt.thumb_falha = False
+    up.main([str(pasta), "--bloco=1"])
+    assert len(yt.uploads) == 1 and yt.thumbs == ["yt1"]
+    assert banco("SELECT status FROM blocos WHERE bloco_id=1")[0]["status"] == "aprovado"
