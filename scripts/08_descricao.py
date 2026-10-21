@@ -1,29 +1,23 @@
 """Gera txt com titulo + descricao + tags por bloco pronto pra colar no YouTube.
 
 Le do blocos.json (que ja tem titulo_sugerido, resumo, ganchos, tags) e monta
-o arquivo formatado em outputs/<stem>_descricoes.txt. Sem chamada de API.
+o arquivo formatado em outputs/<pasta>/descricoes.txt. Sem chamada de API.
 
-Uso: uv run py scripts/08_descricao.py outputs/<stem>_blocos.json
+"Conteúdo original" = URL da FONTE (inputs/<stem>.url). O link do nosso canal só
+entra na linha "Inscreva-se".
+
+Uso: uv run py scripts/08_descricao.py <stem>
 """
 import sys
 sys.stdout.reconfigure(encoding='utf-8')
 from pathlib import Path
 import json
 import re
+from _canal import CANAL_URL, eh_nosso_canal
 from _paths import achar_pasta, stem_de
 
 ROOT = Path(__file__).parent.parent
-
-input_arg = sys.argv[1] if len(sys.argv) > 1 else "live_teste"
-PASTA = achar_pasta(input_arg)
-stem = stem_de(PASTA)
-BLOCOS_JSON = PASTA / "blocos.json"
-OUT = PASTA / "descricoes.txt"
-
-# URL da fonte: salva pelo 01_baixar.py em inputs/<stem>.url. Sem o arquivo,
-# cai pro placeholder manual de antes.
-URL_FILE = ROOT / "inputs" / f"{stem}.url"
-URL_FONTE = URL_FILE.read_text(encoding="utf-8").strip() if URL_FILE.exists() else ""
+PLACEHOLDER_URL = "[COLAR URL DA LIVE AQUI]"
 
 # Tags fixas do canal — vao em toda descricao
 TAGS_BASE = [
@@ -39,7 +33,20 @@ def slugify_hashtag(s):
     palavras = [p.capitalize() for p in s.split()]
     return "#" + "".join(palavras)
 
-def bloco_para_texto(b):
+def ler_url_fonte(stem, inputs=None):
+    """URL da fonte salva pelo 01_baixar.py em inputs/<stem>.url ("" se faltar).
+
+    Link do NOSSO canal não é fonte: descarta com aviso (cai pro placeholder, e o
+    09_upload se recusa a subir sem crédito).
+    """
+    arq = (inputs or ROOT / "inputs") / f"{stem}.url"
+    url = arq.read_text(encoding="utf-8").strip() if arq.exists() else ""
+    if url and eh_nosso_canal(url):
+        print(f"   [!] {arq.name} aponta pro NOSSO canal, não pra fonte — ignorando")
+        return ""
+    return url
+
+def bloco_para_texto(b, url_fonte=""):
     titulo = b.get("titulo_sugerido", b["tema"])
     resumo = b.get("resumo", "").strip()
     ganchos = b.get("ganchos", [])
@@ -79,10 +86,10 @@ def bloco_para_texto(b):
             linhas.append(f"• {g}")
         linhas.append("")
     linhas.append("─" * 40)
-    linhas.append("🎬 Inscreva-se no canal pra acompanhar mais cortes do Partido Missão (14).")
+    linhas.append(f"🎬 Inscreva-se no canal pra acompanhar mais cortes do Partido Missão (14): {CANAL_URL}")
     if speakers:
         linhas.append(f"🎙️ Convidado(s): {', '.join(speakers)}")
-    linhas.append(f"📺 Conteúdo original: {URL_FONTE or '[COLAR URL DA LIVE AQUI]'}")
+    linhas.append(f"📺 Conteúdo original: {url_fonte or PLACEHOLDER_URL}")
     linhas.append("")
     linhas.append(" ".join(hashtags))
     linhas.append("")
@@ -94,26 +101,38 @@ def bloco_para_texto(b):
     linhas.append("")
     return "\n".join(linhas)
 
-with BLOCOS_JSON.open(encoding="utf-8") as f:
-    data = json.load(f)
+def main(argv):
+    pasta = achar_pasta(argv[0] if argv else "live_teste")
+    stem = stem_de(pasta)
+    blocos_json = pasta / "blocos.json"
+    out = pasta / "descricoes.txt"
+    url_fonte = ler_url_fonte(stem)
 
-cabecalho = [
-    f"# Descrições — {stem}",
-    f"# Fonte: {BLOCOS_JSON.name}",
-    f"# {len(data['blocos'])} blocos · gerado automaticamente",
-]
-if not URL_FONTE:
-    cabecalho.append("# Lembrete: preencher a URL da live original em cada bloco antes de subir")
-cabecalho += ["", ""]
+    with blocos_json.open(encoding="utf-8") as f:
+        data = json.load(f)
 
-partes = ["\n".join(cabecalho)]
-for b in data["blocos"]:
-    partes.append(bloco_para_texto(b))
+    cabecalho = [
+        f"# Descrições — {stem}",
+        f"# Fonte: {blocos_json.name}",
+        f"# {len(data['blocos'])} blocos · gerado automaticamente",
+    ]
+    if not url_fonte:
+        cabecalho.append("# Lembrete: preencher a URL da live original em cada bloco antes de subir")
+    cabecalho += ["", ""]
 
-OUT.write_text("\n".join(partes), encoding="utf-8")
-print(f"OK {len(data['blocos'])} descrições salvas em {OUT}")
-if URL_FONTE:
-    print(f"   URL da fonte preenchida: {URL_FONTE}")
-else:
-    print(f"   [!] inputs/{stem}.url não existe — preencha a URL da live à mão antes de subir")
-print(f"   Total: {len(OUT.read_text(encoding='utf-8'))} caracteres")
+    partes = ["\n".join(cabecalho)]
+    for b in data["blocos"]:
+        partes.append(bloco_para_texto(b, url_fonte))
+
+    out.write_text("\n".join(partes), encoding="utf-8")
+    print(f"OK {len(data['blocos'])} descrições salvas em {out}")
+    if url_fonte:
+        print(f"   URL da fonte preenchida: {url_fonte}")
+    else:
+        print(f"   [!] sem URL da fonte válida em inputs/{stem}.url — preencha a URL da live à mão antes de subir")
+    print(f"   Total: {len(out.read_text(encoding='utf-8'))} caracteres")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

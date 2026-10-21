@@ -1,14 +1,16 @@
 """Junta os prints da auditoria da YouTube API num único PDF.
 
-Uso: uv run py scripts/evidencias_pdf.py [pasta] [--saida=arquivo.pdf]
-     (padrão: evidencias/*.png → evidencias/evidencias.pdf)
+Uso: uv run py scripts/evidencias_pdf.py [pasta] [--saida=arquivo.pdf] [--faixa=01-05]
+     (padrão: evidencias/01_*.png … 05_*.png → evidencias/evidencias.pdf)
 
-- Ordem alfabética do nome do arquivo: numere os prints (01_oauth.png, 02_consent.png, ...).
+- Só entram os prints numerados dentro da faixa (padrão 01-05), em ordem de número.
+  O resto (ex: home, privacidade e termos do site) fica como PNG solto, fora do PDF.
 - Uma página A4 por print, em retrato ou paisagem conforme a imagem, sem distorcer.
 - Garante < 10 MB: se passar, baixa a resolução/qualidade e tenta de novo.
 A pasta evidencias/ é gitignored (os prints podem mostrar dados da conta).
 """
 import io
+import re
 import sys
 sys.stdout.reconfigure(encoding='utf-8')
 from pathlib import Path
@@ -21,6 +23,8 @@ A4_MM = (210, 297)
 MARGEM_MM = 10
 # (dpi da página, qualidade JPEG) — do melhor pro mais leve até caber no limite
 TENTATIVAS = [(150, 85), (120, 75), (96, 65), (72, 55)]
+FAIXA_PADRAO = "01-05"
+_NUMERO = re.compile(r"^(\d+)[_\- .]")
 
 
 def _pagina(img: Image.Image, dpi: int) -> Image.Image:
@@ -61,19 +65,35 @@ def gerar_pdf(pngs: list[Path], saida: Path) -> tuple[int, int]:
                      f"({buf.tell() / 1e6:.1f} MB) — divida os prints em dois PDFs.")
 
 
+def selecionar(pasta: Path, faixa: str = FAIXA_PADRAO) -> tuple[list[Path], list[Path]]:
+    """(prints que entram no PDF, PNGs que ficam de fora), pela numeração do nome."""
+    ini, fim = (int(x) for x in faixa.split("-", 1))
+    dentro, fora = [], []
+    for png in sorted((p for p in pasta.glob("*") if p.suffix.lower() == ".png"),
+                      key=lambda p: p.name.lower()):
+        m = _NUMERO.match(png.name)
+        (dentro if m and ini <= int(m.group(1)) <= fim else fora).append(png)
+    return dentro, fora
+
+
 def main(argv: list[str]) -> int:
     pos = [a for a in argv if not a.startswith("--")]
     flags = dict(a[2:].split("=", 1) for a in argv if a.startswith("--") and "=" in a)
     pasta = Path(pos[0]) if pos else ROOT / "evidencias"
     saida = Path(flags.get("saida", pasta / "evidencias.pdf"))
 
-    pngs = sorted((p for p in pasta.glob("*") if p.suffix.lower() == ".png"),
-                  key=lambda p: p.name.lower())
+    faixa = flags.get("faixa", FAIXA_PADRAO)
+    pngs, fora = selecionar(pasta, faixa)
     if not pngs:
-        print(f"[!] Nenhum .png em {pasta} — coloque os prints lá (ex: 01_oauth.png).")
+        print(f"[!] Nenhum .png numerado {faixa} em {pasta} — nomeie os prints "
+              f"como 01_oauth.png, 02_consent.png, ...")
         return 1
     tamanho, dpi = gerar_pdf(pngs, saida)
     print(f"OK {len(pngs)} página(s) · {tamanho / 1e6:.1f} MB · {dpi} dpi → {saida}")
+    for p in pngs:
+        print(f"   PDF   {p.name}")
+    for p in fora:
+        print(f"   fora  {p.name}")
     return 0
 
 
