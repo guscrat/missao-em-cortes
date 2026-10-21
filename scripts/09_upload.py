@@ -17,6 +17,8 @@ disputam o mesmo horário.
 Idempotente: bloco com youtube_id (no youtube.json da pasta ou no banco) não sobe de
 novo. Se da outra vez só a thumb falhou, tenta só a thumb. O youtube.json é gravado logo
 depois de cada upload — é o registro à prova de falha (o banco é best-effort).
+Única janela: se o processo morrer entre o fim do upload e essa gravação (segundos),
+o próximo run sobe de novo. Depois de um crash no meio do upload, confira o Studio antes.
 
 Cota: a YouTube Data API é grátis (US$ 0), mas tem 10.000 unidades/dia, que zeram à
 meia-noite do Pacífico. Upload ≈ 1.600 e thumbnail = 50. O gasto fica em
