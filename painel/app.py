@@ -6,6 +6,7 @@ Só LÊ o banco (state/pipeline.db). Quem escreve são os scripts e agentes via
 scripts/_eventos.py. O botão "Sincronizar" roda o scripts/sincronizar_estado.py.
 """
 import base64
+import os
 import sqlite3
 import subprocess
 import sys
@@ -14,8 +15,10 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+from time_dev import aba_time_dev, faixa_decisoes
+
 ROOT = Path(__file__).parent.parent
-DB_PATH = ROOT / "state" / "pipeline.db"
+DB_PATH = Path(os.environ.get("MISSAO_DB") or ROOT / "state" / "pipeline.db")
 FONTE_ANTON = ROOT / "assets" / "fonts" / "Anton-Regular.ttf"
 
 # Colunas do kanban = responsabilidades. Cada status de bloco cai em UMA coluna.
@@ -59,19 +62,23 @@ def _css() -> None:
 
 
 @st.cache_data(ttl=5)
-def carregar() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def carregar() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     if not DB_PATH.exists():
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
     con = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
     try:
         videos = pd.read_sql("SELECT * FROM videos", con)
         blocos = pd.read_sql("SELECT * FROM blocos", con)
         eventos = pd.read_sql("SELECT * FROM eventos ORDER BY ts DESC LIMIT 2000", con)
+        try:   # banco anterior à tabela tarefas (só aparece depois do 1º tarefa.py)
+            tarefas = pd.read_sql("SELECT * FROM tarefas", con)
+        except pd.errors.DatabaseError:
+            tarefas = pd.DataFrame()
     finally:
         con.close()
     if not eventos.empty:
         eventos["ts"] = pd.to_datetime(eventos["ts"])
-    return videos, blocos, eventos
+    return videos, blocos, eventos, tarefas
 
 
 def sincronizar() -> None:
@@ -191,13 +198,14 @@ with st.sidebar:
     if st.button("Sincronizar com outputs/", width="stretch"):
         sincronizar()
     auto = st.toggle("Atualizar a cada 10s", value=True)
-    st.caption(f"Banco: `{DB_PATH.relative_to(ROOT)}`")
+    st.caption(f"Banco: `{DB_PATH.relative_to(ROOT) if DB_PATH.is_relative_to(ROOT) else DB_PATH}`")
 
 
 @st.fragment(run_every=10 if auto else None)
 def corpo() -> None:
-    videos, blocos, eventos = carregar()
-    if videos.empty:
+    videos, blocos, eventos, tarefas = carregar()
+    faixa_decisoes(tarefas)
+    if videos.empty and tarefas.empty:
         st.warning("Banco vazio. Clique em **Sincronizar com outputs/** na barra lateral "
                    "pra importar os vídeos que você já processou.")
         return
@@ -212,13 +220,15 @@ def corpo() -> None:
     m[3].metric("Agendados", contar({"aprovado", "agendado"}))
     m[4].metric("Custo 7 dias", f"${semana['custo_usd'].sum():.2f}" if not semana.empty else "$0.00")
 
-    aba_k, aba_a, aba_t = st.tabs(["Kanban", "Agentes e custo", "Linha do tempo"])
+    aba_k, aba_a, aba_t, aba_d = st.tabs(["Kanban", "Agentes e custo", "Linha do tempo", "Time de dev"])
     with aba_k:
         kanban(videos, blocos)
     with aba_a:
         aba_agentes(eventos)
     with aba_t:
         aba_timeline(eventos)
+    with aba_d:
+        aba_time_dev(eventos, tarefas)
 
 
 corpo()
