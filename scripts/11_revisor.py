@@ -136,7 +136,9 @@ def chamar_claude(client, conteudo: list[dict]) -> tuple[dict | None, object]:
     )
     if resp.stop_reason == "refusal":
         return None, resp
-    texto = next(b.text for b in resp.content if b.type == "text")
+    texto = next((b.text for b in resp.content if b.type == "text"), None)
+    if texto is None:   # sem bloco de texto (ex: max_tokens no meio do raciocínio)
+        raise json.JSONDecodeError(f"resposta sem texto (stop_reason={resp.stop_reason})", "", 0)
     return json.loads(texto), resp
 
 

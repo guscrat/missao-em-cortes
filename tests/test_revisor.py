@@ -201,3 +201,10 @@ def test_09_e_11_usam_o_mesmo_parser():
     up = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(up)
     assert up.ler_descricoes is _descricoes.ler_descricoes is rv.ler_descricoes
+
+
+def test_chamar_claude_sem_texto_vira_erro_tratavel():
+    resp = _resp()
+    resp.content, resp.stop_reason = [], "max_tokens"
+    with pytest.raises(json.JSONDecodeError):
+        rv.chamar_claude(FakeClient([resp]), [])
