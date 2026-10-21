@@ -150,6 +150,7 @@ def cenario(projeto, monkeypatch, tmp_path):
     monkeypatch.setattr(up, "MediaFileUpload", lambda *a, **k: None)
     monkeypatch.setattr(up, "COTA_PATH", tmp_path / "state" / "cota_youtube.json")
     monkeypatch.setattr(up, "CONFIG", tmp_path / "nao_existe.json")   # usa DEFAULTS
+    monkeypatch.setitem(up.DEFAULTS, "modo", "agendado")   # os testes antigos cobrem o agendado
     monkeypatch.setattr(up, "agora", lambda: datetime(2026, 10, 21, 13, 0, tzinfo=timezone.utc))
     return pasta, yt, projeto.banco
 
@@ -288,3 +289,66 @@ def test_escolher_thumb_prioridade(tmp_path):
     assert _paths.escolher_thumb(tmp_path, "01").name == "thumb_01_b.png"
     (tmp_path / "thumb_01_manual.png").touch()
     assert _paths.escolher_thumb(tmp_path, "01").name == "thumb_01_manual.png"
+
+
+# ── modo privado (enquanto a auditoria não sai) ────────────────────────────
+
+def test_modo_privado_sobe_sem_publish_at(cenario, monkeypatch):
+    pasta, yt, banco = cenario
+    monkeypatch.setitem(up.DEFAULTS, "modo", "privado")
+    assert up.main([str(pasta), "--bloco=1"]) == 0
+    st = yt.uploads[0]["status"]
+    assert st["privacyStatus"] == "private" and "publishAt" not in st
+    reg = json.loads((pasta / "youtube.json").read_text(encoding="utf-8"))
+    assert reg["01"]["youtube_id"] == "yt1" and reg["01"]["publish_at"] is None
+    b = banco("SELECT status, publish_at, motivo FROM blocos WHERE bloco_id=1")[0]
+    assert b["status"] == "aprovado" and b["publish_at"] is None and "Studio" in b["motivo"]
+
+
+def test_privado_nao_ocupa_slot_do_agendado(cenario, monkeypatch):
+    pasta, yt, _ = cenario
+    monkeypatch.setitem(up.DEFAULTS, "modo", "privado")
+    up.main([str(pasta), "--bloco=1"])
+    assert up.ultimo_agendado(pasta.parent) is None
+
+
+def test_modo_invalido_falha_alto(cenario, monkeypatch):
+    pasta, yt, _ = cenario
+    monkeypatch.setitem(up.DEFAULTS, "modo", "publico")
+    with pytest.raises(SystemExit):
+        up.main([str(pasta), "--dry-run"])
+    assert yt.uploads == []
+
+
+def test_config_do_repo_esta_em_privado():
+    assert up.carregar_config()["modo"] == "privado"
+
+
+def test_privado_dry_run_mostra_privado(cenario, monkeypatch, capsys):
+    pasta, yt, _ = cenario
+    monkeypatch.setitem(up.DEFAULTS, "modo", "privado")
+    monkeypatch.setattr(up, "autenticar", lambda: pytest.fail("dry-run autenticou"))
+    assert up.main([str(pasta), "--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert "modo privado" in out and "privado" in out and "21/10" not in out
+    assert yt.uploads == []
+
+
+def test_privado_idempotente(cenario, monkeypatch):
+    pasta, yt, _ = cenario
+    monkeypatch.setitem(up.DEFAULTS, "modo", "privado")
+    up.main([str(pasta)])
+    up.main([str(pasta)])
+    assert len(yt.uploads) == 3
+    assert all("publishAt" not in u["status"] for u in yt.uploads)
+
+
+def test_privado_thumb_que_falhou_e_retentada(cenario, monkeypatch):
+    pasta, yt, banco = cenario
+    monkeypatch.setitem(up.DEFAULTS, "modo", "privado")
+    yt.thumb_falha = True
+    up.main([str(pasta), "--bloco=1"])
+    yt.thumb_falha = False
+    up.main([str(pasta), "--bloco=1"])
+    assert len(yt.uploads) == 1 and yt.thumbs == ["yt1"]
+    assert banco("SELECT status FROM blocos WHERE bloco_id=1")[0]["status"] == "aprovado"
