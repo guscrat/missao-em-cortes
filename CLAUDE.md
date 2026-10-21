@@ -66,7 +66,7 @@ missao-em-cortes/
 │   ├── 06_montar.py
 │   ├── 07_thumb.py                   # thumbs semi-automáticas (off-pipeline)
 │   ├── 08_descricao.py               # gera txt com titulo+descricao+tags pro YouTube
-│   ├── 09_upload.py                  # sobe pro YouTube como privado agendado (publishAt) + thumb (off-pipeline)
+│   ├── 09_upload.py                  # sobe pro YouTube como privado agendado (publishAt) + thumb; travado até a auditoria (off-pipeline)
 │   ├── calibrar_zoom.py              # off-pipeline: calibra o crop anti-overlay (--salvar grava em config/zoom.json)
 │   ├── _canal.py                     # ID/URL do NOSSO canal (só no "Inscreva-se"; nunca como fonte)
 │   ├── _paths.py                     # resolve outputs/<data>_<stem>/ por stem (helper compartilhado)
@@ -88,7 +88,7 @@ missao-em-cortes/
 │   └── segmentacao.md                # Prompt do LLM pra topic segmentation
 ├── config/
 │   ├── zoom.json                     # crop anti-overlay por stem (lido pelo 04_cortar.py)
-│   └── upload.json                   # agendamento do 09 (horário, intervalo, fuso) e custos de cota
+│   └── upload.json                   # trava da auditoria (auditoria_aprovada), agendamento do 09 e custos de cota
 ├── secrets/                          # youtube_client_secret.json + youtube_token.json (gitignored)
 ├── .env                              # ANTHROPIC_API_KEY
 └── pyproject.toml
@@ -124,7 +124,9 @@ O step 7 é opcional e não afeta a montagem — gera 3 variantes de thumb por b
 
 O step 8 gera `descricoes.txt` (na pasta do vídeo) com, pra cada bloco: título sugerido (com contagem de chars), descrição (resumo + ganchos como bullets), créditos do canal, hashtags e lista de tags pronta pra colar no YouTube Studio. **Sem chamada de API** — reaproveita o que o LLM já produziu no `blocos.json`. A URL da fonte ("Conteúdo original") é preenchida automaticamente a partir de `inputs/<stem>.url` (salva pelo `01_baixar.py`); sem o arquivo, deixa o placeholder `[COLAR URL DA LIVE AQUI]` e avisa no log. O link do **nosso** canal (`scripts/_canal.py`) só entra na linha "Inscreva-se" — se o `.url` apontar pro nosso canal, o 08 ignora e o 09 se recusa a subir (crédito da fonte é obrigatório).
 
-O step 9 (`uv run py scripts/09_upload.py <stem> [--dry-run] [--bloco=N] [--max=N]`) é **off-pipeline**: sobe os `finalizados/video_NN_*.mp4` (prefere `_polido`) como **privados** (`"modo"` no `config/upload.json`: `privado` = sem data, o Gu publica no Studio, padrão enquanto a auditoria da API não sai; `agendado` = com `publishAt`, publica sozinho), usando título/descrição/tags do `descricoes.txt` (edição manual no txt vale) e a thumb escolhida (manual > a > b > c; >2 MB vira JPEG). Os slots saem de `config/upload.json` (padrão 1/dia às 18h, horário de Brasília) e continuam depois do último agendado em **qualquer** vídeo. O registro à prova de falha fica em `outputs/<pasta>/youtube.json`; com isso e com o `youtube_id` do banco, o script é **idempotente**: não re-sobe, e se só a thumb falhou, tenta só a thumb. Bloco com `[COLAR URL DA LIVE AQUI]` **não sobe** (crédito da fonte é obrigatório). Cota: upload ≈1600 + thumb 50 de 10.000/dia (zera à meia-noite do Pacífico), contada em `state/cota_youtube.json`; o script para **antes** de estourar. Custo US$ 0. Grava no banco `youtube_id` + `status=agendado` e `publish_at` (modo agendado) ou `status=aprovado` + motivo "publicar no Studio" (modo privado) e eventos com `agente="publicador"`. Credenciais em `secrets/` (gitignored, repo é público). **Sempre rode `--dry-run` antes.**
+O step 9 (`uv run py scripts/09_upload.py <stem> [--dry-run] [--bloco=N] [--max=N] [--teste]`) é **off-pipeline**: sobe os `finalizados/video_NN_*.mp4` (prefere `_polido`) como **privados com `publishAt`** (agendamento público, publica sozinho no horário), usando título/descrição/tags do `descricoes.txt` (edição manual no txt vale) e a thumb escolhida (manual > a > b > c; >2 MB vira JPEG). Os slots saem de `config/upload.json` (padrão 1/dia às 18h, horário de Brasília) e continuam depois do último agendado em **qualquer** vídeo. O registro à prova de falha fica em `outputs/<pasta>/youtube.json`; com isso e com o `youtube_id` do banco, o script é **idempotente**: não re-sobe, e se só a thumb falhou, tenta só a thumb. Bloco com `[COLAR URL DA LIVE AQUI]` **não sobe** (crédito da fonte é obrigatório). Cota: upload ≈1600 + thumb 50 de 10.000/dia (zera à meia-noite do Pacífico), contada em `state/cota_youtube.json`; o script para **antes** de estourar. Custo US$ 0. Grava no banco `youtube_id` + `status=agendado` + `publish_at` e eventos com `agente="publicador"`. Credenciais em `secrets/` (gitignored, repo é público). **Sempre rode `--dry-run` antes.**
+
+> **Trava da auditoria (`"auditoria_aprovada"` no `config/upload.json`, padrão `false`):** vídeo enviado por projeto de API **não auditado** fica **bloqueado como privado** no YouTube: não dá pra publicar nem recorrer, só reenviando (queima o vídeo). Com a flag `false`, o 09 **recusa** qualquer upload real (sai com exit 1 e explica o motivo; o `--dry-run` mostra o plano marcado como TRAVADO). A única exceção é o upload de **teste** (`--bloco=N --teste`, pra screencast/validação): sobe privado, sem data, com `[TESTE]` no título, registrado à parte em `outputs/<pasta>/youtube_teste.json`. Ele **não** conta como upload real (não grava `youtube_id`/status no banco nem ocupa slot), então o bloco continua liberado pro upload de verdade. Quando a auditoria for aprovada, mude a flag pra `true` e o 09 passa a subir privado + `publishAt`.
 
 **Total por live:** ~15-25min de processamento, ~$0.20 de API (estimativa pós-otimização NVENC/concat-copy — validar na próxima live processada).
 
