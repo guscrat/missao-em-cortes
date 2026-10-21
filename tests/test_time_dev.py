@@ -135,3 +135,28 @@ def test_card_mostra_atividade_limpa():
     _, texto = time_dev.status_agente("testador", ev, AGORA)
     assert texto.startswith("há 1 min · terminou: APROVADO 102 passed tests/test_upload.py ok")
     assert texto.endswith("…") and "\n" not in texto and "*" not in texto and "`" not in texto
+
+
+def test_texto_limpo_none_nan_e_so_simbolos():
+    assert time_dev.texto_limpo(None) == ""
+    assert time_dev.texto_limpo(float("nan")) == ""
+    assert time_dev.texto_limpo("---\n|---|\n") == ""
+    assert time_dev.texto_limpo("```\n```") == ""
+
+
+def test_texto_limpo_limite_exato_e_palavra_gigante():
+    assert time_dev.texto_limpo("a" * 40, 40) == "a" * 40          # no limite: intacto
+    t = time_dev.texto_limpo("a" * 41, 40)
+    assert t == "a" * 39 + "…" and len(t) == 40
+    t = time_dev.texto_limpo("x" * 100, 40)                        # sem espaço: corta duro
+    assert len(t) == 40 and t.endswith("…")
+
+
+def test_descrever_mensagem_nan_ou_none():
+    for vazio in (None, float("nan")):
+        ev = pd.Series({"etapa": "turno", "status": "ok", "mensagem": vazio})
+        assert time_dev.descrever(ev) == "terminou o turno"
+        ev = pd.Series({"etapa": "subagent", "status": "ok", "mensagem": vazio})
+        assert time_dev.descrever(ev) == "terminou"
+        ev = pd.Series({"etapa": "corte", "status": "ok", "mensagem": vazio})
+        assert time_dev.descrever(ev) == "corte · ok"
