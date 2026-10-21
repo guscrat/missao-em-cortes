@@ -173,6 +173,7 @@ def test_sobe_agenda_e_grava_no_banco(cenario):
     reg = json.loads((pasta / "youtube.json").read_text(encoding="utf-8"))
     assert reg["01"]["youtube_id"] == "yt1" and reg["01"]["thumb_ok"] is True
     assert reg["03"]["thumb_ok"] is False
+    assert reg["01"]["arquivo"].startswith("video_01_") and reg["01"]["arquivo"].endswith(".mp4")
 
     b = banco("SELECT status, youtube_id, publish_at FROM blocos WHERE bloco_id=1")[0]
     assert b == {"status": "agendado", "youtube_id": "yt1",

@@ -51,11 +51,11 @@ from googleapiclient.http import MediaFileUpload
 from _canal import eh_nosso_canal
 from _descricoes import ler_descricoes
 from _eventos import evento, ler_bloco, upsert_bloco
+from _google import credenciais
 from _paths import achar_pasta, escolher_arquivo, escolher_thumb, stem_de
 
 ROOT = Path(__file__).parent.parent
 CONFIG = ROOT / "config" / "upload.json"
-CLIENT_SECRET = ROOT / "secrets" / "youtube_client_secret.json"
 TOKEN = ROOT / "secrets" / "youtube_token.json"
 COTA_PATH = ROOT / "state" / "cota_youtube.json"
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
@@ -216,28 +216,8 @@ class Cota:
 
 def autenticar():
     """Cliente da API. 1ª vez abre o navegador pro login; depois reusa o token."""
-    from google.auth.exceptions import RefreshError
-    from google.auth.transport.requests import Request
-    from google.oauth2.credentials import Credentials
-    from google_auth_oauthlib.flow import InstalledAppFlow
     from googleapiclient.discovery import build
-
-    creds = Credentials.from_authorized_user_file(str(TOKEN), SCOPES) if TOKEN.exists() else None
-    if creds and not creds.valid and creds.expired and creds.refresh_token:
-        try:
-            creds.refresh(Request())
-        except RefreshError:
-            print("   [aviso] token do YouTube expirou/foi revogado — vai pedir login de novo")
-            creds = None
-    if not creds or not creds.valid:
-        if not CLIENT_SECRET.exists():
-            sys.exit(f"[!] Falta {CLIENT_SECRET.relative_to(ROOT)} — baixe a credencial OAuth "
-                     f"(app de desktop) no Google Cloud e salve com esse nome.")
-        flow = InstalledAppFlow.from_client_secrets_file(str(CLIENT_SECRET), SCOPES)
-        creds = flow.run_local_server(port=0)
-    TOKEN.parent.mkdir(parents=True, exist_ok=True)
-    TOKEN.write_text(creds.to_json(), encoding="utf-8")
-    return build("youtube", "v3", credentials=creds, cache_discovery=False)
+    return build("youtube", "v3", credentials=credenciais(SCOPES, TOKEN), cache_discovery=False)
 
 
 def _cota_estourada(e: HttpError) -> bool:
@@ -441,7 +421,7 @@ def main(argv: list[str]) -> int:
 
         publish_at = slot.isoformat()
         registro[nn] = {"youtube_id": yt_id, "publish_at": publish_at,
-                        "titulo": meta["titulo"], "thumb_ok": False}
+                        "titulo": meta["titulo"], "arquivo": video.name, "thumb_ok": False}
         salvar_registro(pasta, registro)   # antes de tudo: é o que garante a idempotência
         upsert_bloco(stem, bid, status="agendado", forcar_status=True,
                      publish_at=publish_at, youtube_id=yt_id, titulo=meta["titulo"])
