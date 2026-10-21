@@ -1,4 +1,6 @@
 """_google.credenciais: tudo mockado (nada de login, navegador ou rede)."""
+import json
+
 import pytest
 from google.auth.exceptions import RefreshError
 from google.oauth2.credentials import Credentials
@@ -57,22 +59,23 @@ def test_sem_token_faz_login_e_grava(g):
 
 def test_token_valido_reusa_sem_login(g):
     g["token"].parent.mkdir(parents=True)
-    g["token"].write_text("{}")
+    g["token"].write_text(json.dumps({"scopes": ESC}))
     g["carregadas"] = ok = FakeCreds()
     assert _google.credenciais(ESC, g["token"]) is ok and g["logins"] == 0
 
 
 def test_token_sem_escopo_pede_login_de_novo(g, capsys):
     g["token"].parent.mkdir(parents=True)
-    g["token"].write_text("{}")
-    g["carregadas"] = FakeCreds(scopes=False)
+    g["token"].write_text(json.dumps({"scopes": ESC}))
+    g["token"].write_text(json.dumps({"scopes": ["https://www.googleapis.com/auth/outro"]}))
+    g["carregadas"] = FakeCreds()
     assert _google.credenciais(ESC, g["token"]) is g["flow_cred"]
     assert g["logins"] == 1 and "escopos" in capsys.readouterr().out
 
 
 def test_expirado_com_refresh_ok_nao_faz_login(g):
     g["token"].parent.mkdir(parents=True)
-    g["token"].write_text("{}")
+    g["token"].write_text(json.dumps({"scopes": ESC}))
     g["carregadas"] = exp = FakeCreds(valid=False, expired=True)
     monkey_req = pytest.MonkeyPatch()
     monkey_req.setattr("google.auth.transport.requests.Request", lambda: object())
@@ -86,7 +89,7 @@ def test_expirado_com_refresh_ok_nao_faz_login(g):
 
 def test_refresh_error_cai_pro_login(g, capsys):
     g["token"].parent.mkdir(parents=True)
-    g["token"].write_text("{}")
+    g["token"].write_text(json.dumps({"scopes": ESC}))
     g["carregadas"] = FakeCreds(valid=False, expired=True, refresh_erro=True)
     assert _google.credenciais(ESC, g["token"]) is g["flow_cred"]
     assert g["logins"] == 1 and "revogado" in capsys.readouterr().out
@@ -97,3 +100,21 @@ def test_sem_client_secret_sai_com_erro(g, tmp_path, monkeypatch):
     with pytest.raises(SystemExit):
         _google.credenciais(ESC, g["token"])
     assert g["logins"] == 0 and not g["token"].exists()
+
+
+def test_escopos_gravados(tmp_path):
+    t = tmp_path / "t.json"
+    assert _google.escopos_gravados(t) == set()                       # não existe
+    t.write_text("lixo")
+    assert _google.escopos_gravados(t) == set()                       # corrompido
+    t.write_text(json.dumps({"scopes": "a b"}))
+    assert _google.escopos_gravados(t) == {"a", "b"}                  # string com espaço
+    t.write_text(json.dumps({"scopes": ["a", "b"]}))
+    assert _google.escopos_gravados(t) == {"a", "b"}
+
+
+def test_escopo_a_mais_no_token_nao_pede_login(g):
+    g["token"].parent.mkdir(parents=True)
+    g["token"].write_text(json.dumps({"scopes": ESC + ["https://x/extra"]}))
+    g["carregadas"] = ok = FakeCreds()
+    assert _google.credenciais(ESC, g["token"]) is ok and g["logins"] == 0
