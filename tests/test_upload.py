@@ -219,3 +219,72 @@ def test_bloco_sem_url_da_fonte_nao_sobe(cenario):
         {1: {"titulo": "T", "url": up.PLACEHOLDER_URL}}), encoding="utf-8")
     up.main([str(pasta)])
     assert yt.uploads == []
+
+
+# ── lacunas: cota da API, thumb grande, ler_bloco, _paths ──────────────────
+
+def test_quota_exceeded_da_api_para_o_loop(cenario):
+    pasta, yt, _ = cenario
+    erro = up.HttpError(_Resp(403), b'{"error":{"errors":[{"reason":"quotaExceeded"}]}}')
+
+    class _V:
+        def insert(self, part, body, media_body):
+            yt.uploads.append(body)
+
+            class _Req:
+                def next_chunk(self):
+                    raise erro
+            return _Req()
+    yt.videos = lambda: _V()
+    assert up.main([str(pasta)]) == 1
+    assert len(yt.uploads) == 1                       # parou no 1º, não tentou 2 e 3
+    assert not (pasta / "youtube.json").exists() or json.loads(
+        (pasta / "youtube.json").read_text()) == {}
+    assert json.loads((up.COTA_PATH).read_text())["usadas"] == up.DEFAULTS["cota_limite_dia"]
+
+
+def test_thumb_grande_vira_jpeg(tmp_path, monkeypatch):
+    from PIL import Image
+    import os
+    png = tmp_path / "t.png"
+    Image.frombytes("RGB", (900, 900), os.urandom(900 * 900 * 3)).save(png)
+    assert png.stat().st_size > up.LIMITE_THUMB_BYTES
+    enviados = []
+    monkeypatch.setattr(up, "MediaFileUpload", lambda caminho, mimetype=None, **k: enviados.append((caminho, mimetype)))
+
+    class _T:
+        def set(self, videoId, media_body):
+            class _R:
+                def execute(self): pass
+            return _R()
+    class _Y:
+        def thumbnails(self): return _T()
+    up.subir_thumb(_Y(), png, "abc")
+    assert enviados[0][1] == "image/jpeg" and enviados[0][0].endswith(".jpg")
+
+
+def test_ler_bloco_banco_fora_do_ar_retorna_none(monkeypatch):
+    import _eventos
+    def boom(*a, **k): raise RuntimeError("banco morto")
+    monkeypatch.setattr(_eventos, "conectar", boom)
+    assert _eventos.ler_bloco("x", 1) is None
+
+
+def test_escolher_arquivo_prefere_polido(tmp_path):
+    import _paths
+    assert _paths.escolher_arquivo(tmp_path / "nao_existe", "v_*.mp4") is None
+    (tmp_path / "video_01_a.mp4").touch()
+    assert _paths.escolher_arquivo(tmp_path, "video_01_*.mp4").name == "video_01_a.mp4"
+    (tmp_path / "video_01_a_polido.mp4").touch()
+    assert _paths.escolher_arquivo(tmp_path, "video_01_*.mp4").name == "video_01_a_polido.mp4"
+    assert _paths.escolher_arquivo(tmp_path, "video_01_*.mp4", False).name == "video_01_a.mp4"
+
+
+def test_escolher_thumb_prioridade(tmp_path):
+    import _paths
+    assert _paths.escolher_thumb(tmp_path, "01") is None
+    for n in ("thumb_01_c.png", "thumb_01_b.png"):
+        (tmp_path / n).touch()
+    assert _paths.escolher_thumb(tmp_path, "01").name == "thumb_01_b.png"
+    (tmp_path / "thumb_01_manual.png").touch()
+    assert _paths.escolher_thumb(tmp_path, "01").name == "thumb_01_manual.png"
