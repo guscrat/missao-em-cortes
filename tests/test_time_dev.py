@@ -100,3 +100,63 @@ def test_painel_com_banco_antigo_sem_tarefas(banco, monkeypatch):
     monkeypatch.setenv("MISSAO_DB", str(_eventos.DB_PATH))
     at = AppTest.from_file("../painel/app.py", default_timeout=60).run()
     assert not at.exception
+
+
+# ── última atividade: texto limpo, uma linha ───────────────────────────────
+
+def test_texto_limpo_tira_markdown_e_junta_linhas():
+    md = ("**Pronto!** O PDF está em `evidencias/evidencias.pdf`.\n\n"
+          "## Próximos\n- mandar o [formulário](https://x.com)\n> citação\n1. esperar")
+    assert time_dev.texto_limpo(md, 200) == ("Pronto! O PDF está em evidencias/evidencias.pdf. "
+                                             "Próximos mandar o formulário citação esperar")
+
+
+def test_texto_limpo_tabela_e_bloco_de_codigo():
+    assert time_dev.texto_limpo("| a | b |\n|---|---|\n| 1 | 2 |") == "a · b · 1 · 2"
+    assert time_dev.texto_limpo("```py\nprint(1)\n```\nfeito") == "feito"
+
+
+def test_texto_limpo_nao_estraga_texto_sem_markdown():
+    assert time_dev.texto_limpo("snake_case e 2*3*4 e __init__") == "snake_case e 2*3*4 e __init__"
+    assert time_dev.texto_limpo("") == ""
+
+
+def test_texto_limpo_corta_com_reticencias_sem_quebrar_palavra():
+    longo = "APROVADO. " + "palavra " * 30
+    t = time_dev.texto_limpo(longo, 40)
+    assert t.endswith("…") and len(t) <= 40 and "\n" not in t
+    assert t[:-1].split()[-1] == "palavra"          # última palavra inteira
+    assert time_dev.texto_limpo("curto", 40) == "curto"
+
+
+def test_card_mostra_atividade_limpa():
+    msg = "**APROVADO**\n\n- 102 passed\n- `tests/test_upload.py` ok\n" + "detalhe " * 40
+    ev = _ev((1, "testador", "subagent", "ok", msg, 0, 1))
+    _, texto = time_dev.status_agente("testador", ev, AGORA)
+    assert texto.startswith("há 1 min · terminou: APROVADO 102 passed tests/test_upload.py ok")
+    assert texto.endswith("…") and "\n" not in texto and "*" not in texto and "`" not in texto
+
+
+def test_texto_limpo_none_nan_e_so_simbolos():
+    assert time_dev.texto_limpo(None) == ""
+    assert time_dev.texto_limpo(float("nan")) == ""
+    assert time_dev.texto_limpo("---\n|---|\n") == ""
+    assert time_dev.texto_limpo("```\n```") == ""
+
+
+def test_texto_limpo_limite_exato_e_palavra_gigante():
+    assert time_dev.texto_limpo("a" * 40, 40) == "a" * 40          # no limite: intacto
+    t = time_dev.texto_limpo("a" * 41, 40)
+    assert t == "a" * 39 + "…" and len(t) == 40
+    t = time_dev.texto_limpo("x" * 100, 40)                        # sem espaço: corta duro
+    assert len(t) == 40 and t.endswith("…")
+
+
+def test_descrever_mensagem_nan_ou_none():
+    for vazio in (None, float("nan")):
+        ev = pd.Series({"etapa": "turno", "status": "ok", "mensagem": vazio})
+        assert time_dev.descrever(ev) == "terminou o turno"
+        ev = pd.Series({"etapa": "subagent", "status": "ok", "mensagem": vazio})
+        assert time_dev.descrever(ev) == "terminou"
+        ev = pd.Series({"etapa": "corte", "status": "ok", "mensagem": vazio})
+        assert time_dev.descrever(ev) == "corte · ok"
