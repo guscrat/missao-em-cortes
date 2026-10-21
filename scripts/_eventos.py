@@ -97,12 +97,24 @@ def conectar(db_path: Path = DB_PATH) -> sqlite3.Connection:
 
 @contextmanager
 def _seguro(acao: str):
-    """Best-effort: falha de banco vira aviso, nunca exceção pro pipeline."""
+    """Best-effort: falha de banco vira aviso, nunca exceção pro pipeline.
+
+    Se nem conectar der, o corpo do `with` roda num banco descartável em memória
+    (um contextmanager não consegue pular o corpo — sem isso, o `yield` não
+    aconteceria e o Python levantaria "generator didn't yield")."""
     try:
-        with conectar() as con:
+        con = conectar()
+    except Exception as e:  # noqa: BLE001 — de propósito
+        print(f"[aviso] painel: não consegui {acao} ({e}) — pipeline segue", file=sys.stderr)
+        con = sqlite3.connect(":memory:")
+        con.executescript(SCHEMA)
+    try:
+        with con:
             yield con
     except Exception as e:  # noqa: BLE001 — de propósito
         print(f"[aviso] painel: não consegui {acao} ({e}) — pipeline segue", file=sys.stderr)
+    finally:
+        con.close()
 
 
 def upsert_video(stem: str, pasta: str | None = None, fonte_url: str | None = None,
