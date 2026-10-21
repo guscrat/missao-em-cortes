@@ -9,12 +9,14 @@ Tabelas:
   videos   — 1 linha por fonte (stem)
   blocos   — 1 linha por corte (stem + bloco_id), com o status no kanban
   eventos  — log append-only: quem (agente), o quê (etapa), status, tokens, custo
+  tarefas  — tarefas macro do time de dev (o Gu acompanha no painel, aba "Time de dev")
 
 Uso:
     from _eventos import evento, upsert_video, upsert_bloco
     evento("renan_live3", "03_segmentar", "ok", agente="editor",
            tokens_in=40_000, tokens_out=3_000, custo_usd=0.17)
 """
+import os
 import sqlite3
 import sys
 from contextlib import contextmanager
@@ -22,7 +24,8 @@ from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
-DB_PATH = ROOT / "state" / "pipeline.db"
+DB_PATH = Path(os.environ.get("MISSAO_DB") or ROOT / "state" / "pipeline.db")
+BUSY_TIMEOUT_S = 10   # espera por lock; o hook do Claude Code baixa pra caber em <1s
 
 # Status de bloco, na ordem do fluxo. Os "AUTO" são derivados dos arquivos em
 # outputs/ (sincronizar_estado.py pode sobrescrever). Os demais são decisões de
@@ -32,6 +35,9 @@ STATUS_DECISAO = ["revisao", "aprovado", "quarentena", "agendado", "publicado"]
 STATUS_BLOCO = STATUS_AUTO + STATUS_DECISAO
 
 STATUS_VIDEO = ["curadoria", "baixado", "transcrito", "segmentado", "descartado"]
+
+ETAPAS_TAREFA = ["backlog", "fazendo", "testando", "revisando", "pronto", "bloqueado"]
+ETAPAS_ATIVAS = ["fazendo", "testando", "revisando"]
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS videos (
@@ -73,7 +79,20 @@ CREATE TABLE IF NOT EXISTS eventos (
     tokens_in   INTEGER DEFAULT 0,
     tokens_out  INTEGER DEFAULT 0,
     custo_usd   REAL DEFAULT 0,
-    duracao_s   REAL
+    duracao_s   REAL,
+    tarefa_id   INTEGER                -- tarefa de dev em andamento (custo por tarefa no painel)
+);
+
+CREATE TABLE IF NOT EXISTS tarefas (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    titulo           TEXT NOT NULL,
+    etapa            TEXT NOT NULL DEFAULT 'backlog',
+    responsavel      TEXT,
+    ultimo_resultado TEXT,            -- APROVADO | REPROVADO (+ mensagem curta)
+    rodada           INTEGER NOT NULL DEFAULT 0,   -- quantas vezes voltou reprovada
+    branch           TEXT,
+    decisao_pendente TEXT,            -- pergunta pro Gu (faixa amarela no painel)
+    atualizado_em    TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS ix_eventos_ts ON eventos(ts);
@@ -88,11 +107,17 @@ def _agora() -> str:
 def conectar(db_path: Path | None = None) -> sqlite3.Connection:
     db_path = db_path or DB_PATH   # lido na chamada (não no def) pra os testes trocarem o banco
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(db_path, timeout=10)
+    con = sqlite3.connect(db_path, timeout=BUSY_TIMEOUT_S)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA journal_mode=WAL")   # painel lê enquanto o pipeline escreve
     con.execute("PRAGMA foreign_keys=ON")
     con.executescript(SCHEMA)
+    # migração: bancos criados antes da coluna tarefa_id
+    if "tarefa_id" not in {r["name"] for r in con.execute("PRAGMA table_info(eventos)")}:
+        try:
+            con.execute("ALTER TABLE eventos ADD COLUMN tarefa_id INTEGER")
+        except sqlite3.OperationalError:   # outro processo migrou no mesmo instante
+            pass
     return con
 
 
@@ -116,6 +141,21 @@ def _seguro(acao: str):
         print(f"[aviso] painel: não consegui {acao} ({e}) — pipeline segue", file=sys.stderr)
     finally:
         con.close()
+
+
+def _executar(acao: str, fn, padrao=None):
+    """Best-effort pra quem precisa de um RETORNO (id, linha): banco fora do ar devolve
+    `padrao` — diferente do _seguro, que roda num banco em memória e "daria certo" falso."""
+    try:
+        con = conectar()
+        try:
+            with con:
+                return fn(con)
+        finally:
+            con.close()
+    except Exception as e:  # noqa: BLE001 — de propósito
+        print(f"[aviso] painel: não consegui {acao} ({e})", file=sys.stderr)
+        return padrao
 
 
 def upsert_video(stem: str, pasta: str | None = None, fonte_url: str | None = None,
@@ -175,30 +215,79 @@ def upsert_bloco(stem: str, bloco_id: int, *, forcar_status: bool = False, **cam
 
 def ler_bloco(stem: str, bloco_id: int) -> dict | None:
     """Lê um bloco do banco. Best-effort: banco fora do ar = None (como se não existisse)."""
-    try:
-        con = conectar()
-        try:
-            r = con.execute("SELECT * FROM blocos WHERE stem = ? AND bloco_id = ?",
-                            (stem, bloco_id)).fetchone()
-        finally:
-            con.close()
+    def ler(con):
+        r = con.execute("SELECT * FROM blocos WHERE stem = ? AND bloco_id = ?",
+                        (stem, bloco_id)).fetchone()
         return dict(r) if r else None
-    except Exception as e:  # noqa: BLE001 — de propósito
-        print(f"[aviso] painel: não consegui ler bloco {stem}#{bloco_id} ({e})", file=sys.stderr)
-        return None
+    return _executar(f"ler bloco {stem}#{bloco_id}", ler)
 
 
 def evento(stem: str | None, etapa: str, status: str, *, agente: str = "pipeline",
            bloco_id: int | None = None, mensagem: str = "", tokens_in: int = 0,
-           tokens_out: int = 0, custo_usd: float = 0.0, duracao_s: float | None = None) -> None:
+           tokens_out: int = 0, custo_usd: float = 0.0, duracao_s: float | None = None,
+           tarefa_id: int | None = None) -> None:
+    """tarefa_id: tarefa de dev a que o evento pertence. Sem ele, usa a env MISSAO_TAREFA
+    (ex: rodar um script real com API paga dentro de uma tarefa → custo cai nela)."""
+    if tarefa_id is None and os.environ.get("MISSAO_TAREFA", "").isdigit():
+        tarefa_id = int(os.environ["MISSAO_TAREFA"])
     with _seguro(f"registrar evento {etapa}") as con:
         con.execute(
             """INSERT INTO eventos (ts, stem, bloco_id, agente, etapa, status, mensagem,
-                                    tokens_in, tokens_out, custo_usd, duracao_s)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                    tokens_in, tokens_out, custo_usd, duracao_s, tarefa_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (_agora(), stem, bloco_id, agente, etapa, status, mensagem,
-             tokens_in, tokens_out, custo_usd, duracao_s),
+             tokens_in, tokens_out, custo_usd, duracao_s, tarefa_id),
         )
+
+
+# ── tarefas do time de dev ─────────────────────────────────────────────────
+
+def nova_tarefa(titulo: str, branch: str | None = None,
+                responsavel: str = "tech-lead") -> int | None:
+    """Cria a tarefa no backlog. Retorna o id (None se o banco falhar)."""
+    return _executar("criar tarefa", lambda con: con.execute(
+        "INSERT INTO tarefas (titulo, branch, responsavel, atualizado_em) VALUES (?, ?, ?, ?)",
+        (titulo, branch, responsavel, _agora())).lastrowid)
+
+
+def atualizar_tarefa(tarefa_id: int, *, reprovou: bool = False, **campos) -> bool | None:
+    """Atualiza campos da tarefa. reprovou=True soma 1 na rodada.
+    Retorna True/False (achou a tarefa ou não) e None se o banco falhar."""
+    permitidos = {"titulo", "etapa", "responsavel", "ultimo_resultado", "branch",
+                  "decisao_pendente"}
+    invalidos = set(campos) - permitidos
+    if invalidos:
+        raise ValueError(f"campos inválidos pra tarefa: {invalidos}")
+    if "etapa" in campos and campos["etapa"] not in ETAPAS_TAREFA:
+        raise ValueError(f"etapa inválida: {campos['etapa']} (use {', '.join(ETAPAS_TAREFA)})")
+    sets = [f"{k} = ?" for k in campos] + (["rodada = rodada + 1"] if reprovou else [])
+    return _executar(f"atualizar tarefa #{tarefa_id}", lambda con: con.execute(
+        f"UPDATE tarefas SET {', '.join(sets + ['atualizado_em = ?'])} WHERE id = ?",
+        (*campos.values(), _agora(), tarefa_id)).rowcount > 0)
+
+
+def ler_tarefa(tarefa_id: int) -> dict | None:
+    def ler(con):
+        r = con.execute("SELECT * FROM tarefas WHERE id = ?", (tarefa_id,)).fetchone()
+        return dict(r) if r else None
+    return _executar(f"ler tarefa #{tarefa_id}", ler)
+
+
+def listar_tarefas(incluir_prontas: bool = False) -> list[dict]:
+    filtro = "" if incluir_prontas else "WHERE etapa != 'pronto'"
+    return _executar("listar tarefas", lambda con: [
+        dict(r) for r in con.execute(f"SELECT * FROM tarefas {filtro} ORDER BY id")], padrao=[])
+
+
+def tarefa_ativa() -> int | None:
+    """A tarefa em andamento mais recente (fazendo/testando/revisando) — é nela que os
+    hooks penduram a atividade dos subagents."""
+    marcadores = ",".join("?" * len(ETAPAS_ATIVAS))
+    def achar(con):
+        r = con.execute(f"SELECT id FROM tarefas WHERE etapa IN ({marcadores}) "
+                        f"ORDER BY atualizado_em DESC, id DESC LIMIT 1", ETAPAS_ATIVAS).fetchone()
+        return r["id"] if r else None
+    return _executar("achar tarefa ativa", achar)
 
 
 if __name__ == "__main__":

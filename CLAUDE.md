@@ -72,12 +72,16 @@ missao-em-cortes/
 │   ├── _ffmpeg.py                    # formato canônico (VENC/AENC/SCALE_PAD) compartilhado pelos steps 4/4b/5/6
 │   ├── _migrar_outputs.py            # one-off: migrou a estrutura antiga pro layout por vídeo
 │   ├── _eventos.py                   # estado/eventos em SQLite (state/pipeline.db) — best-effort, nunca derruba o pipeline
-│   └── sincronizar_estado.py         # backfill/reconciliação do banco a partir de outputs/ (idempotente)
+│   ├── sincronizar_estado.py         # backfill/reconciliação do banco a partir de outputs/ (idempotente)
+│   ├── tarefa.py                     # CLI das tarefas do time de dev (nova/mover/resultado/decisao/lista)
+│   └── hook_agente.py                # hook do Claude Code: atividade dos subagents/tech-lead → banco
 ├── painel/
-│   └── app.py                        # painel Streamlit (só LÊ o banco): kanban, custo por agente, timeline
+│   ├── app.py                        # painel Streamlit (só LÊ o banco): kanban, custo por agente, timeline
+│   └── time_dev.py                   # aba "Time de dev": status dos agentes, tarefas, decisões pro Gu
 ├── state/                            # pipeline.db (gitignored)
 ├── tests/                            # pytest (conftest com outputs/ e banco falsos; tudo mockado)
 ├── .claude/agents/                   # subagents do time de dev: testador, revisor-codigo
+├── .claude/settings.json             # hooks SubagentStart/SubagentStop/Stop → scripts/hook_agente.py
 ├── .github/workflows/ci.yml          # CI: uv sync + pytest em todo PR e push pra develop/main
 ├── prompts/
 │   └── segmentacao.md                # Prompt do LLM pra topic segmentation
@@ -241,6 +245,19 @@ Está em `prompts/segmentacao.md`. Objetivo: a LLM recebe a transcrição comple
 6. **Merge em `develop` é do tech lead:** com testador APROVADO + revisor APROVADO + CI verde, `gh pr merge --squash --delete-branch` sem perguntar.
 7. **Quebrou depois do merge?** Primeiro `git revert` (numa `fix/*`, via PR), depois investigar.
 8. **Release pra `main`:** mandar pro Gu um resumo de produto (o que muda pro canal, risco, custo) em até 5 linhas, sem detalhe técnico, e **esperar o "ok"**.
+
+**Tarefas no painel:** toda tarefa macro do Gu vira uma linha em `tarefas` via `scripts/tarefa.py`; mova a etapa a cada transição (implementar → testador → revisor → merge):
+
+```
+uv run py scripts/tarefa.py nova "Upload via API do YouTube" --branch feature/upload-api   # → #N, backlog
+uv run py scripts/tarefa.py mover N fazendo --responsavel tech-lead
+uv run py scripts/tarefa.py mover N testando --responsavel testador
+uv run py scripts/tarefa.py resultado N APROVADO|REPROVADO --msg "..."                  # REPROVADO soma rodada
+uv run py scripts/tarefa.py mover N revisando --responsavel revisor-codigo
+uv run py scripts/tarefa.py mover N pronto                                             # depois do merge
+```
+
+Pergunta pro Gu = `tarefa.py decisao N "pergunta?"` (faixa amarela no painel), **além** de perguntar no chat; quando ele responder, `tarefa.py decisao N --resolvida`. A atividade dos subagents e o fim de cada turno do tech-lead entram sozinhos via hooks (`.claude/settings.json` → `scripts/hook_agente.py`, penduram na tarefa ativa). Gasto de API paga dentro de uma tarefa: rode o script com `MISSAO_TAREFA=N` pra o custo cair nela.
 
 **Perguntar SEMPRE antes de:** publicar no YouTube pela primeira vez numa feature nova · gastar API paga fora de teste · ação destrutiva (apagar arquivo/branch, force push, reset) · mudar segredo/credencial.
 

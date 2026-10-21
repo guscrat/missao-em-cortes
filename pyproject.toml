@@ -33,4 +33,4 @@ default-groups = ["painel", "dev"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["scripts"]   # os scripts importam uns aos outros pelo nome (_eventos, _paths)
+pythonpath = ["scripts", "painel"]   # os módulos se importam pelo nome (_eventos, _paths, time_dev)
