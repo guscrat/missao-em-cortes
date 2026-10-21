@@ -37,8 +37,10 @@ def _primeiro(pasta: Path, padrao: str, preferir_polido: bool = True) -> Path | 
 
 
 def _thumb(pasta_thumbs: Path, nn: str) -> Path | None:
-    # manual > a/b/c > sem sufixo — o painel mostra a "melhor" disponível
-    for padrao in (f"thumb_{nn}_manual.png", f"thumb_{nn}_a.png", f"thumb_{nn}.png"):
+    # manual > a > b > c > sem sufixo — o painel mostra a "melhor" disponível.
+    # Na prática você apaga as variantes descartadas, então sobra só a escolhida.
+    for padrao in (f"thumb_{nn}_manual.png", f"thumb_{nn}_a.png", f"thumb_{nn}_b.png",
+                   f"thumb_{nn}_c.png", f"thumb_{nn}.png"):
         p = pasta_thumbs / padrao
         if p.exists():
             return p
@@ -80,8 +82,9 @@ def sincronizar_pasta(pasta: Path) -> tuple[str, int]:
             texto_thumb=b.get("texto_thumb"),
             score=b.get("score_potencial"),
             duracao_min=b.get("duracao_minutos"),
-            video_path=str(final.relative_to(ROOT)) if final else None,
-            thumb_path=str(thumb.relative_to(ROOT)) if thumb else None,
+            # posix (/) pra o banco valer em qualquer SO — Path aceita / no Windows
+            video_path=final.relative_to(ROOT).as_posix() if final else None,
+            thumb_path=thumb.relative_to(ROOT).as_posix() if thumb else None,
         )
     return stem, len(blocos)
 
