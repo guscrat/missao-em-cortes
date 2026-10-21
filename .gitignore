@@ -17,3 +17,6 @@ state/
 secrets/
 client_secret*.json
 *token*.json
+
+# Prints da auditoria da YouTube API (evidencias_pdf.py) — podem mostrar dados da conta
+evidencias/
