@@ -93,3 +93,28 @@ def test_settings_json_liga_os_tres_hooks_sem_derrubar():
     for nome in ("SubagentStart", "SubagentStop", "Stop"):
         cmd = cfg["hooks"][nome][0]["hooks"][0]["command"]
         assert "hook_agente.py" in cmd and cmd.endswith("|| true") and ">/dev/null" in cmd
+
+
+def test_processo_real_json_valido_de_tipo_errado(tmp_path):
+    for entrada in (b"[1,2]", b"42", b'"texto"', b"null", b"true",
+                    b'{"hook_event_name": ["Stop"]}', b'{"hook_event_name": "Stop", "last_assistant_message": 5}',
+                    b'{"hook_event_name": "SubagentStart", "transcript_path": 7, "agent_type": {"a": 1}}'):
+        r = _rodar(entrada, tmp_path / "t.db")
+        assert (r.returncode, r.stdout, r.stderr) == (0, b"", b""), entrada
+
+
+def test_hook_demora_menos_de_1s(tmp_path):
+    import time
+    ini = time.perf_counter()
+    r = _rodar(json.dumps({"hook_event_name": "Stop", "last_assistant_message": "ok"}).encode(),
+               tmp_path / "t.db")
+    assert r.returncode == 0 and time.perf_counter() - ini < 1.0
+
+
+def test_transcript_com_linhas_corrompidas(banco, tmp_path):
+    bom = _transcript(tmp_path, ("testador", "Desc boa"))
+    p = tmp_path / "sujo.jsonl"
+    p.write_text('{"Agent" quebrado\n[1,"Agent"]\n"Task"\n{"message": 5, "Agent": 1}\n'
+                 + Path(bom).read_text(encoding="utf-8") + "\n{lixo \"Agent\"", encoding="utf-8")
+    assert hook_agente._descricao_do_subagent(str(p), "testador") == "Desc boa"
+    assert hook_agente._descricao_do_subagent(str(p), "outro") == ""

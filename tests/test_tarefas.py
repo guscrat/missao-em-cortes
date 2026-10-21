@@ -117,3 +117,11 @@ def test_cli_lista(banco, capsys):
     assert "#1 a" in out and "#2 b" not in out
     _, out = _cli(capsys, "lista", "--todas")
     assert "#2 b" in out and out.count("\n") == 1
+
+
+def test_cli_decisao_sem_pergunta_nem_resolvida_falha(banco, capsys):
+    nova_tarefa("x")
+    with pytest.raises(SystemExit) as e:
+        tarefa.main(["decisao", "1"])
+    assert e.value.code == 2
+    assert ler_tarefa(1)["decisao_pendente"] is None
