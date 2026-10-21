@@ -21,6 +21,7 @@ sys.stdout.reconfigure(encoding='utf-8', line_buffering=True)
 import time
 from pathlib import Path
 from _paths import stem_de
+from _eventos import evento
 
 ROOT = Path(__file__).parent.parent
 SCRIPTS = Path(__file__).parent
@@ -79,14 +80,23 @@ for num, script, sargs in steps:
     print(f">> Step {rotulo[num]}: {script} {' '.join(sargs)}")
     print(f"{'=' * 60}")
     t_step = time.time()
+    etapa = script.removesuffix(".py")
+    evento(stem, etapa, "inicio")
     result = subprocess.run([sys.executable, str(SCRIPTS / script), *sargs])
     if result.returncode != 0:
+        evento(stem, etapa, "falha", mensagem=f"exit {result.returncode}",
+               duracao_s=time.time() - t_step)
         sys.exit(f"\n[!] Step {rotulo[num]} ({script}) falhou (exit {result.returncode}). "
                  f"Depois de corrigir, retome com:\n"
                  f"    uv run py scripts/pipeline.py {alvo}"
                  f"{' --polir' if polir else ''}{' --sem-llm' if sem_llm else ''}"
                  f" --desde={rotulo[num]}")
+    evento(stem, etapa, "ok", duracao_s=time.time() - t_step)
     print(f"   (step {rotulo[num]}: {(time.time() - t_step) / 60:.1f} min)")
+
+# Atualiza o painel com o que os steps geraram (cortes, finalizados, thumbs)
+subprocess.run([sys.executable, str(SCRIPTS / "sincronizar_estado.py")],
+               stdout=subprocess.DEVNULL)
 
 print(f"\n{'=' * 60}")
 print(f"OK Pipeline completo pra '{alvo}' em {(time.time() - t0) / 60:.1f} min")

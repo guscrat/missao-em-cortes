@@ -9,3 +9,6 @@ assets/intro_trim.mp4
 
 # Exemplos/referencias de thumb (scratch, nao versionar)
 assets/temp/
+
+# Estado do pipeline (SQLite local, gerado pelo _eventos.py)
+state/

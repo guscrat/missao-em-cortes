@@ -13,3 +13,14 @@ dependencies = [
     "python-dotenv>=1.2.2",
     "yt-dlp>=2026.3.17",
 ]
+
+[dependency-groups]
+painel = [
+    "pandas>=3.0.6",
+    "streamlit>=1.50",
+]
+
+[tool.uv]
+# `uv sync` já instala o painel junto (streamlit/pandas). Pra máquina só de
+# pipeline: uv sync --no-group painel
+default-groups = ["painel"]
