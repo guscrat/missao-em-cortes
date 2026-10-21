@@ -222,6 +222,16 @@ def test_bloco_sem_url_da_fonte_nao_sobe(cenario):
     assert yt.uploads == []
 
 
+def test_bloco_com_credito_apontando_pro_nosso_canal_nao_sobe(cenario):
+    pasta, yt, _ = cenario
+    (pasta / "descricoes.txt").write_text(_txt_descricoes({
+        1: {"titulo": "T1", "url": "https://www.youtube.com/channel/" + up.eh_nosso_canal.__globals__["CANAL_ID"]},
+        2: {"titulo": "T2", "url": "https://www.youtube.com/@missaoemcortes-14"},
+        3: {"titulo": "T3"}}), encoding="utf-8")
+    up.main([str(pasta)])
+    assert [u["snippet"]["title"] for u in yt.uploads] == ["T3"]   # só o com fonte real sobe
+
+
 # ── lacunas: cota da API, thumb grande, ler_bloco, _paths ──────────────────
 
 def test_quota_exceeded_da_api_para_o_loop(cenario):
