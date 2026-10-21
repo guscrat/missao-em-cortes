@@ -427,7 +427,7 @@ def main(argv: list[str]) -> int:
                mensagem=f"youtube_id={yt_id} publishAt={publish_at or '-'} cota={unidades}",
                duracao_s=time.time() - t0)
 
-    print(f"\n{'=' * 60}\nOK {agendados} vídeo(s) agendado(s) · {falhas} falha(s) · "
+    print(f"\n{'=' * 60}\nOK {agendados} vídeo(s) enviado(s) · {falhas} falha(s) · "
           f"cota hoje {cota.usadas:,}/{cota.limite:,} · custo US$ 0")
     return 1 if falhas else 0
 
