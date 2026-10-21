@@ -173,6 +173,21 @@ def upsert_bloco(stem: str, bloco_id: int, *, forcar_status: bool = False, **cam
                             (status, _agora(), stem, bloco_id, *STATUS_AUTO))
 
 
+def ler_bloco(stem: str, bloco_id: int) -> dict | None:
+    """Lê um bloco do banco. Best-effort: banco fora do ar = None (como se não existisse)."""
+    try:
+        con = conectar()
+        try:
+            r = con.execute("SELECT * FROM blocos WHERE stem = ? AND bloco_id = ?",
+                            (stem, bloco_id)).fetchone()
+        finally:
+            con.close()
+        return dict(r) if r else None
+    except Exception as e:  # noqa: BLE001 — de propósito
+        print(f"[aviso] painel: não consegui ler bloco {stem}#{bloco_id} ({e})", file=sys.stderr)
+        return None
+
+
 def evento(stem: str | None, etapa: str, status: str, *, agente: str = "pipeline",
            bloco_id: int | None = None, mensagem: str = "", tokens_in: int = 0,
            tokens_out: int = 0, custo_usd: float = 0.0, duracao_s: float | None = None) -> None:
