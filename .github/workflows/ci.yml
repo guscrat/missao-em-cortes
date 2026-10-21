@@ -7,6 +7,9 @@ on:
   push:
     branches: [develop, main]
 
+permissions:
+  contents: read
+
 jobs:
   testes:
     runs-on: ubuntu-latest
