@@ -39,7 +39,6 @@ e secrets/youtube_token.json (criado no 1º login, que abre o navegador).
 import sys
 sys.stdout.reconfigure(encoding='utf-8')
 import json
-import re
 import tempfile
 import time
 from datetime import datetime, timedelta, timezone
@@ -50,6 +49,7 @@ from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
 
 from _canal import eh_nosso_canal
+from _descricoes import ler_descricoes
 from _eventos import evento, ler_bloco, upsert_bloco
 from _paths import achar_pasta, escolher_arquivo, escolher_thumb, stem_de
 
@@ -95,28 +95,7 @@ def carregar_config(path: Path | None = None) -> dict:
     return cfg
 
 
-# ── descricoes.txt (formato do 08_descricao.py) ────────────────────────────
-
-_CABECALHO_BLOCO = re.compile(r"^=+\nVÍDEO (\d+) — [^\n]*\n=+\n", re.M)
-_TITULO = re.compile(r"^TÍTULO \(\d+ chars\):\n(.+)$", re.M)
-_CORPO = re.compile(r"^-+\nDESCRIÇÃO:\n-+\n(.*?)\n-+\nTAGS[^\n]*\n-+\n([^\n]*)", re.M | re.S)
-
-
-def ler_descricoes(texto: str) -> dict[int, dict]:
-    """{bloco_id: {"titulo", "descricao", "tags"}} a partir do descricoes.txt."""
-    partes = _CABECALHO_BLOCO.split(texto.replace("\r\n", "\n"))
-    saida = {}
-    for bid, corpo in zip(partes[1::2], partes[2::2]):
-        titulo, miolo = _TITULO.search(corpo), _CORPO.search(corpo)
-        if not (titulo and miolo):
-            continue
-        saida[int(bid)] = {
-            "titulo": titulo.group(1).strip(),
-            "descricao": miolo.group(1).strip(),
-            "tags": [t.strip() for t in miolo.group(2).split(",") if t.strip()],
-        }
-    return saida
-
+# ── descricoes.txt (parser em _descricoes.py) ──────────────────────────────
 
 def problema_credito(descricao: str) -> str | None:
     """Motivo pra NÃO subir se o crédito da fonte estiver ausente/errado, senão None.
