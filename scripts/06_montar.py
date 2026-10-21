@@ -13,6 +13,7 @@ ROOT = Path(__file__).parent.parent
 args = [a for a in sys.argv[1:] if not a.startswith("--")]
 flags = [a for a in sys.argv[1:] if a.startswith("--")]
 USE_POLIDO = "--polido" in flags
+USE_LEGENDADO = "--legendado" in flags   # cortes de cortes/legendados/ (step 4c)
 
 input_arg = args[0] if args else "live_teste"
 PASTA = achar_pasta(input_arg)
@@ -189,21 +190,24 @@ with BLOCOS_JSON.open(encoding="utf-8") as f:
 
 for b in data["blocos"]:
     card   = CARDS_DIR / f"card_{b['id']:02d}.mp4"
+    fonte_cortes = CORTES_DIR / "legendados" if USE_LEGENDADO else CORTES_DIR
     if USE_POLIDO:
-        cortes = sorted(CORTES_DIR.glob(f"corte_{b['id']:02d}_*_polido.mp4"))
+        cortes = sorted(fonte_cortes.glob(f"corte_{b['id']:02d}_*_polido.mp4"))
         if not cortes:
-            print(f"\n[!] Bloco {b['id']}: corte polido não encontrado, pulando "
-                  f"(rode 04b_polir.py antes ou tire o --polido)")
+            print(f"\n[!] Bloco {b['id']}: corte polido{' legendado' if USE_LEGENDADO else ''} "
+                  f"não encontrado, pulando (rode 04b_polir.py"
+                  f"{' e 04c_legendas.py --polido' if USE_LEGENDADO else ''} antes ou tire o --polido)")
             continue
     else:
-        cortes = [p for p in CORTES_DIR.glob(f"corte_{b['id']:02d}_*.mp4")
+        cortes = [p for p in fonte_cortes.glob(f"corte_{b['id']:02d}_*.mp4")
                   if "_polido" not in p.stem]
         if not cortes:
-            print(f"\n[!] Bloco {b['id']}: corte não encontrado, pulando")
+            print(f"\n[!] Bloco {b['id']}: corte{' legendado' if USE_LEGENDADO else ''} "
+                  f"não encontrado, pulando{' (rode 04c_legendas.py antes)' if USE_LEGENDADO else ''}")
             continue
     corte = cortes[0]
 
-    sufixo = "_polido" if USE_POLIDO else ""
+    sufixo = ("_polido" if USE_POLIDO else "") + ("_legendado" if USE_LEGENDADO else "")
     saida = OUT_DIR / f"video_{b['id']:02d}_{slug(b['tema'])}{sufixo}.mp4"
 
     # Cold open opcional

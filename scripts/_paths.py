@@ -66,14 +66,14 @@ def criar_pasta(stem: str) -> Path:
 
 
 def escolher_arquivo(pasta: Path, padrao: str, preferir_polido: bool = True) -> Path | None:
-    """Primeiro arquivo que casa com o glob, preferindo a versão _polido."""
+    """Primeiro arquivo que casa com o glob, preferindo a versão mais trabalhada:
+    _polido_legendado > _legendado > _polido > original."""
     achados = sorted(pasta.glob(padrao)) if pasta.is_dir() else []
     if not achados:
         return None
     if preferir_polido:
-        polidos = [a for a in achados if a.stem.endswith("_polido")]
-        if polidos:
-            return polidos[0]
+        return min(achados, key=lambda a: (not a.stem.endswith("_legendado"),
+                                           "_polido" not in a.stem))
     return achados[0]
 
 
