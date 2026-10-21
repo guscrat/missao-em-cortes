@@ -19,32 +19,10 @@ sys.stdout.reconfigure(encoding='utf-8')
 from pathlib import Path
 
 from _eventos import upsert_bloco, upsert_video, DB_PATH
-from _paths import OUTPUTS, ROOT, stem_de
+from _paths import OUTPUTS, ROOT, escolher_arquivo, escolher_thumb, stem_de
 
 INPUTS = ROOT / "inputs"
 _PASTA_VIDEO = re.compile(r"^\d{4}-\d{2}-\d{2}_.+")
-
-
-def _primeiro(pasta: Path, padrao: str, preferir_polido: bool = True) -> Path | None:
-    achados = sorted(pasta.glob(padrao)) if pasta.is_dir() else []
-    if not achados:
-        return None
-    if preferir_polido:
-        polidos = [a for a in achados if a.stem.endswith("_polido")]
-        if polidos:
-            return polidos[0]
-    return achados[0]
-
-
-def _thumb(pasta_thumbs: Path, nn: str) -> Path | None:
-    # manual > a > b > c > sem sufixo — o painel mostra a "melhor" disponível.
-    # Na prática você apaga as variantes descartadas, então sobra só a escolhida.
-    for padrao in (f"thumb_{nn}_manual.png", f"thumb_{nn}_a.png", f"thumb_{nn}_b.png",
-                   f"thumb_{nn}_c.png", f"thumb_{nn}.png"):
-        p = pasta_thumbs / padrao
-        if p.exists():
-            return p
-    return None
 
 
 def sincronizar_pasta(pasta: Path) -> tuple[str, int]:
@@ -69,9 +47,9 @@ def sincronizar_pasta(pasta: Path) -> tuple[str, int]:
     blocos = json.loads(blocos_json.read_text(encoding="utf-8")).get("blocos", [])
     for b in blocos:
         nn = f"{b['id']:02d}"
-        corte = _primeiro(pasta / "cortes", f"corte_{nn}_*.mp4")
-        final = _primeiro(pasta / "finalizados", f"video_{nn}_*.mp4")
-        thumb = _thumb(pasta / "thumbs", nn)
+        corte = escolher_arquivo(pasta / "cortes", f"corte_{nn}_*.mp4")
+        final = escolher_arquivo(pasta / "finalizados", f"video_{nn}_*.mp4")
+        thumb = escolher_thumb(pasta / "thumbs", nn)
 
         status = "montado" if final else "cortado" if corte else "segmentado"
         upsert_bloco(
