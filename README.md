@@ -43,6 +43,15 @@ Cada step também roda sozinho (`scripts/02_transcribe.py` a `08_descricao.py`);
 
 **Fonte nova (estúdio/layout diferente):** calibre o zoom anti-overlay antes do corte com `uv run py scripts/calibrar_zoom.py <video> --zoom=N --fx=F --fy=F --salvar=<stem>` — sem entrada no `config/zoom.json`, o corte sai sem zoom e os overlays da live original aparecem.
 
+## Painel
+
+```powershell
+uv run py scripts/sincronizar_estado.py   # 1ª vez: importa o que já existe em outputs/
+uv run streamlit run painel/app.py        # abre em http://localhost:8501
+```
+
+Kanban por responsabilidade (curadoria → edição → revisão → quarentena → agendado → publicado), custo/tokens por agente e linha do tempo de eventos. O estado fica em `state/pipeline.db` (SQLite local, fora do Git); o `pipeline.py` grava os eventos e sincroniza sozinho no final.
+
 ## O que continua manual
 
 - Escolher a variante de thumb (a/b/c) e finalizar o collage no Canva. Se a live tem tela compartilhada e as 3 variantes saem ruins, gere a thumb de um frame escolhido na mão: `uv run py scripts/07_thumb.py <stem> --bloco=N --t=MM:SS`
