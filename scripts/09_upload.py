@@ -1,4 +1,4 @@
-"""Step 9: sobe os vídeos finalizados pro YouTube como PRIVADOS agendados (publishAt).
+"""Step 9: sobe os vídeos finalizados pro YouTube como PRIVADOS (agendados ou não).
 
 Uso:
     uv run py scripts/09_upload.py <stem> --dry-run      # mostra o plano, não chama a API
@@ -10,7 +10,12 @@ O que lê (da pasta do vídeo):
                          txt é respeitada). Bloco com "[COLAR URL DA LIVE AQUI]" NÃO sobe.
   - finalizados/video_NN_*.mp4 (prefere _polido) e a thumb escolhida (manual > a > b > c)
 
-Agendamento: config/upload.json (horário, intervalo, fuso). O próximo slot vem depois do
+Modo (config/upload.json → "modo"):
+  - "privado": sobe privado SEM publishAt; o Gu publica no Studio. É o modo enquanto a
+    auditoria da API não sai (projeto não auditado = vídeo travado como privado de qualquer jeito).
+  - "agendado": privado com publishAt (publica sozinho no horário). Liga depois da auditoria.
+
+Agendamento (modo "agendado"): config/upload.json (horário, intervalo, fuso). O próximo slot vem depois do
 último agendado em QUALQUER vídeo (lê outputs/*/youtube.json), então lives diferentes não
 disputam o mesmo horário.
 
@@ -51,7 +56,7 @@ COTA_PATH = ROOT / "state" / "cota_youtube.json"
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
 
 DEFAULTS = {
-    "horario": "18:00", "intervalo_dias": 1, "fuso": "America/Sao_Paulo",
+    "modo": "privado", "horario": "18:00", "intervalo_dias": 1, "fuso": "America/Sao_Paulo",
     "antecedencia_min_horas": 2, "categoria_id": "25", "idioma": "pt-BR",
     "feito_para_criancas": False,
     "cota_limite_dia": 10_000, "cota_upload": 1_600, "cota_thumbnail": 50,
@@ -231,15 +236,20 @@ def _cota_estourada(e: HttpError) -> bool:
     return e.resp.status == 403 and b"quotaExceeded" in (e.content or b"")
 
 
-def subir_video(youtube, video: Path, meta: dict, publish_at: datetime, cfg: dict) -> str:
+def _quando(slot: datetime | None) -> str:
+    return f"publica {slot:%d/%m %H:%M}" if slot else "fica privado (publicar no Studio)"
+
+
+def subir_video(youtube, video: Path, meta: dict, publish_at: datetime | None, cfg: dict) -> str:
     body = {
         "snippet": {"title": meta["titulo"], "description": meta["descricao"],
                     "tags": meta["tags"], "categoryId": cfg["categoria_id"],
                     "defaultLanguage": cfg["idioma"], "defaultAudioLanguage": cfg["idioma"]},
         "status": {"privacyStatus": "private",
-                   "publishAt": publish_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                    "selfDeclaredMadeForKids": cfg["feito_para_criancas"]},
     }
+    if publish_at:
+        body["status"]["publishAt"] = publish_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     media = MediaFileUpload(str(video), mimetype="video/mp4", chunksize=8 * 1024 * 1024,
                             resumable=True)
     req = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
@@ -328,13 +338,19 @@ def main(argv: list[str]) -> int:
 
     if maximo is not None:
         novos = novos[:maximo]
-    slots = proximos_slots(len(novos), ultimo_agendado(pasta.parent), cfg)
+    if cfg["modo"] not in ("privado", "agendado"):
+        sys.exit(f"[!] config/upload.json: modo '{cfg['modo']}' inválido (use privado ou agendado)")
+    agendar = cfg["modo"] == "agendado"
+    slots = (proximos_slots(len(novos), ultimo_agendado(pasta.parent), cfg) if agendar
+             else [None] * len(novos))
     custo_un = lambda thumb: cfg["cota_upload"] + (cfg["cota_thumbnail"] if thumb else 0)  # noqa: E731
     estimativa = sum(custo_un(n[3]) for n in novos) + cfg["cota_thumbnail"] * len(so_thumb)
 
-    print(f"\nPlano pra '{stem}': {len(novos)} upload(s), {len(so_thumb)} thumb(s) pendente(s)")
+    print(f"\nPlano pra '{stem}' (modo {cfg['modo']}): {len(novos)} upload(s), "
+          f"{len(so_thumb)} thumb(s) pendente(s)")
     for (_, nn, video, thumb, meta), slot in zip(novos, slots):
-        print(f"   {nn}  {slot:%d/%m %H:%M}  {meta['titulo'][:60]}")
+        quando = f"{slot:%d/%m %H:%M}" if slot else "privado"
+        print(f"   {nn}  {quando:<11}  {meta['titulo'][:60]}")
         print(f"       {video.name} · thumb: {thumb.name if thumb else '—'} · {len(meta['tags'])} tags")
     print(f"   Cota estimada: {estimativa:,} unidades (limite {cfg['cota_limite_dia']:,}/dia) · custo US$ 0")
     if dry or not (novos or so_thumb):
@@ -368,7 +384,7 @@ def main(argv: list[str]) -> int:
             evento(stem, "09_upload", "aviso", agente="publicador",
                    mensagem=f"cota: parou em {cota.usadas}/{cota.limite}")
             break
-        print(f"\n>> {nn}: subindo {video.name} (sai {slot:%d/%m %H:%M})")
+        print(f"\n>> {nn}: subindo {video.name} ({_quando(slot)})")
         t0 = time.time()
         evento(stem, "09_upload", "inicio", agente="publicador", bloco_id=bid)
         cota.gastar(cfg["cota_upload"])   # a API cobra mesmo se falhar
@@ -386,11 +402,14 @@ def main(argv: list[str]) -> int:
                 break
             continue
 
-        registro[nn] = {"youtube_id": yt_id, "publish_at": slot.isoformat(),
+        publish_at = slot.isoformat() if slot else None
+        registro[nn] = {"youtube_id": yt_id, "publish_at": publish_at,
                         "titulo": meta["titulo"], "thumb_ok": False}
         salvar_registro(pasta, registro)   # antes de tudo: é o que garante a idempotência
-        upsert_bloco(stem, bid, status="agendado", forcar_status=True,
-                     publish_at=slot.isoformat(), youtube_id=yt_id, titulo=meta["titulo"])
+        # privado sem data = aprovado (Gu publica no Studio); com data = agendado
+        upsert_bloco(stem, bid, status="agendado" if slot else "aprovado", forcar_status=True,
+                     publish_at=publish_at, youtube_id=yt_id, titulo=meta["titulo"],
+                     motivo=None if slot else "privado no YouTube — publicar no Studio")
         unidades = cfg["cota_upload"]
         if thumb and cota.cabe(cfg["cota_thumbnail"]):
             cota.gastar(cfg["cota_thumbnail"])
@@ -403,9 +422,9 @@ def main(argv: list[str]) -> int:
                 print(f"   [aviso] {nn}: vídeo subiu mas a thumb falhou ({e.resp.status}) — "
                       f"rode de novo pra tentar só a thumb")
         agendados += 1
-        print(f"   OK https://youtu.be/{yt_id} · privado, publica {slot:%d/%m %H:%M}")
+        print(f"   OK https://youtu.be/{yt_id} · privado, {_quando(slot)}")
         evento(stem, "09_upload", "ok", agente="publicador", bloco_id=bid,
-               mensagem=f"youtube_id={yt_id} publishAt={slot.isoformat()} cota={unidades}",
+               mensagem=f"youtube_id={yt_id} publishAt={publish_at or '-'} cota={unidades}",
                duracao_s=time.time() - t0)
 
     print(f"\n{'=' * 60}\nOK {agendados} vídeo(s) agendado(s) · {falhas} falha(s) · "
