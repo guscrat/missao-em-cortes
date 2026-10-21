@@ -71,6 +71,7 @@ missao-em-cortes/
 │   ├── 06_montar.py
 │   ├── 07_thumb.py                   # thumbs semi-automáticas (off-pipeline)
 │   ├── 08_descricao.py               # gera txt com titulo+descricao+tags pro YouTube
+│   ├── 12_metricas.py                # retenção COM legenda x SEM (YouTube Analytics, só leitura) pro resumo semanal (off-pipeline)
 │   ├── 11_revisor.py                 # agente revisor (Claude com visão): título fiel, thumb, tela compartilhada → aprovado/quarentena (off-pipeline)
 │   ├── 10_shorts.py                  # Shorts 9:16 dos cold opens: crop no rosto + manchete + legenda karaokê (off-pipeline)
 │   ├── 09_upload.py                  # sobe pro YouTube como privado agendado (publishAt) + thumb; travado até a auditoria (off-pipeline)
@@ -78,6 +79,7 @@ missao-em-cortes/
 │   ├── _canal.py                     # ID/URL do NOSSO canal (só no "Inscreva-se"; nunca como fonte)
 │   ├── _paths.py                     # resolve outputs/<data>_<stem>/ por stem (helper compartilhado)
 │   ├── _descricoes.py                # parser do descricoes.txt (compartilhado pelo 09 e pelo 11)
+│   ├── _google.py                    # login OAuth do YouTube (token por uso, escopo mínimo) — 09 e 12
 │   ├── _legenda.py                   # núcleo da legenda karaokê (.ass) compartilhado pelo 04c e pelo 10
 │   ├── _ffmpeg.py                    # formato canônico (VENC/AENC/SCALE_PAD) compartilhado pelos steps 4/4b/5/6
 │   ├── _migrar_outputs.py            # one-off: migrou a estrutura antiga pro layout por vídeo
@@ -98,7 +100,7 @@ missao-em-cortes/
 ├── config/
 │   ├── zoom.json                     # crop anti-overlay por stem (lido pelo 04_cortar.py)
 │   └── upload.json                   # trava da auditoria (auditoria_aprovada), agendamento do 09 e custos de cota
-├── secrets/                          # youtube_client_secret.json + youtube_token.json (gitignored)
+├── secrets/                          # youtube_client_secret.json + youtube_token.json (upload) + youtube_leitura_token.json (métricas) — gitignored
 ├── .env                              # ANTHROPIC_API_KEY
 └── pyproject.toml
 ```
@@ -131,6 +133,8 @@ O step 4c é **grátis** (sem API) e roda **por padrão** no pipeline (`--sem-le
 O step 10 (`uv run py scripts/10_shorts.py <stem> [--bloco=N]`) é **off-pipeline** e **grátis**: gera um **Short 9:16** (1080x1920, 30fps, NVENC) por bloco a partir do **cold open**. Recorta direto do vídeo **original** (`inputs/<stem>.mp4`, 1080p), porque o `cold_NN.mp4` é 720p e ficaria borrado esticado. A janela 9:16 usa a altura toda da área anti-overlay do `config/zoom.json` e fica **sempre dentro dela**, então os overlays continuam fora (stem sem zoom: quadro inteiro + aviso). A posição horizontal segue o rosto de quem fala: OpenCV detecta rostos a cada 0.5s, agrupa por posição e, entre os que aparecem em ≥30% dos frames, escolhe o **mais perto do centro do quadro** (quem filma mantém o palestrante no centro). O critério "maior rosto" perdia pra foto no telão, e o "rosto que mais mexe" perdia pra quem bebia água na mesa. Queima o `texto_thumb` como manchete no topo (caixa preta, amarelo 14), a legenda karaokê grande (3 palavras por linha, 110px) e a marca MISSÃO EM CORTES. Saída em `outputs/<pasta>/shorts/` + `shorts.json` (crop e taxa de rosto). Taxa de rosto <30% = provável tela compartilhada/plateia: o script avisa e marca `revisar: true`. Tempo: ~1min por Short (a detecção domina). Upload de Shorts ainda é manual.
 
 O step 11 (`uv run py scripts/11_revisor.py <stem> [--bloco=N] [--dry-run]`) é o **agente revisor de conteúdo** (`agente="revisor"`, off-pipeline, **API paga**: ~US$ 0,05/bloco, ~US$ 0,25/live com `claude-opus-5-5`). Pra cada bloco com corte, faz **uma** chamada com visão. Manda o título que vai pro YouTube (do `descricoes.txt`, edição manual vale; na falta, `titulo_sugerido`), o `texto_thumb`, a transcrição do trecho (`words.json`), a thumb escolhida (manual > a > b > c) e 6 frames do corte completo. Volta JSON estruturado com 3 checagens: **título fiel à fala** (gancho ousado ok, distorção não), **thumb ok** (rosto visível, texto legível e coerente, sem tela compartilhada) e **tela compartilhada** (maior parte do corte mostra tela em vez de gente). Quem decide é o **código**: tudo ok → `aprovado`; qualquer problema → `quarentena` com o motivo no painel. Recusa do modelo também vira quarentena ("revisar à mão"). Fallback de refusal do servidor ligado (`fallbacks: "default"`). **Nunca** mexe em bloco `agendado`/`publicado`. Detalhes em `outputs/<pasta>/revisao.json`; custo por bloco no banco (evento `llm`). `--dry-run` mostra a fila e o custo estimado sem chamar a API.
+
+O step 12 (`uv run py scripts/12_metricas.py [--desde=AAAA-MM-DD]`) é o **analista de retenção** (`agente="analista"`, off-pipeline, US$ 0). Compara a **retenção** (% média assistida, a do Studio) dos vídeos **com** legenda karaokê x **sem**, pro resumo semanal. Só leitura, com token **próprio** (`secrets/youtube_leitura_token.json`, escopos `yt-analytics.readonly` + `youtube.readonly`), então o token de upload não ganha permissão nova. 1ª vez abre o navegador. Exige a **YouTube Analytics API** ativada no projeto do Google Cloud. Lista os vídeos **públicos** do canal (título, data, duração) e puxa views/duração média/% assistida de cada um. Um vídeo é "com legenda" se o título bate (normalizado) com um `descricoes.txt` cujo bloco tem `finalizados/video_NN_*_legendado.mp4`. Vale pra upload pela API e pelo Studio. Sem match: antes de 21/10/2026 conta como "sem legenda"; depois fica de fora ("sem info", listado pra conferir; título editado no Studio quebra o match). Shorts (≤3 min) e vídeos com <20 views ficam de fora. Retenção do grupo = média **ponderada por views**. Saída no terminal + `state/metricas_retencao.json`.
 
 O step 7 é opcional e não afeta a montagem — gera 3 variantes de thumb por bloco (`thumb_NN_a/b/c.png`) com frames extraídos a 25/50/75% do cold open. Você escolhe a melhor variante e finaliza no Canva (colar collage de figuras na metade direita). Layout: frame do speaker deslocado pra direita (`FRAME_X=150`), título adaptativo (fonte 96→64 dependendo do comprimento), gradient escuro embaixo pra contraste.
 
