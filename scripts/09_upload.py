@@ -45,6 +45,7 @@ from zoneinfo import ZoneInfo
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
 
+from _canal import eh_nosso_canal
 from _eventos import evento, ler_bloco, upsert_bloco
 from _paths import achar_pasta, escolher_arquivo, escolher_thumb, stem_de
 
@@ -101,6 +102,20 @@ def ler_descricoes(texto: str) -> dict[int, dict]:
             "tags": [t.strip() for t in miolo.group(2).split(",") if t.strip()],
         }
     return saida
+
+
+def problema_credito(descricao: str) -> str | None:
+    """Motivo pra NÃO subir se o crédito da fonte estiver ausente/errado, senão None.
+
+    "Conteúdo original" tem que ser a URL da fonte — nunca o placeholder nem o
+    link do nosso próprio canal (esse só vai na linha "Inscreva-se").
+    """
+    linha = next((l for l in descricao.splitlines() if "Conteúdo original:" in l), None)
+    if linha is None or PLACEHOLDER_URL in linha:
+        return "URL da fonte faltando na descrição (crédito obrigatório)"
+    if eh_nosso_canal(linha):
+        return "'Conteúdo original' aponta pro nosso canal, não pra fonte (crédito obrigatório)"
+    return None
 
 
 def _sem_sinais(s: str) -> str:
@@ -327,8 +342,7 @@ def main(argv: list[str]) -> int:
         meta = descricoes.get(bid)
         problema = ("sem vídeo em finalizados/" if not video else
                     "sem entrada no descricoes.txt" if not meta else
-                    "URL da fonte faltando na descrição (crédito obrigatório)"
-                    if PLACEHOLDER_URL in meta["descricao"] else None)
+                    problema_credito(meta["descricao"]))
         if problema:
             print(f"   [!] {nn}: {problema} — não sobe")
             continue

@@ -31,4 +31,4 @@ responsável pelo canal não se responsabiliza por perdas decorrentes do uso da 
 Estes termos podem ser atualizados a qualquer momento. A data no topo indica a versão vigente.
 
 ## Contato
-Dúvidas sobre estes termos: gustavoapostolic@gmail.com
+Dúvidas sobre estes termos: scrat.dados@gmail.com

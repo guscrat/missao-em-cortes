@@ -6,9 +6,9 @@
 <title>Missão em Cortes Publisher</title>
 <meta name="description" content="Ferramenta interna de publicação do canal Missão em Cortes no YouTube.">
 <style>
-  :root { --bg: #FFFFFF; --texto: #0A0A0A; --suave: #555555; --linha: #E5E5E5; --destaque: #B8920E; }
+  :root { --bg: #FFFFFF; --texto: #0A0A0A; --suave: #555555; --linha: #E5E5E5; --destaque: #B8920E; --link: #6B5300; }
   @media (prefers-color-scheme: dark) {
-    :root { --bg: #0A0A0A; --texto: #F2F2F2; --suave: #A0A0A0; --linha: #262626; --destaque: #F5C518; }
+    :root { --bg: #0A0A0A; --texto: #F2F2F2; --suave: #A0A0A0; --linha: #262626; --destaque: #F5C518; --link: #F5C518; }
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--texto);
@@ -22,8 +22,11 @@
   .links a:hover { color: var(--destaque); }
   .links span { color: var(--suave); font-weight: 400; }
   footer { margin-top: 48px; color: var(--suave); font-size: .9rem; }
-  .selo { display: inline-block; margin-bottom: 12px; }
-  .selo img { height: 40px; width: auto; display: block; }
+  footer a { color: var(--link); text-decoration: underline; text-underline-offset: 3px; }
+  .selo { display: inline-block; margin: 0 0 8px -24px; }
+  /* PNG oficial 700x250 com a área de respiro embutida: escala proporcional, sem cortar
+     nem distorcer. 336px deixa o logotipo com ~29px de altura. */
+  .selo img { width: 336px; max-width: 100%; height: auto; display: block; }
 </style>
 </head>
 <body>
@@ -48,7 +51,7 @@
         <img src="assets/marca/developed-with-youtube-sentence-case-dark.png" alt="Developed with YouTube">
       </picture>
     </a>
-    <div>Contato: <a href="mailto:gustavoapostolic@gmail.com">gustavoapostolic@gmail.com</a></div>
+    <div>Contato: <a href="mailto:scrat.dados@gmail.com">scrat.dados@gmail.com</a></div>
   </footer>
 </main>
 </body>

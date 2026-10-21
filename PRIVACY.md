@@ -9,6 +9,7 @@ serviço a terceiros.
 ## Uso dos Serviços de API do YouTube
 Esta ferramenta usa os Serviços de API do YouTube. Ao usá-la, você concorda com os
 Termos de Serviço do YouTube: https://www.youtube.com/t/terms
+
 O tratamento de dados pelo Google segue a Política de Privacidade do Google:
 https://policies.google.com/privacy
 
@@ -33,4 +34,4 @@ O acesso da ferramenta à conta Google pode ser revogado a qualquer momento em:
 https://security.google.com/settings/security/permissions
 
 ## Contato
-Dúvidas sobre esta política: gustavoapostolic@gmail.com
+Dúvidas sobre esta política: scrat.dados@gmail.com
