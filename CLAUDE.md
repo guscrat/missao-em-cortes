@@ -68,6 +68,7 @@ missao-em-cortes/
 │   ├── 08_descricao.py               # gera txt com titulo+descricao+tags pro YouTube
 │   ├── 09_upload.py                  # sobe pro YouTube como privado agendado (publishAt) + thumb (off-pipeline)
 │   ├── calibrar_zoom.py              # off-pipeline: calibra o crop anti-overlay (--salvar grava em config/zoom.json)
+│   ├── _canal.py                     # ID/URL do NOSSO canal (só no "Inscreva-se"; nunca como fonte)
 │   ├── _paths.py                     # resolve outputs/<data>_<stem>/ por stem (helper compartilhado)
 │   ├── _ffmpeg.py                    # formato canônico (VENC/AENC/SCALE_PAD) compartilhado pelos steps 4/4b/5/6
 │   ├── _migrar_outputs.py            # one-off: migrou a estrutura antiga pro layout por vídeo
