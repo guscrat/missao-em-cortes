@@ -66,6 +66,7 @@ missao-em-cortes/
 │   ├── 06_montar.py
 │   ├── 07_thumb.py                   # thumbs semi-automáticas (off-pipeline)
 │   ├── 08_descricao.py               # gera txt com titulo+descricao+tags pro YouTube
+│   ├── 09_upload.py                  # sobe pro YouTube como privado agendado (publishAt) + thumb (off-pipeline)
 │   ├── calibrar_zoom.py              # off-pipeline: calibra o crop anti-overlay (--salvar grava em config/zoom.json)
 │   ├── _paths.py                     # resolve outputs/<data>_<stem>/ por stem (helper compartilhado)
 │   ├── _ffmpeg.py                    # formato canônico (VENC/AENC/SCALE_PAD) compartilhado pelos steps 4/4b/5/6
@@ -81,7 +82,9 @@ missao-em-cortes/
 ├── prompts/
 │   └── segmentacao.md                # Prompt do LLM pra topic segmentation
 ├── config/
-│   └── zoom.json                     # crop anti-overlay por stem (lido pelo 04_cortar.py)
+│   ├── zoom.json                     # crop anti-overlay por stem (lido pelo 04_cortar.py)
+│   └── upload.json                   # agendamento do 09 (horário, intervalo, fuso) e custos de cota
+├── secrets/                          # youtube_client_secret.json + youtube_token.json (gitignored)
 ├── .env                              # ANTHROPIC_API_KEY
 └── pyproject.toml
 ```
@@ -115,6 +118,8 @@ O step 7 é opcional e não afeta a montagem — gera 3 variantes de thumb por b
 **Modo manual (`--bloco=N --t=MM:SS`):** quando os frames automáticos caem em **tela compartilhada** (lives onde o speaker mostra matéria/pesquisa, ex: `renan_2turn_x_lula`), as 3 variantes saem ruins. Aí você abre o corte, acha um segundo com o speaker na câmera e gera uma thumb daquele frame: `uv run py scripts/07_thumb.py <stem> --bloco=N --t=MM:SS` (aceita `MM:SS`, `HH:MM:SS` ou segundos puros) → salva `thumb_NN_manual.png`. Puxa do **corte completo** por padrão (mais momentos na câmera que o cold open curto; usa o `corte_NN_*.mp4`, não o `_polido`); `--fonte=cold` puxa do cold open. `--bloco=N` sozinho (sem `--t`) regenera só as variantes a/b/c daquele bloco. É a alternativa ao face_recognition, que segue adiado.
 
 O step 8 gera `descricoes.txt` (na pasta do vídeo) com, pra cada bloco: título sugerido (com contagem de chars), descrição (resumo + ganchos como bullets), créditos do canal, hashtags e lista de tags pronta pra colar no YouTube Studio. **Sem chamada de API** — reaproveita o que o LLM já produziu no `blocos.json`. A URL da fonte é preenchida automaticamente a partir de `inputs/<stem>.url` (salva pelo `01_baixar.py`); sem o arquivo, deixa o placeholder `[COLAR URL DA LIVE AQUI]` e avisa no log.
+
+O step 9 (`uv run py scripts/09_upload.py <stem> [--dry-run] [--bloco=N] [--max=N]`) é **off-pipeline**: sobe os `finalizados/video_NN_*.mp4` (prefere `_polido`) como **privados com `publishAt`**, usando título/descrição/tags do `descricoes.txt` (edição manual no txt vale) e a thumb escolhida (manual > a > b > c; >2 MB vira JPEG). Os slots saem de `config/upload.json` (padrão 1/dia às 18h, horário de Brasília) e continuam depois do último agendado em **qualquer** vídeo. O registro à prova de falha fica em `outputs/<pasta>/youtube.json`; com isso e com o `youtube_id` do banco, o script é **idempotente**: não re-sobe, e se só a thumb falhou, tenta só a thumb. Bloco com `[COLAR URL DA LIVE AQUI]` **não sobe** (crédito da fonte é obrigatório). Cota: upload ≈1600 + thumb 50 de 10.000/dia (zera à meia-noite do Pacífico), contada em `state/cota_youtube.json`; o script para **antes** de estourar. Custo US$ 0. Grava no banco `status=agendado` + `publish_at` + `youtube_id` e eventos com `agente="publicador"`. Credenciais em `secrets/` (gitignored, repo é público). **Sempre rode `--dry-run` antes.**
 
 **Total por live:** ~15-25min de processamento, ~$0.20 de API (estimativa pós-otimização NVENC/concat-copy — validar na próxima live processada).
 
