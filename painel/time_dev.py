@@ -4,6 +4,7 @@ Lê `tarefas` (scripts/tarefa.py) e `eventos` (hooks do Claude Code + tarefa.py)
 comando ou diff aqui — só quem está fazendo o quê e o que espera decisão.
 """
 import html
+import re
 
 import pandas as pd
 import streamlit as st
@@ -14,6 +15,7 @@ AGENTES = [
     ("revisor-codigo", "Revisor", "revisa o código antes do PR"),
 ]
 JANELA_ATIVO = pd.Timedelta(minutes=10)
+LIMITE_ATIVIDADE = 90   # chars da "última atividade" no card (1 linha)
 COLUNAS_TAREFA = [("backlog", "Backlog"), ("fazendo", "Fazendo"), ("testando", "Testando"),
                   ("revisando", "Revisando"), ("pronto", "Pronto"), ("bloqueado", "Bloqueado")]
 
@@ -31,9 +33,36 @@ def humanizar(ts: pd.Timestamp, agora: pd.Timestamp) -> str:
     return ts.strftime("%d/%m")
 
 
+_MD = [
+    (re.compile(r"```.*?(```|$)", re.S), " "),              # blocos de código
+    (re.compile(r"!?\[([^\]]*)\]\([^)]*\)"), r"\1"),        # [texto](url) → texto
+    (re.compile(r"`([^`]*)`"), r"\1"),                      # `código`
+    # **negrito**, *itálico*, ~~x~~ — só fora de palavra (2*3*4 e __init__ ficam como estão)
+    (re.compile(r"(?<![\w*~])(\*\*|\*|~~)(?=\S)(.+?)(?<=\S)\1(?![\w*~])"), r"\2"),
+    (re.compile(r"^\s{0,3}(#{1,6}\s+|>\s?|[-*+]\s+|\d+[.)]\s+)", re.M), ""),  # título, citação, lista
+    (re.compile(r"^\s*\|?[\s:|-]*-[\s:|-]*\|?\s*$", re.M), " "),  # separador de tabela
+    (re.compile(r"\s*\|\s*"), " · "),                          # células de tabela
+]
+
+
+def texto_limpo(texto: str, limite: int = LIMITE_ATIVIDADE) -> str:
+    """Markdown → texto puro numa linha só, cortado com "…" se passar do limite."""
+    t = texto or ""
+    for padrao, troca in _MD:
+        t = padrao.sub(troca, t)
+    t = re.sub(r"[\s·]*·[\s·]*", " · ", t)          # " · " repetido das tabelas
+    t = " ".join(t.split()).strip(" ·")
+    if len(t) <= limite:
+        return t
+    corte = t[:limite - 1]
+    if " " in corte[limite // 2:]:                    # não corta palavra ao meio
+        corte = corte[:corte.rfind(" ")]
+    return corte.rstrip(" ·,;:-") + "…"
+
+
 def descrever(ev: pd.Series) -> str:
-    """Evento → frase pro PO."""
-    msg = ev.get("mensagem") or ""
+    """Evento → frase pro PO (texto limpo, uma linha)."""
+    msg = texto_limpo(ev.get("mensagem") or "")
     if ev["etapa"] == "subagent":
         return msg if ev["status"] == "inicio" else f"terminou: {msg}" if msg else "terminou"
     if ev["etapa"] == "turno":
@@ -85,7 +114,8 @@ CSS = """<style>
 .ag-st {font-size:.8rem; font-weight:600;}
 .ag-st.on {color:#7fdca4;} .ag-st.off {color:#9a9a9a;} .ag-st.voce {color:#F5C518;}
 .ag-papel {color:#9a9a9a; font-size:.72rem;}
-.ag-ult {font-size:.8rem; margin-top:.35rem; line-height:1.25;}
+.ag-ult {font-size:.8rem; margin-top:.35rem; line-height:1.25;
+          white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
 .decisao {color:#F5C518; font-size:.75rem; margin-top:.25rem;}
 </style>"""
 
@@ -106,7 +136,7 @@ def _card_agente(nome: str, papel: str, trabalhando: bool, ultima: str, cls: str
     with st.container(border=True):
         st.markdown(f"<div class='ag-nome'>{nome}</div><div class='ag-papel'>{papel}</div>"
                     f"<div class='ag-st {cls}'>{rotulo[cls]}</div>"
-                    f"<div class='ag-ult'>{html.escape(ultima)}</div>", unsafe_allow_html=True)
+                    f"<div class='ag-ult' title='{html.escape(ultima, quote=True)}'>{html.escape(ultima)}</div>", unsafe_allow_html=True)
 
 
 def _card_tarefa(t: pd.Series) -> None:
