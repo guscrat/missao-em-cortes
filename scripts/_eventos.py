@@ -114,7 +114,10 @@ def conectar(db_path: Path | None = None) -> sqlite3.Connection:
     con.executescript(SCHEMA)
     # migração: bancos criados antes da coluna tarefa_id
     if "tarefa_id" not in {r["name"] for r in con.execute("PRAGMA table_info(eventos)")}:
-        con.execute("ALTER TABLE eventos ADD COLUMN tarefa_id INTEGER")
+        try:
+            con.execute("ALTER TABLE eventos ADD COLUMN tarefa_id INTEGER")
+        except sqlite3.OperationalError:   # outro processo migrou no mesmo instante
+            pass
     return con
 
 
