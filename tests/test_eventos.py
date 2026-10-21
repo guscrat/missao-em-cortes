@@ -90,3 +90,18 @@ def test_caminho_do_banco_invalido_nao_derruba(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(_eventos, "DB_PATH", bloqueio / "pipeline.db")
     evento("v", "05_cards", "ok")
     assert "[aviso] painel" in capsys.readouterr().err
+
+
+# ── conectar(): DB_PATH lido na chamada ────────────────────────────────────
+
+def test_conectar_le_db_path_na_chamada(tmp_path, monkeypatch):
+    novo = tmp_path / "sub" / "outro.db"
+    monkeypatch.setattr(_eventos, "DB_PATH", novo)
+    _eventos.conectar().close()
+    assert novo.exists()
+
+
+def test_conectar_aceita_caminho_explicito(tmp_path):
+    explicito = tmp_path / "x.db"
+    _eventos.conectar(explicito).close()
+    assert explicito.exists()
