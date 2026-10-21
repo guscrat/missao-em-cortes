@@ -25,6 +25,7 @@ Canal de YouTube de cortes de lives, entrevistas, debates e eventos do **Partido
 - **ffmpeg** — corte com fades, montagem final
 - **Pillow (PIL)** — geração programática de cards de contexto
 - **yt-dlp** — download das lives do YouTube
+- **OpenCV (headless, 4.x)** — detecção de rosto pro crop dos Shorts (Haar, local, sem modelo pra baixar)
 - **Canva** — intro, outro e template de thumbnail (externos ao pipeline)
 
 ## Estrutura do projeto
@@ -46,6 +47,7 @@ missao-em-cortes/
 │   │   │   └── legendados/           # cortes com legenda karaokê (mesmo nome) + legenda_NN.ass (step 4c)
 │   │   ├── cards/                    # card_NN.png e card_NN.mp4
 │   │   ├── thumbs/                   # thumb_NN_a/b/c.png (3 variantes pra escolher)
+│   │   ├── shorts/                   # short_NN_<slug>.mp4 (9:16) + short_NN.ass + shorts.json (step 10)
 │   │   └── finalizados/              # video_NN_<slug>.mp4 (cold+intro+card+corte+outro)
 │   ├── _calibracao/                  # scratch da calibração de zoom (dev)
 │   ├── _debug/                       # dumps de resposta do LLM quando falha o parse
@@ -68,10 +70,12 @@ missao-em-cortes/
 │   ├── 06_montar.py
 │   ├── 07_thumb.py                   # thumbs semi-automáticas (off-pipeline)
 │   ├── 08_descricao.py               # gera txt com titulo+descricao+tags pro YouTube
+│   ├── 10_shorts.py                  # Shorts 9:16 dos cold opens: crop no rosto + manchete + legenda karaokê (off-pipeline)
 │   ├── 09_upload.py                  # sobe pro YouTube como privado agendado (publishAt) + thumb; travado até a auditoria (off-pipeline)
 │   ├── calibrar_zoom.py              # off-pipeline: calibra o crop anti-overlay (--salvar grava em config/zoom.json)
 │   ├── _canal.py                     # ID/URL do NOSSO canal (só no "Inscreva-se"; nunca como fonte)
 │   ├── _paths.py                     # resolve outputs/<data>_<stem>/ por stem (helper compartilhado)
+│   ├── _legenda.py                   # núcleo da legenda karaokê (.ass) compartilhado pelo 04c e pelo 10
 │   ├── _ffmpeg.py                    # formato canônico (VENC/AENC/SCALE_PAD) compartilhado pelos steps 4/4b/5/6
 │   ├── _migrar_outputs.py            # one-off: migrou a estrutura antiga pro layout por vídeo
 │   ├── _eventos.py                   # estado/eventos em SQLite (state/pipeline.db) — best-effort, nunca derruba o pipeline
@@ -120,6 +124,8 @@ O step 4 gera **dois arquivos por bloco**: `corte_NN_<slug>.mp4` (corte completo
 O step 4b é **opcional** — pra cada `corte_NN_*.mp4` ele: (1) reaproveita os word-level timestamps do `words.json` (gerado no step 2), fatiando pelo intervalo do bloco — **não re-transcreve** (cai pra re-transcrição via whisper só se o words.json não existir), (2) detecta silêncios >3s **programaticamente** (gap entre palavras consecutivas — determinístico, sem API, nunca nos primeiros 30s), (3) manda pro Claude com prompt conservador só o que exige julgamento (fillers extremos e problemas técnicos), funde os intervalos e aplica jump cut via `ffmpeg filter_complex select/aselect` e salva `corte_NN_<slug>_polido.mp4` na mesma pasta. Filtro defensivo descarta intervalos com motivo "ignorar/manter/abaixo do limiar". Suporta `--bloco=N` pra reprocessar só um bloco e `--sem-llm` pra rodar **só a parte programática** (silêncios) sem chamar o Claude — custo $0, abre mão dos cortes de fillers/problemas técnicos. Os intervalos ficam em `polimento.json`; `--reaplicar` re-aplica os intervalos salvos aos cortes sem chamar o LLM (útil após re-cortar, ex: mudou o zoom). Cold opens **não** são polidos. Pra usar os polidos na montagem: `06_montar.py <stem> --polido` (gera `video_NN_<slug>_polido.mp4`).
 
 O step 4c é **opcional** e **grátis** (sem API): queima legenda estilo **karaokê** nos cortes completos pra segurar retenção. Fatia o `words.json` pelo intervalo do bloco (mesmo padding do 04), agrupa em linhas curtas (até 4 palavras / 26 chars, quebra em pausa >0.7s e fim de frase), gera um `.ass` com `\k` (palavra falada acende em **amarelo 14**, o resto fica branco, Anton 72px com contorno preto, centralizada embaixo) e queima com o filtro `ass` do ffmpeg (libass) no formato canônico. Com `--polido` legenda o `_polido` e **remapeia** os tempos pelos intervalos do `polimento.json` (palavra num trecho removido some, as seguintes recuam). Saída em `cortes/legendados/` com o **mesmo nome** do corte. A subpasta é de propósito, porque os globs `corte_NN_*.mp4` dos outros steps não enxergam os legendados. Errou uma palavra? Edite o `legenda_NN.ass` (`legenda_NN_polido.ass` com `--polido`) e rode de novo com `--so-queimar` (não regera o .ass). Cold opens não são legendados. Montagem: `06_montar.py <stem> --legendado [--polido]` → `video_NN_<slug>[_polido]_legendado.mp4`; o 09 prefere `_polido_legendado` > `_legendado` > `_polido` > original.
+
+O step 10 (`uv run py scripts/10_shorts.py <stem> [--bloco=N]`) é **off-pipeline** e **grátis**: gera um **Short 9:16** (1080x1920, 30fps, NVENC) por bloco a partir do **cold open**. Recorta direto do vídeo **original** (`inputs/<stem>.mp4`, 1080p), porque o `cold_NN.mp4` é 720p e ficaria borrado esticado. A janela 9:16 usa a altura toda da área anti-overlay do `config/zoom.json` e fica **sempre dentro dela**, então os overlays continuam fora (stem sem zoom: quadro inteiro + aviso). A posição horizontal segue o rosto de quem fala: OpenCV detecta rostos a cada 0.5s, agrupa por posição e, entre os que aparecem em ≥30% dos frames, escolhe o **mais perto do centro do quadro** (quem filma mantém o palestrante no centro). O critério "maior rosto" perdia pra foto no telão, e o "rosto que mais mexe" perdia pra quem bebia água na mesa. Queima o `texto_thumb` como manchete no topo (caixa preta, amarelo 14), a legenda karaokê grande (3 palavras por linha, 110px) e a marca MISSÃO EM CORTES. Saída em `outputs/<pasta>/shorts/` + `shorts.json` (crop e taxa de rosto). Taxa de rosto <30% = provável tela compartilhada/plateia: o script avisa e marca `revisar: true`. Tempo: ~1min por Short (a detecção domina). Upload de Shorts ainda é manual.
 
 O step 7 é opcional e não afeta a montagem — gera 3 variantes de thumb por bloco (`thumb_NN_a/b/c.png`) com frames extraídos a 25/50/75% do cold open. Você escolhe a melhor variante e finaliza no Canva (colar collage de figuras na metade direita). Layout: frame do speaker deslocado pra direita (`FRAME_X=150`), título adaptativo (fonte 96→64 dependendo do comprimento), gradient escuro embaixo pra contraste.
 

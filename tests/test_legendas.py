@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+import _legenda
 import _paths
 
 _spec = importlib.util.spec_from_file_location(
@@ -59,7 +60,7 @@ def test_agrupar_linhas_quebra_texto_longo():
 def test_gerar_ass_karaoke_tempos_e_cores():
     linhas = [[_w("e", 1.0, 1.2), _w("isso", 1.5, 2.0)], [_w("sono.", 2.1, 2.5)]]
     ass = leg.gerar_ass(linhas)
-    assert "Style: Karaoke,Anton," in ass and leg.AMARELO_14 in ass
+    assert "Style: Karaoke,Anton," in ass and _legenda.AMARELO_14 in ass
     eventos = [l for l in ass.splitlines() if l.startswith("Dialogue:")]
     # 1ª linha termina quando a 2ª começa (nunca duas na tela)
     assert eventos[0].startswith("Dialogue: 0,0:00:01.00,0:00:02.10,")
@@ -74,7 +75,7 @@ def test_gerar_ass_escapa_comandos():
 
 
 def test_ts_ass_formato():
-    assert leg._ts_ass(3725.456) == "1:02:05.46"
+    assert _legenda.ts_ass(3725.456) == "1:02:05.46"
 
 
 def test_cmd_queimar_usa_caminhos_relativos_no_filtro(tmp_path):
