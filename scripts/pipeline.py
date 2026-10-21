@@ -47,6 +47,8 @@ for f in flags:
         desde = {"4b": 4.5, "4c": 4.7}.get(v) or float(v)
 
 VIDEO = ROOT / "inputs" / f"{stem}.mp4"
+if desde == 4.7 and not legendas:
+    print("[aviso] --desde=4c sem --legendas: o 04c não roda (passe --legendas)")
 tem_transcricao = any(
     (p / "transcricao.txt").exists() for p in OUTPUTS.glob(f"*_{stem}") if p.is_dir()
 )
