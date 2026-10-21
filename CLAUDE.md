@@ -237,6 +237,13 @@ Está em `prompts/segmentacao.md`. Objetivo: a LLM recebe a transcrição comple
 
 **Papéis:** o Gu é o **PO**: passa tarefas macro, não revisa código nem aprova PR. O Claude Code (agente principal) é o **tech lead**: planeja, implementa e aprova.
 
+**Duas pastas (o painel nunca cai):**
+- `missao-em-cortes/` (principal) fica **sempre na `develop`**. Aqui rodam o painel, o pipeline e os scripts reais, com `inputs/`, `outputs/` e `state/` reais. **Nunca trocar de branch aqui.** Trocar removia `painel/` do disco no meio do uso, e o Streamlit caía.
+- `../missao-em-cortes-dev/` é o **worktree de dev**: toda `feature/*`/`fix/*`/`docs/*` é criada, editada, testada e commitada lá (`git -C ../missao-em-cortes-dev ...`, `uv run --directory ../missao-em-cortes-dev pytest -q`). Ele não tem `inputs/`/`outputs/`/`state/`. Os testes usam fixtures, e execução com dados reais roda na principal depois do merge.
+- `tarefa.py` roda **sempre da pasta principal**, porque é lá que fica o banco que o painel lê.
+- Nova frente: `git -C ../missao-em-cortes-dev switch -c feature/x origin/develop` (depois de `git fetch`). Se o worktree não existir, recrie com `git worktree add ../missao-em-cortes-dev -b feature/x develop` + `uv sync` lá dentro (o uv cria hardlinks do cache, então não ocupa disco extra).
+- Depois de cada merge em develop: `git pull --ff-only` na principal. O painel recarrega uma vez, já com a versão nova.
+
 1. **Implementar** numa `feature/*` (ou `fix/*`) saindo de `develop`. PRs pequenos e focados.
 2. **Testar:** chamar o subagent `testador` (roda `uv run pytest -q` e escreve testes pro código novo/alterado, sempre com mock).
 3. **Revisar:** chamar o subagent `revisor-codigo` (revisa `git diff develop...HEAD` contra as regras deste arquivo).
