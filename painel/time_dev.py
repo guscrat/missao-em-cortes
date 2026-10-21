@@ -47,7 +47,7 @@ _MD = [
 
 def texto_limpo(texto: str, limite: int = LIMITE_ATIVIDADE) -> str:
     """Markdown → texto puro numa linha só, cortado com "…" se passar do limite."""
-    t = texto or ""
+    t = texto if isinstance(texto, str) else ""      # None/NaN do banco viram vazio
     for padrao, troca in _MD:
         t = padrao.sub(troca, t)
     t = re.sub(r"[\s·]*·[\s·]*", " · ", t)          # " · " repetido das tabelas
