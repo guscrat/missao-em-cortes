@@ -12,3 +12,8 @@ assets/temp/
 
 # Estado do pipeline (SQLite local, gerado pelo _eventos.py)
 state/
+
+# Credenciais OAuth do YouTube (09_upload.py) — NUNCA versionar (repo é público)
+secrets/
+client_secret*.json
+*token*.json
