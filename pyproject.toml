@@ -15,12 +15,19 @@ dependencies = [
 ]
 
 [dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
 painel = [
     "pandas>=3.0.6",
     "streamlit>=1.50",
 ]
 
 [tool.uv]
-# `uv sync` já instala o painel junto (streamlit/pandas). Pra máquina só de
-# pipeline: uv sync --no-group painel
-default-groups = ["painel"]
+# `uv sync` já instala o painel (streamlit/pandas) e o pytest junto. Pra máquina
+# só de pipeline: uv sync --no-group painel --no-group dev
+default-groups = ["painel", "dev"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["scripts"]   # os scripts importam uns aos outros pelo nome (_eventos, _paths)

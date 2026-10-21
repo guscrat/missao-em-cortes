@@ -75,6 +75,9 @@ missao-em-cortes/
 ├── painel/
 │   └── app.py                        # painel Streamlit (só LÊ o banco): kanban, custo por agente, timeline
 ├── state/                            # pipeline.db (gitignored)
+├── tests/                            # pytest (conftest com outputs/ e banco falsos; tudo mockado)
+├── .claude/agents/                   # subagents do time de dev: testador, revisor-codigo
+├── .github/workflows/ci.yml          # CI: uv sync + pytest em todo PR e push pra develop/main
 ├── prompts/
 │   └── segmentacao.md                # Prompt do LLM pra topic segmentation
 ├── config/
@@ -219,6 +222,24 @@ Está em `prompts/segmentacao.md`. Objetivo: a LLM recebe a transcrição comple
 - **`fix/<nome>`**: bug em `develop`. **`hotfix/<nome>`**: bug em `main`, sai de `main` e volta pra `main` + `develop`.
 - **Commits**: Conventional Commits em português — `feat(escopo):`, `fix(escopo):`, `chore:`, `docs:`, `refactor:`. Escopos usuais: `pipeline`, `estado`, `painel`, `upload`, `agentes`, `thumb`, `shorts`.
 - **Claude Code**: sempre trabalhar numa branch `feature/*`/`fix/*` a partir de `develop`; nunca commitar em `main`/`develop` direto; commits pequenos e atômicos; abrir PR pra `develop` no fim da frente.
+- **CI** (`.github/workflows/ci.yml`): `uv sync --locked` + `uv run pytest -q` em todo PR e push pra `develop`/`main`. As duas branches são protegidas e exigem CI verde.
+
+## Fluxo de desenvolvimento com agentes
+
+**Papéis:** o Gu é o **PO**: passa tarefas macro, não revisa código nem aprova PR. O Claude Code (agente principal) é o **tech lead**: planeja, implementa e aprova.
+
+1. **Implementar** numa `feature/*` (ou `fix/*`) saindo de `develop`. PRs pequenos e focados.
+2. **Testar:** chamar o subagent `testador` (roda `uv run pytest -q` e escreve testes pro código novo/alterado, sempre com mock).
+3. **Revisar:** chamar o subagent `revisor-codigo` (revisa `git diff develop...HEAD` contra as regras deste arquivo).
+4. **Corrigir** se algum reprovar e chamar de novo, no **máximo 3 rodadas**. Se não resolver, parar e explicar o problema pro Gu em linguagem de produto.
+5. **PR pra `develop`** só com os dois APROVADOS. A descrição tem: o que mudou (3-5 linhas), como foi testado, custo de API estimado da feature e "decisões pendentes para o Gu".
+6. **Merge em `develop` é do tech lead:** com testador APROVADO + revisor APROVADO + CI verde, `gh pr merge --squash --delete-branch` sem perguntar.
+7. **Quebrou depois do merge?** Primeiro `git revert` (numa `fix/*`, via PR), depois investigar.
+8. **Release pra `main`:** mandar pro Gu um resumo de produto (o que muda pro canal, risco, custo) em até 5 linhas, sem detalhe técnico, e **esperar o "ok"**.
+
+**Perguntar SEMPRE antes de:** publicar no YouTube pela primeira vez numa feature nova · gastar API paga fora de teste · ação destrutiva (apagar arquivo/branch, force push, reset) · mudar segredo/credencial.
+
+**Status:** toda sexta (ou quando o Gu pedir "status"), um resumo em linguagem de produto: o que foi entregue, o que quebrou e foi corrigido, custo de API da semana e próximas entregas.
 
 ## Convenções pra colaboração com Claude Code
 
