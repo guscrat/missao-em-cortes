@@ -1,11 +1,12 @@
 """Roda o pipeline completo pra um stem: (02) -> 03 -> 04 -> (04b) -> (04c) -> 05 -> 06 -> 07 -> 08.
 
-Uso: uv run py scripts/pipeline.py <stem> [--polir] [--sem-llm] [--legendas] [--desde=N]
+Uso: uv run py scripts/pipeline.py <stem> [--polir] [--sem-llm] [--sem-legendas] [--desde=N]
 
   --polir     inclui o polimento (04b, ~$0.20 de API) e monta com --polido
   --sem-llm   com --polir: 04b só remove silêncios programáticos (custo $0,
               sem cortes de fillers/problemas técnicos)
-  --legendas  inclui a legenda karaokê burned-in (04c, $0) e monta com --legendado
+  --sem-legendas  desliga a legenda karaokê nesta live (padrão: LIGADA — roda o 04c, $0,
+                  e monta com --legendado)
   --desde=N   retoma a partir do step N (aceita 4b e 4c). Ex: --desde=4 pra re-cortar
               depois de recalibrar o zoom, sem re-segmentar.
 
@@ -32,13 +33,13 @@ args = [a for a in sys.argv[1:] if not a.startswith("--")]
 flags = [a for a in sys.argv[1:] if a.startswith("--")]
 
 if not args:
-    sys.exit("Uso: uv run py scripts/pipeline.py <stem> [--polir] [--desde=N]")
+    sys.exit("Uso: uv run py scripts/pipeline.py <stem> [--polir] [--sem-llm] [--sem-legendas] [--desde=N]")
 
 alvo = args[0]                    # stem ou nome completo da pasta (os steps resolvem)
 stem = stem_de(Path(alvo))        # stem puro, pra achar inputs/<stem>.mp4
 polir = "--polir" in flags
 sem_llm = "--sem-llm" in flags
-legendas = "--legendas" in flags
+legendas = "--sem-legendas" not in flags   # padrão: ligada
 
 desde = None
 for f in flags:
@@ -48,7 +49,14 @@ for f in flags:
 
 VIDEO = ROOT / "inputs" / f"{stem}.mp4"
 if desde == 4.7 and not legendas:
-    print("[aviso] --desde=4c sem --legendas: o 04c não roda (passe --legendas)")
+    print("[aviso] --desde=4c com --sem-legendas: o 04c não roda")
+# Retomar depois do 04c numa live sem legendados: o 06 não acharia corte nenhum e o
+# pipeline "terminaria OK" sem vídeo. Falha alto antes.
+if legendas and desde > 4.7 and not any(
+        p.is_dir() and any((p / "cortes" / "legendados").glob("corte_*.mp4"))
+        for p in OUTPUTS.glob(f"*_{stem}")):
+    sys.exit(f"[!] Esta live não tem cortes legendados e --desde={desde:g} pula o 04c. "
+             f"Use --desde=4c (gera as legendas) ou --sem-legendas.")
 tem_transcricao = any(
     (p / "transcricao.txt").exists() for p in OUTPUTS.glob(f"*_{stem}") if p.is_dir()
 )
@@ -62,7 +70,7 @@ if desde <= 2 and not VIDEO.is_file():
     sys.exit(f"[!] {VIDEO} não existe. Baixe antes: "
              f"uv run py scripts/01_baixar.py <URL> {stem}")
 
-# (numero, script, args) — o 4b/4c/6 mudam conforme --polir/--legendas
+# (numero, script, args) — o 4b/4c/6 mudam conforme --polir/--sem-legendas
 steps = [
     (2.0, "02_transcribe.py", [str(VIDEO)]),
     (3.0, "03_segmentar.py", [alvo]),
@@ -96,7 +104,7 @@ for num, script, sargs in steps:
                  f"Depois de corrigir, retome com:\n"
                  f"    uv run py scripts/pipeline.py {alvo}"
                  f"{' --polir' if polir else ''}{' --sem-llm' if sem_llm else ''}"
-                 f"{' --legendas' if legendas else ''}"
+                 f"{'' if legendas else ' --sem-legendas'}"
                  f" --desde={rotulo[num]}")
     evento(stem, etapa, "ok", duracao_s=time.time() - t_step)
     print(f"   (step {rotulo[num]}: {(time.time() - t_step) / 60:.1f} min)")
