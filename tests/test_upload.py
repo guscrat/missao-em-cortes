@@ -150,7 +150,7 @@ def cenario(projeto, monkeypatch, tmp_path):
     monkeypatch.setattr(up, "MediaFileUpload", lambda *a, **k: None)
     monkeypatch.setattr(up, "COTA_PATH", tmp_path / "state" / "cota_youtube.json")
     monkeypatch.setattr(up, "CONFIG", tmp_path / "nao_existe.json")   # usa DEFAULTS
-    monkeypatch.setitem(up.DEFAULTS, "modo", "agendado")   # os testes antigos cobrem o agendado
+    monkeypatch.setitem(up.DEFAULTS, "auditoria_aprovada", True)   # os testes antigos cobrem o agendado
     monkeypatch.setattr(up, "agora", lambda: datetime(2026, 10, 21, 13, 0, tzinfo=timezone.utc))
     return pasta, yt, projeto.banco
 
@@ -301,64 +301,87 @@ def test_escolher_thumb_prioridade(tmp_path):
     assert _paths.escolher_thumb(tmp_path, "01").name == "thumb_01_manual.png"
 
 
-# ── modo privado (enquanto a auditoria não sai) ────────────────────────────
+# ── trava da auditoria (projeto não auditado = vídeo bloqueado como privado) ──
 
-def test_modo_privado_sobe_sem_publish_at(cenario, monkeypatch):
-    pasta, yt, banco = cenario
-    monkeypatch.setitem(up.DEFAULTS, "modo", "privado")
-    assert up.main([str(pasta), "--bloco=1"]) == 0
-    st = yt.uploads[0]["status"]
-    assert st["privacyStatus"] == "private" and "publishAt" not in st
-    reg = json.loads((pasta / "youtube.json").read_text(encoding="utf-8"))
-    assert reg["01"]["youtube_id"] == "yt1" and reg["01"]["publish_at"] is None
-    b = banco("SELECT status, publish_at, motivo FROM blocos WHERE bloco_id=1")[0]
-    assert b["status"] == "aprovado" and b["publish_at"] is None and "Studio" in b["motivo"]
+@pytest.fixture
+def travado(cenario, monkeypatch):
+    monkeypatch.setitem(up.DEFAULTS, "auditoria_aprovada", False)
+    return cenario
 
 
-def test_privado_nao_ocupa_slot_do_agendado(cenario, monkeypatch):
-    pasta, yt, _ = cenario
-    monkeypatch.setitem(up.DEFAULTS, "modo", "privado")
-    up.main([str(pasta), "--bloco=1"])
-    assert up.ultimo_agendado(pasta.parent) is None
+def test_config_do_repo_esta_travada():
+    assert up.carregar_config()["auditoria_aprovada"] is False
 
 
-def test_modo_invalido_falha_alto(cenario, monkeypatch):
-    pasta, yt, _ = cenario
-    monkeypatch.setitem(up.DEFAULTS, "modo", "publico")
-    with pytest.raises(SystemExit):
-        up.main([str(pasta), "--dry-run"])
-    assert yt.uploads == []
-
-
-def test_config_do_repo_esta_em_privado():
-    assert up.carregar_config()["modo"] == "privado"
-
-
-def test_privado_dry_run_mostra_privado(cenario, monkeypatch, capsys):
-    pasta, yt, _ = cenario
-    monkeypatch.setitem(up.DEFAULTS, "modo", "privado")
-    monkeypatch.setattr(up, "autenticar", lambda: pytest.fail("dry-run autenticou"))
-    assert up.main([str(pasta), "--dry-run"]) == 0
+def test_travado_recusa_upload_real(travado, monkeypatch, capsys):
+    pasta, yt, banco = travado
+    monkeypatch.setattr(up, "autenticar", lambda: pytest.fail("travado autenticou"))
+    assert up.main([str(pasta)]) == 1
     out = capsys.readouterr().out
-    assert "modo privado" in out and "privado" in out and "21/10" not in out
+    assert "TRAVADO" in out and "auditoria_aprovada" in out and "--teste" in out
+    assert "Studio" not in out
+    assert yt.uploads == [] and not (pasta / "youtube.json").exists()
+    ev = banco("SELECT mensagem FROM eventos WHERE etapa='09_upload' AND status='aviso'")
+    assert "auditoria" in ev[0]["mensagem"]
+
+
+def test_travado_dry_run_avisa_e_sai_zero(travado, capsys):
+    pasta, yt, _ = travado
+    assert up.main([str(pasta), "--dry-run"]) == 0
+    assert "TRAVADO" in capsys.readouterr().out and yt.uploads == []
+
+
+def test_travado_tambem_recusa_retentativa_de_thumb(travado):
+    pasta, yt, _ = travado
+    (pasta / "youtube.json").write_text(json.dumps(
+        {"01": {"youtube_id": "velho", "publish_at": None, "titulo": "T", "thumb_ok": False}}))
+    assert up.main([str(pasta), "--bloco=1"]) == 1
+    assert yt.thumbs == []
+
+
+def test_teste_exige_bloco(travado):
+    pasta, yt, _ = travado
+    with pytest.raises(SystemExit):
+        up.main([str(pasta), "--teste"])
     assert yt.uploads == []
 
 
-def test_privado_idempotente(cenario, monkeypatch):
-    pasta, yt, _ = cenario
-    monkeypatch.setitem(up.DEFAULTS, "modo", "privado")
-    up.main([str(pasta)])
-    up.main([str(pasta)])
-    assert len(yt.uploads) == 3
-    assert all("publishAt" not in u["status"] for u in yt.uploads)
+def test_teste_sobe_privado_sem_data_e_nao_conta_como_real(travado):
+    pasta, yt, banco = travado
+    assert up.main([str(pasta), "--bloco=1", "--teste"]) == 0
+    u = yt.uploads[0]
+    assert u["status"]["privacyStatus"] == "private" and "publishAt" not in u["status"]
+    assert u["snippet"]["title"] == "[TESTE] Título 1"
+    assert yt.thumbs == ["yt1"]
+    reg = json.loads((pasta / up.TESTE_JSON).read_text(encoding="utf-8"))
+    assert reg["01"][0]["youtube_id"] == "yt1"
+    assert not (pasta / "youtube.json").exists()
+    assert banco("SELECT youtube_id FROM blocos WHERE bloco_id=1 AND youtube_id IS NOT NULL") == []
+    assert up.ultimo_agendado(pasta.parent) is None
+    ev = banco("SELECT mensagem FROM eventos WHERE etapa='09_upload' AND status='ok'")
+    assert ev[0]["mensagem"].startswith("TESTE")
 
 
-def test_privado_thumb_que_falhou_e_retentada(cenario, monkeypatch):
-    pasta, yt, banco = cenario
-    monkeypatch.setitem(up.DEFAULTS, "modo", "privado")
-    yt.thumb_falha = True
-    up.main([str(pasta), "--bloco=1"])
-    yt.thumb_falha = False
-    up.main([str(pasta), "--bloco=1"])
-    assert len(yt.uploads) == 1 and yt.thumbs == ["yt1"]
-    assert banco("SELECT status FROM blocos WHERE bloco_id=1")[0]["status"] == "aprovado"
+def test_teste_pode_repetir_e_acumula_registro(travado):
+    pasta, yt, _ = travado
+    up.main([str(pasta), "--bloco=1", "--teste"])
+    up.main([str(pasta), "--bloco=1", "--teste"])
+    assert len(yt.uploads) == 2
+    assert len(json.loads((pasta / up.TESTE_JSON).read_text())["01"]) == 2
+
+
+def test_teste_nao_bloqueia_upload_real_depois_da_auditoria(travado, monkeypatch):
+    pasta, yt, banco = travado
+    up.main([str(pasta), "--bloco=1", "--teste"])
+    monkeypatch.setitem(up.DEFAULTS, "auditoria_aprovada", True)
+    assert up.main([str(pasta), "--bloco=1"]) == 0
+    assert yt.uploads[1]["snippet"]["title"] == "Título 1"
+    assert "publishAt" in yt.uploads[1]["status"]
+    assert banco("SELECT status FROM blocos WHERE bloco_id=1")[0]["status"] == "agendado"
+
+
+def test_auditoria_aprovada_invalida_falha_alto(tmp_path):
+    cfg = tmp_path / "upload.json"
+    cfg.write_text('{"auditoria_aprovada": "sim"}')
+    with pytest.raises(SystemExit):
+        up.carregar_config(cfg)

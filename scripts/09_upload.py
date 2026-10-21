@@ -1,8 +1,9 @@
-"""Step 9: sobe os vídeos finalizados pro YouTube como PRIVADOS (agendados ou não).
+"""Step 9: sobe os vídeos finalizados pro YouTube como privados com publishAt (agendamento público).
 
 Uso:
     uv run py scripts/09_upload.py <stem> --dry-run      # mostra o plano, não chama a API
     uv run py scripts/09_upload.py <stem> [--bloco=N] [--max=N]
+    uv run py scripts/09_upload.py <stem> --bloco=N --teste   # upload de TESTE (único liberado sem auditoria)
 
 O que lê (da pasta do vídeo):
   - blocos.json        → quais blocos existem
@@ -10,12 +11,15 @@ O que lê (da pasta do vídeo):
                          txt é respeitada). Bloco com "[COLAR URL DA LIVE AQUI]" NÃO sobe.
   - finalizados/video_NN_*.mp4 (prefere _polido) e a thumb escolhida (manual > a > b > c)
 
-Modo (config/upload.json → "modo"):
-  - "privado": sobe privado SEM publishAt; o Gu publica no Studio. É o modo enquanto a
-    auditoria da API não sai (projeto não auditado = vídeo travado como privado de qualquer jeito).
-  - "agendado": privado com publishAt (publica sozinho no horário). Liga depois da auditoria.
+Trava da auditoria (config/upload.json → "auditoria_aprovada"):
+  - false (padrão): vídeo enviado por projeto de API NÃO auditado fica BLOQUEADO como privado
+    no YouTube — não dá pra publicar nem recorrer, só reenviando. Então o script RECUSA subir,
+    exceto upload marcado como teste (--teste, exige --bloco=N): sobe privado, sem data, com
+    "[TESTE]" no título, registrado à parte em youtube_teste.json (não conta como upload real
+    do bloco nem mexe no status dele no banco). Serve pra screencast/validação.
+  - true: sobe privado + publishAt (publica sozinho no horário agendado).
 
-Agendamento (modo "agendado"): config/upload.json (horário, intervalo, fuso). O próximo slot vem depois do
+Agendamento: config/upload.json (horário, intervalo, fuso). O próximo slot vem depois do
 último agendado em QUALQUER vídeo (lê outputs/*/youtube.json), então lives diferentes não
 disputam o mesmo horário.
 
@@ -57,12 +61,19 @@ COTA_PATH = ROOT / "state" / "cota_youtube.json"
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
 
 DEFAULTS = {
-    "modo": "privado", "horario": "18:00", "intervalo_dias": 1, "fuso": "America/Sao_Paulo",
+    "auditoria_aprovada": False, "horario": "18:00", "intervalo_dias": 1, "fuso": "America/Sao_Paulo",
     "antecedencia_min_horas": 2, "categoria_id": "25", "idioma": "pt-BR",
     "feito_para_criancas": False,
     "cota_limite_dia": 10_000, "cota_upload": 1_600, "cota_thumbnail": 50,
 }
 PLACEHOLDER_URL = "[COLAR URL DA LIVE AQUI]"
+TESTE_JSON = "youtube_teste.json"
+PREFIXO_TESTE = "[TESTE] "
+MSG_TRAVA = ("[!] Upload TRAVADO: a auditoria da YouTube Data API ainda não foi aprovada "
+             "(config/upload.json → \"auditoria_aprovada\": false).\n"
+             "    Vídeo enviado por projeto não auditado fica BLOQUEADO como privado no YouTube: "
+             "não dá pra publicar nem recorrer, só reenviando. Subir agora queimaria o vídeo.\n"
+             "    Pra um upload de teste: --bloco=N --teste. Quando a auditoria sair, mude a flag pra true.")
 LIMITE_THUMB_BYTES = 2 * 1024 * 1024     # thumbnails.set recusa acima de 2 MB
 LIMITE_TITULO = 100                      # chars
 LIMITE_DESCRICAO = 5000                  # bytes
@@ -78,6 +89,9 @@ def carregar_config(path: Path | None = None) -> dict:
     cfg = dict(DEFAULTS)
     if path.exists():
         cfg.update(json.loads(path.read_text(encoding="utf-8")))
+    if not isinstance(cfg["auditoria_aprovada"], bool):
+        sys.exit(f"[!] {path.name}: auditoria_aprovada precisa ser true ou false "
+                 f"(veio {cfg['auditoria_aprovada']!r})")
     return cfg
 
 
@@ -175,13 +189,13 @@ def proximos_slots(n: int, ultimo: datetime | None, cfg: dict,
 
 # ── registro local (youtube.json) e cota ───────────────────────────────────
 
-def ler_registro(pasta: Path) -> dict:
-    p = pasta / "youtube.json"
+def ler_registro(pasta: Path, nome: str = "youtube.json") -> dict:
+    p = pasta / nome
     return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
 
 
-def salvar_registro(pasta: Path, registro: dict) -> None:
-    p = pasta / "youtube.json"
+def salvar_registro(pasta: Path, registro: dict, nome: str = "youtube.json") -> None:
+    p = pasta / nome
     tmp = p.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(registro, ensure_ascii=False, indent=2), encoding="utf-8")
     tmp.replace(p)   # atômico: nunca fica um youtube.json pela metade
@@ -252,7 +266,7 @@ def _cota_estourada(e: HttpError) -> bool:
 
 
 def _quando(slot: datetime | None) -> str:
-    return f"publica {slot:%d/%m %H:%M}" if slot else "fica privado (publicar no Studio)"
+    return f"publica {slot:%d/%m %H:%M}" if slot else "TESTE: fica privado pra sempre (não dá pra publicar)"
 
 
 def subir_video(youtube, video: Path, meta: dict, publish_at: datetime | None, cfg: dict) -> str:
@@ -301,7 +315,7 @@ def subir_thumb(youtube, thumb: Path, video_id: str) -> None:
 def _args(argv: list[str]) -> tuple[str, dict]:
     pos = [a for a in argv if not a.startswith("--")]
     if not pos:
-        sys.exit("Uso: uv run py scripts/09_upload.py <stem> [--bloco=N] [--max=N] [--dry-run]")
+        sys.exit("Uso: uv run py scripts/09_upload.py <stem> [--bloco=N] [--max=N] [--dry-run] [--teste]")
     flags = dict(a[2:].split("=", 1) if "=" in a else (a[2:], True)
                  for a in argv if a.startswith("--"))
     return pos[0], flags
@@ -312,6 +326,9 @@ def main(argv: list[str]) -> int:
     dry = bool(flags.get("dry-run"))
     so_bloco = int(flags["bloco"]) if "bloco" in flags else None
     maximo = int(flags["max"]) if "max" in flags else None
+    teste = bool(flags.get("teste"))
+    if teste and so_bloco is None:
+        sys.exit("[!] --teste exige --bloco=N (sobe um vídeo só, não a live inteira).")
 
     pasta = achar_pasta(alvo)
     stem = stem_de(pasta)
@@ -322,6 +339,7 @@ def main(argv: list[str]) -> int:
     descricoes = ler_descricoes(desc_txt.read_text(encoding="utf-8"))
     blocos = json.loads((pasta / "blocos.json").read_text(encoding="utf-8"))["blocos"]
     registro = ler_registro(pasta)
+    registro_teste = ler_registro(pasta, TESTE_JSON) if teste else {}
 
     novos, so_thumb = [], []
     for b in blocos:
@@ -332,7 +350,7 @@ def main(argv: list[str]) -> int:
         reg = registro.get(nn, {})
         thumb = escolher_thumb(pasta / "thumbs", nn)
         yt_id = reg.get("youtube_id") or (ler_bloco(stem, bid) or {}).get("youtube_id")
-        if yt_id:
+        if yt_id and not teste:   # teste não conta como upload real: pode repetir
             if reg and not reg.get("thumb_ok") and thumb:
                 so_thumb.append((bid, nn, thumb, yt_id))
             else:
@@ -348,25 +366,35 @@ def main(argv: list[str]) -> int:
             continue
         if not thumb:
             print(f"   [aviso] {nn}: sem thumb — sobe sem (YouTube usa um frame)")
+        if teste:
+            meta = {**meta, "titulo": PREFIXO_TESTE + meta["titulo"]}
         novos.append((bid, nn, video, thumb, preparar_metadados(meta)))
 
     if maximo is not None:
         novos = novos[:maximo]
-    if cfg["modo"] not in ("privado", "agendado"):
-        sys.exit(f"[!] config/upload.json: modo '{cfg['modo']}' inválido (use privado ou agendado)")
-    agendar = cfg["modo"] == "agendado"
-    slots = (proximos_slots(len(novos), ultimo_agendado(pasta.parent), cfg) if agendar
-             else [None] * len(novos))
+    if teste:
+        so_thumb = []   # retentativa de thumb é do upload real, não do teste
+    travado = not cfg["auditoria_aprovada"] and not teste
+    slots = ([None] * len(novos) if teste
+             else proximos_slots(len(novos), ultimo_agendado(pasta.parent), cfg))
     custo_un = lambda thumb: cfg["cota_upload"] + (cfg["cota_thumbnail"] if thumb else 0)  # noqa: E731
     estimativa = sum(custo_un(n[3]) for n in novos) + cfg["cota_thumbnail"] * len(so_thumb)
 
-    print(f"\nPlano pra '{stem}' (modo {cfg['modo']}): {len(novos)} upload(s), "
+    modo = ("TESTE" if teste else "agendado" if cfg["auditoria_aprovada"]
+            else "TRAVADO, auditoria pendente")
+    print(f"\nPlano pra '{stem}' ({modo}): {len(novos)} upload(s), "
           f"{len(so_thumb)} thumb(s) pendente(s)")
     for (_, nn, video, thumb, meta), slot in zip(novos, slots):
-        quando = f"{slot:%d/%m %H:%M}" if slot else "privado"
+        quando = f"{slot:%d/%m %H:%M}" if slot else "teste"
         print(f"   {nn}  {quando:<11}  {meta['titulo'][:60]}")
         print(f"       {video.name} · thumb: {thumb.name if thumb else '—'} · {len(meta['tags'])} tags")
     print(f"   Cota estimada: {estimativa:,} unidades (limite {cfg['cota_limite_dia']:,}/dia) · custo US$ 0")
+    if travado and (novos or so_thumb):
+        print("\n" + MSG_TRAVA)
+        if not dry:
+            evento(stem, "09_upload", "aviso", agente="publicador",
+                   mensagem="recusado: auditoria da API pendente")
+            return 1
     if dry or not (novos or so_thumb):
         print("\n(dry-run: nada foi enviado)" if dry else "\nNada a fazer.")
         return 0
@@ -416,14 +444,28 @@ def main(argv: list[str]) -> int:
                 break
             continue
 
-        publish_at = slot.isoformat() if slot else None
+        if teste:
+            registro_teste.setdefault(nn, []).append(
+                {"youtube_id": yt_id, "enviado_em": agora().isoformat(), "titulo": meta["titulo"]})
+            salvar_registro(pasta, registro_teste, TESTE_JSON)
+            if thumb and cota.cabe(cfg["cota_thumbnail"]):
+                cota.gastar(cfg["cota_thumbnail"])
+                try:
+                    subir_thumb(youtube, thumb, yt_id)
+                except HttpError as e:
+                    print(f"   [aviso] {nn}: thumb do teste falhou ({e.resp.status})")
+            agendados += 1
+            print(f"   OK https://youtu.be/{yt_id} · {_quando(slot)}")
+            evento(stem, "09_upload", "ok", agente="publicador", bloco_id=bid,
+                   mensagem=f"TESTE youtube_id={yt_id}", duracao_s=time.time() - t0)
+            continue
+
+        publish_at = slot.isoformat()
         registro[nn] = {"youtube_id": yt_id, "publish_at": publish_at,
                         "titulo": meta["titulo"], "thumb_ok": False}
         salvar_registro(pasta, registro)   # antes de tudo: é o que garante a idempotência
-        # privado sem data = aprovado (Gu publica no Studio); com data = agendado
-        upsert_bloco(stem, bid, status="agendado" if slot else "aprovado", forcar_status=True,
-                     publish_at=publish_at, youtube_id=yt_id, titulo=meta["titulo"],
-                     motivo=None if slot else "privado no YouTube — publicar no Studio")
+        upsert_bloco(stem, bid, status="agendado", forcar_status=True,
+                     publish_at=publish_at, youtube_id=yt_id, titulo=meta["titulo"])
         unidades = cfg["cota_upload"]
         if thumb and cota.cabe(cfg["cota_thumbnail"]):
             cota.gastar(cfg["cota_thumbnail"])
@@ -438,7 +480,7 @@ def main(argv: list[str]) -> int:
         agendados += 1
         print(f"   OK https://youtu.be/{yt_id} · privado, {_quando(slot)}")
         evento(stem, "09_upload", "ok", agente="publicador", bloco_id=bid,
-               mensagem=f"youtube_id={yt_id} publishAt={publish_at or '-'} cota={unidades}",
+               mensagem=f"youtube_id={yt_id} publishAt={publish_at} cota={unidades}",
                duracao_s=time.time() - t0)
 
     print(f"\n{'=' * 60}\nOK {agendados} vídeo(s) enviado(s) · {falhas} falha(s) · "

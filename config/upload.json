@@ -1,5 +1,5 @@
 {
-  "modo": "privado",
+  "auditoria_aprovada": false,
   "horario": "18:00",
   "intervalo_dias": 1,
   "fuso": "America/Sao_Paulo",
