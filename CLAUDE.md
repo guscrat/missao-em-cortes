@@ -7,7 +7,7 @@
 Canal de YouTube de cortes de lives, entrevistas, debates e eventos do **Partido Missão (legenda 14)**, partido brasileiro de direita liberal fundado em 2025, ligado ao MBL. O canal pega vídeos longos (lives de 1-2h ou entrevistas de 30-60min) das principais figuras do partido (Renan Santos, Kim Kataguiri, Arthur do Val, Guto Zacarias, Amanda Vettorazzo) e gera **vários vídeos por fonte**, cada um focado num único ponto, otimizados para monetização no YouTube Partner Program. O alvo de duração é **5-7min por corte** (mudança de Jun/2026 pra melhorar retenção) — cortes curtos e focados num assunto só. Lives longas naturalmente rendem mais blocos.
 
 **Nome do canal:** Missão em Cortes  
-**Handle proposto:** @missaoemcortes
+**Canal:** https://www.youtube.com/channel/UCRJDgbBEndOdbNaiwzFju2g (handle `@missaoemcortes-14`; o handle `@missaoemcortes` NÃO é nosso, não usar)
 
 ## Postura editorial
 
