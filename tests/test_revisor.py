@@ -177,3 +177,27 @@ def test_escolher_video_ignora_polido(video):
     pasta, _, _ = video
     assert rv.escolher_video(pasta, "01").name == "corte_01_slug.mp4"
     assert rv.escolher_video(pasta, "03") is None
+
+
+def test_main_recusa_do_modelo_vira_quarentena(video):
+    pasta, cli, banco = video
+    cli.respostas = [_resp(stop="refusal")]
+    assert rv.main([str(pasta), "--bloco=1"]) == 0
+    row = banco("SELECT status, motivo FROM blocos WHERE bloco_id=1")[0]
+    assert row["status"] == "quarentena" and "recusou" in row["motivo"]
+
+
+def test_main_bloco_filtra_so_um(video):
+    pasta, cli, _ = video
+    rv.main([str(pasta), "--bloco=2"])
+    assert len(cli.chamadas) == 1
+    assert list(json.loads((pasta / "revisao.json").read_text(encoding="utf-8"))) == ["02"]
+
+
+def test_09_e_11_usam_o_mesmo_parser():
+    import _descricoes
+    spec = importlib.util.spec_from_file_location(
+        "up09", Path(__file__).parent.parent / "scripts" / "09_upload.py")
+    up = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(up)
+    assert up.ler_descricoes is _descricoes.ler_descricoes is rv.ler_descricoes
