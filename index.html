@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Missão em Cortes Publisher</title>
+<meta name="description" content="Ferramenta interna de publicação do canal Missão em Cortes no YouTube.">
+<style>
+  :root { --bg: #FFFFFF; --texto: #0A0A0A; --suave: #555555; --linha: #E5E5E5; --destaque: #B8920E; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0A0A0A; --texto: #F2F2F2; --suave: #A0A0A0; --linha: #262626; --destaque: #F5C518; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--texto);
+         font: 17px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 640px; margin: 0 auto; padding: 64px 16px 48px; }
+  h1 { font-size: 2rem; line-height: 1.15; margin: 0 0 16px; }
+  p { margin: 0 0 16px; }
+  .links { list-style: none; padding: 0; margin: 32px 0; border-top: 1px solid var(--linha); }
+  .links li { border-bottom: 1px solid var(--linha); }
+  .links a { display: block; padding: 14px 0; color: var(--texto); text-decoration: none; font-weight: 600; }
+  .links a:hover { color: var(--destaque); }
+  .links span { color: var(--suave); font-weight: 400; }
+  footer { margin-top: 48px; color: var(--suave); font-size: .9rem; }
+  .selo { display: inline-block; margin-bottom: 12px; }
+  .selo img { height: 40px; width: auto; display: block; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Missão em Cortes Publisher</h1>
+  <p>O Missão em Cortes Publisher é uma ferramenta interna de publicação do canal
+     <strong>Missão em Cortes</strong> no YouTube, usada exclusivamente pelo responsável pelo canal.</p>
+  <p>Ela usa os Serviços de API do YouTube para enviar os vídeos do próprio canal e definir
+     título, descrição, tags e miniatura de cada um. Não é oferecida a terceiros e não acessa
+     dados de outros usuários ou canais.</p>
+
+  <ul class="links">
+    <li><a href="PRIVACY.html">Política de Privacidade <span>→</span></a></li>
+    <li><a href="TERMS.html">Termos de Serviço <span>→</span></a></li>
+    <li><a href="https://www.youtube.com/@missaoemcortes">Canal Missão em Cortes no YouTube <span>↗</span></a></li>
+  </ul>
+
+  <footer>
+    <a class="selo" href="https://www.youtube.com/@missaoemcortes" aria-label="Canal Missão em Cortes no YouTube">
+      <picture>
+        <source srcset="assets/marca/developed-with-youtube-sentence-case-light.png" media="(prefers-color-scheme: dark)">
+        <img src="assets/marca/developed-with-youtube-sentence-case-dark.png" alt="Developed with YouTube">
+      </picture>
+    </a>
+    <div>Contato: <a href="mailto:gustavoapostolic@gmail.com">gustavoapostolic@gmail.com</a></div>
+  </footer>
+</main>
+</body>
+</html>
