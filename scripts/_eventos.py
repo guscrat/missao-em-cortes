@@ -85,7 +85,8 @@ def _agora() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
-def conectar(db_path: Path = DB_PATH) -> sqlite3.Connection:
+def conectar(db_path: Path | None = None) -> sqlite3.Connection:
+    db_path = db_path or DB_PATH   # lido na chamada (não no def) pra os testes trocarem o banco
     db_path.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(db_path, timeout=10)
     con.row_factory = sqlite3.Row
