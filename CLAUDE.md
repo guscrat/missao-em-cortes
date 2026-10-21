@@ -43,6 +43,7 @@ missao-em-cortes/
 │   │   ├── polimento.json            # intervalos de jump cut do 04b
 │   │   ├── descricoes.txt            # titulo+descricao+tags por bloco pro YouTube
 │   │   ├── cortes/                   # corte_NN_<slug>.mp4 + cold_NN_<slug>.mp4 (+ _polido)
+│   │   │   └── legendados/           # cortes com legenda karaokê (mesmo nome) + legenda_NN.ass (step 4c)
 │   │   ├── cards/                    # card_NN.png e card_NN.mp4
 │   │   ├── thumbs/                   # thumb_NN_a/b/c.png (3 variantes pra escolher)
 │   │   └── finalizados/              # video_NN_<slug>.mp4 (cold+intro+card+corte+outro)
@@ -62,6 +63,7 @@ missao-em-cortes/
 │   ├── 03_segmentar.py
 │   ├── 04_cortar.py
 │   ├── 04b_polir.py                  # opcional: jump cut de silêncios/fillers via LLM
+│   ├── 04c_legendas.py               # opcional: legenda karaokê burned-in (words.json → .ass → ffmpeg), $0
 │   ├── 05_cards.py
 │   ├── 06_montar.py
 │   ├── 07_thumb.py                   # thumbs semi-automáticas (off-pipeline)
@@ -103,18 +105,21 @@ missao-em-cortes/
 | 3 | Segmentação via LLM | `uv run py scripts/03_segmentar.py <stem>` | 30-90s | ~$0.20 |
 | 4 | Cortes | `uv run py scripts/04_cortar.py <stem>` | ~2-4min (NVENC) | grátis |
 | 4b* | Polimento (jump cut) | `uv run py scripts/04b_polir.py <stem>` | ~3-6min (sem re-transcrever) | ~$0.20 |
+| 4c* | Legenda karaokê | `uv run py scripts/04c_legendas.py <stem> [--polido]` | ~1-2min/corte (NVENC) | grátis |
 | 5 | Cards de contexto | `uv run py scripts/05_cards.py <stem>` | <1min | grátis |
-| 6 | Montagem final | `uv run py scripts/06_montar.py <stem> [--polido]` | ~1-2min (concat copy) | grátis |
+| 6 | Montagem final | `uv run py scripts/06_montar.py <stem> [--polido] [--legendado]` | ~1-2min (concat copy) | grátis |
 | 7* | Thumbs (off-pipeline) | `uv run py scripts/07_thumb.py <stem>` | <1min | grátis |
 | 8 | Descrições pro YouTube | `uv run py scripts/08_descricao.py <stem>` | <5s | grátis |
 
-> **Orquestrador:** `uv run py scripts/pipeline.py <stem> [--polir] [--sem-llm] [--desde=N]` roda os steps 2→8 em sequência (mesmos scripts, para na primeira falha e mostra o `--desde` pra retomar). Sem `--desde`, pula o step 2 se a transcrição já existe. `--polir` inclui o 04b e monta com `--polido`; `--sem-llm` faz o 04b rodar grátis (só silêncios programáticos, sem API). O download (step 1) fica de fora — rode antes, uma vez.
+> **Orquestrador:** `uv run py scripts/pipeline.py <stem> [--polir] [--sem-llm] [--legendas] [--desde=N]` roda os steps 2→8 em sequência (mesmos scripts, para na primeira falha e mostra o `--desde` pra retomar). Sem `--desde`, pula o step 2 se a transcrição já existe. `--polir` inclui o 04b e monta com `--polido`; `--sem-llm` faz o 04b rodar grátis (só silêncios programáticos, sem API). `--legendas` inclui o 04c e monta com `--legendado` (`--desde=4c` retoma dele). O download (step 1) fica de fora — rode antes, uma vez.
 
 > **Organização dos outputs:** uma pasta por vídeo em `outputs/<AAAA-MM-DD>_<stem>/` (data de processamento; prefixo ISO faz a ordenação alfabética = cronológica). Os steps 3-8 recebem só o **stem** (ex: `renan_vorcaro`) e o `scripts/_paths.py` resolve a pasta. Se houver mais de uma pasta pro mesmo stem (ambíguo), o script **falha alto** e lista as opções em vez de adivinhar — passe então o nome completo da pasta (ex: `2026-06-03_renan_vorcaro`). O step 2 (transcrição) recebe o caminho do vídeo em `inputs/` e cria/reusa a pasta do stem. Reprocessar um stem **reusa** a mesma pasta (não duplica).
 
 O step 4 gera **dois arquivos por bloco**: `corte_NN_<slug>.mp4` (corte completo, fade out 0.5s) e `cold_NN_<slug>.mp4` (cold open 15-30s, fade in+out 0.4s). Se o JSON não tiver `cold_open`, gera só o corte e loga um aviso.
 
 O step 4b é **opcional** — pra cada `corte_NN_*.mp4` ele: (1) reaproveita os word-level timestamps do `words.json` (gerado no step 2), fatiando pelo intervalo do bloco — **não re-transcreve** (cai pra re-transcrição via whisper só se o words.json não existir), (2) detecta silêncios >3s **programaticamente** (gap entre palavras consecutivas — determinístico, sem API, nunca nos primeiros 30s), (3) manda pro Claude com prompt conservador só o que exige julgamento (fillers extremos e problemas técnicos), funde os intervalos e aplica jump cut via `ffmpeg filter_complex select/aselect` e salva `corte_NN_<slug>_polido.mp4` na mesma pasta. Filtro defensivo descarta intervalos com motivo "ignorar/manter/abaixo do limiar". Suporta `--bloco=N` pra reprocessar só um bloco e `--sem-llm` pra rodar **só a parte programática** (silêncios) sem chamar o Claude — custo $0, abre mão dos cortes de fillers/problemas técnicos. Os intervalos ficam em `polimento.json`; `--reaplicar` re-aplica os intervalos salvos aos cortes sem chamar o LLM (útil após re-cortar, ex: mudou o zoom). Cold opens **não** são polidos. Pra usar os polidos na montagem: `06_montar.py <stem> --polido` (gera `video_NN_<slug>_polido.mp4`).
+
+O step 4c é **opcional** e **grátis** (sem API): queima legenda estilo **karaokê** nos cortes completos pra segurar retenção. Fatia o `words.json` pelo intervalo do bloco (mesmo padding do 04), agrupa em linhas curtas (até 4 palavras / 26 chars, quebra em pausa >0.7s e fim de frase), gera um `.ass` com `\k` (palavra falada acende em **amarelo 14**, o resto fica branco, Anton 72px com contorno preto, centralizada embaixo) e queima com o filtro `ass` do ffmpeg (libass) no formato canônico. Com `--polido` legenda o `_polido` e **remapeia** os tempos pelos intervalos do `polimento.json` (palavra num trecho removido some, as seguintes recuam). Saída em `cortes/legendados/` com o **mesmo nome** do corte. A subpasta é de propósito, porque os globs `corte_NN_*.mp4` dos outros steps não enxergam os legendados. Errou uma palavra? Edite o `legenda_NN.ass` (`legenda_NN_polido.ass` com `--polido`) e rode de novo com `--so-queimar` (não regera o .ass). Cold opens não são legendados. Montagem: `06_montar.py <stem> --legendado [--polido]` → `video_NN_<slug>[_polido]_legendado.mp4`; o 09 prefere `_polido_legendado` > `_legendado` > `_polido` > original.
 
 O step 7 é opcional e não afeta a montagem — gera 3 variantes de thumb por bloco (`thumb_NN_a/b/c.png`) com frames extraídos a 25/50/75% do cold open. Você escolhe a melhor variante e finaliza no Canva (colar collage de figuras na metade direita). Layout: frame do speaker deslocado pra direita (`FRAME_X=150`), título adaptativo (fonte 96→64 dependendo do comprimento), gradient escuro embaixo pra contraste.
 
@@ -207,7 +212,7 @@ Está em `prompts/segmentacao.md`. Objetivo: a LLM recebe a transcrição comple
 
 ### Médio prazo
 - Diarização na transcrição (separar speakers automaticamente)
-- Legendas burned-in nos momentos de impacto (aumenta retenção)
+- ~~Legendas burned-in nos momentos de impacto (aumenta retenção)~~ — karaokê no vídeo inteiro via `04c_legendas.py` (Out/2026)
 - ~~Templates de thumbnail dinâmicos via PIL (com frame do vídeo + texto)~~ — implementado em `07_thumb.py` (semi-automático, collage manual no Canva)
 - Detecção automática de rosto no frame da thumb (face_recognition) pra escolher melhor variante sem 3 opções
 - ~~Geração automática de descrição + tags via LLM~~ — `08_descricao.py` faz isso reaproveitando o LLM do step 3 (sem nova chamada). Capítulos com timestamps ainda pendentes (requer mapeamento de subtópicos dentro de cada bloco).
