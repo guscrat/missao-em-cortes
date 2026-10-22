@@ -51,7 +51,7 @@ from _paths import achar_pasta, escolher_thumb, stem_de
 
 MODELO = "claude-opus-5-5"
 PRECO_IN, PRECO_OUT = 4.0, 20.0        # US$ por 1M tokens (opus 5.5)
-CUSTO_ESTIMADO_BLOCO = 0.05            # só pro --dry-run
+CUSTO_ESTIMADO_BLOCO = 0.05            # só pro --dry-run (+ até ~US$ 0.03 se trocar a thumb)
 N_FRAMES = 6
 LARGURA_IMG = 512                      # imagem pequena = menos token; dá pra ler a tela
 NAO_MEXER = {"agendado", "publicado", "arquivado"}  # decisão já tomada: revisor não mexe
@@ -282,10 +282,19 @@ def checar_thumb(client, thumb: Path, titulo: str, texto_thumb: str) -> tuple[di
     return chamar_claude(client, conteudo, SISTEMA_THUMB, SCHEMA_THUMB, effort="low")
 
 
-def proximo_frame(pasta: Path, bid: int) -> bool:
-    """07_thumb --proximo: troca o frame da thumb_NN_a pelo seguinte da fila. False = acabou."""
-    r = subprocess.run([sys.executable, str(SCRIPTS / "07_thumb.py"), pasta.name,
-                        f"--bloco={bid}", "--proximo"], capture_output=True)
+def proximo_frame(pasta: Path, bid: int) -> bool | None:
+    """07_thumb --proximo: troca o frame da thumb_NN_a pelo seguinte da fila.
+    True = trocou; False = acabou a fila (o 07 sai com 2); None = o 07 quebrou."""
+    try:
+        r = subprocess.run([sys.executable, str(SCRIPTS / "07_thumb.py"), pasta.name,
+                            f"--bloco={bid}", "--proximo"], capture_output=True, timeout=300)
+    except subprocess.TimeoutExpired:
+        print(f"  [!] {bid:02d}: 07_thumb --proximo passou de 5 min")
+        return None
+    if r.returncode not in (0, 2):
+        erro = (r.stderr or b"").decode("utf-8", "replace").strip().splitlines()[-1:]
+        print(f"  [!] {bid:02d}: 07_thumb --proximo falhou: {' '.join(erro)[:200]}")
+        return None
     return r.returncode == 0
 
 
@@ -299,7 +308,11 @@ def trocar_thumb(client, anthropic, stem, pasta, bid, nn, titulo, texto_thumb,
                 f"07_thumb.py --bloco={bid} --t=MM:SS", [], 0.0)
     problemas, usd_total = [problema], 0.0
     for _ in range(MAX_TROCAS_THUMB):
-        if not proximo_frame(pasta, bid):
+        trocou = proximo_frame(pasta, bid)
+        if trocou is None:
+            return ("quarentena", "thumb: falhou ao gerar frame novo (07_thumb) — revisar à mão",
+                    problemas, usd_total)
+        if not trocou:
             break
         t0 = time.time()
         try:

@@ -377,3 +377,51 @@ def test_sistema_tem_regra_de_palavrao_e_thumb_final():
     assert "palavrão" in rv.SISTEMA and "ofensa a um grupo" in rv.SISTEMA
     assert "degradê" in rv.SISTEMA and "degradê" in rv.SISTEMA_THUMB
     assert "palavrão" in rv._editor.SISTEMA
+
+
+def test_thumb_api_falha_na_reavaliacao_vira_quarentena(so_bloco_1):
+    pasta, cli, banco, trocas = so_bloco_1
+    cli.respostas = [_resp(THUMB_RUIM), RuntimeError("boom")]
+    rv.main([str(pasta), "--bloco=1"])
+    b = banco("SELECT status, motivo FROM blocos WHERE bloco_id=1")[0]
+    assert b["status"] == "quarentena" and "falhou ao reavaliar" in b["motivo"]
+
+
+def test_thumb_recusa_na_reavaliacao_vira_quarentena(so_bloco_1):
+    pasta, cli, banco, trocas = so_bloco_1
+    cli.respostas = [_resp(THUMB_RUIM), _resp({}, stop="refusal")]
+    rv.main([str(pasta), "--bloco=1"])
+    b = banco("SELECT status, motivo FROM blocos WHERE bloco_id=1")[0]
+    assert b["status"] == "quarentena" and "recusou" in b["motivo"]
+
+
+def test_thumb_sem_proximo_frame_na_primeira_descarta(video):
+    pasta, cli, banco = video     # fixture: proximo_frame sempre False
+    cli.respostas = [_resp(THUMB_RUIM)]
+    rv.main([str(pasta), "--bloco=1"])
+    b = banco("SELECT status, motivo FROM blocos WHERE bloco_id=1")[0]
+    assert b["status"] == "descartado" and "nenhum frame" in b["motivo"]
+    assert len(cli.chamadas) == 1
+
+
+def test_07_quebrado_vira_quarentena_nao_descarte(video, monkeypatch):
+    pasta, cli, banco = video
+    monkeypatch.setattr(rv, "proximo_frame", lambda pasta, bid: None)
+    cli.respostas = [_resp(THUMB_RUIM)]
+    rv.main([str(pasta), "--bloco=1"])
+    b = banco("SELECT status, motivo FROM blocos WHERE bloco_id=1")[0]
+    assert b["status"] == "quarentena" and "à mão" in b["motivo"]
+
+
+@pytest.mark.parametrize("rc,esperado", [(0, True), (2, False), (1, None)])
+def test_proximo_frame_monta_comando(monkeypatch, tmp_path, rc, esperado):
+    visto = {}
+
+    def fake_run(cmd, **kw):
+        visto["cmd"], visto["kw"] = cmd, kw
+        return types.SimpleNamespace(returncode=rc, stderr=b"boom")
+    monkeypatch.setattr(rv.subprocess, "run", fake_run)
+    pasta = tmp_path / "2026-01-01_v"
+    assert rv.proximo_frame(pasta, 3) is esperado
+    assert visto["cmd"][1].endswith("07_thumb.py")
+    assert visto["cmd"][2:] == ["2026-01-01_v", "--bloco=3", "--proximo"]
