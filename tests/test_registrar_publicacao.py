@@ -52,3 +52,40 @@ def test_short_marca_postado_e_preserva_resto(tmp_path, banco):
 def test_main_exige_video_ou_short(monkeypatch, capsys):
     assert rp.main(["renan_x", "--bloco=1"]) == 1
     assert rp.main(["renan_x", "--bloco=1", "--short", "--video=abc"]) == 1
+
+
+def _pasta_falsa(tmp_path, monkeypatch):
+    pasta = tmp_path / "2026-10-22_renan_x"
+    (pasta / "shorts").mkdir(parents=True)
+    (pasta / "shorts" / "shorts.json").write_text(
+        json.dumps({"02": {"arquivo": "s.mp4"}}), encoding="utf-8")
+    monkeypatch.setattr(rp, "achar_pasta", lambda stem: pasta)
+    return pasta
+
+
+def test_main_video_com_quando_futuro_agenda(tmp_path, monkeypatch, banco, capsys):
+    _pasta_falsa(tmp_path, monkeypatch)
+    assert rp.main(["renan_x", "--bloco=2", "--video=https://youtu.be/Gi38fFUC6ug",
+                    "--quando=2999-01-01T18:00"]) == 0
+    b = banco("SELECT status, youtube_id, publish_at FROM blocos WHERE stem='renan_x' AND bloco_id=2")[0]
+    assert (b["status"], b["youtube_id"]) == ("agendado", "Gi38fFUC6ug")
+    assert b["publish_at"] == "2999-01-01T18:00:00-03:00"
+
+
+def test_main_video_sem_quando_vira_publicado(tmp_path, monkeypatch, banco):
+    _pasta_falsa(tmp_path, monkeypatch)
+    assert rp.main(["renan_x", "--bloco=2", "--video=Gi38fFUC6ug"]) == 0
+    assert banco("SELECT status FROM blocos WHERE stem='renan_x'")[0]["status"] == "publicado"
+
+
+def test_main_video_invalido_aborta(tmp_path, monkeypatch, banco):
+    _pasta_falsa(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit):
+        rp.main(["renan_x", "--bloco=2", "--video=curto"])
+
+
+def test_main_short_com_quando(tmp_path, monkeypatch, banco):
+    pasta = _pasta_falsa(tmp_path, monkeypatch)
+    assert rp.main(["renan_x", "--bloco=2", "--short", "--quando=2026-10-20"]) == 0
+    dados = json.loads((pasta / "shorts" / "shorts.json").read_text(encoding="utf-8"))
+    assert dados["02"]["postado"] == "2026-10-20"
