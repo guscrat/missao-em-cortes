@@ -386,3 +386,24 @@ def test_auditoria_aprovada_invalida_falha_alto(tmp_path):
     cfg.write_text('{"auditoria_aprovada": "sim"}')
     with pytest.raises(SystemExit):
         up.carregar_config(cfg)
+
+
+# ── quarentena/descartado seguram o upload (regra do revisor/editor) ───────
+
+@pytest.mark.parametrize("status", ["quarentena", "descartado"])
+def test_nao_sobe_bloco_em_quarentena_ou_descartado(cenario, status, capsys):
+    pasta, yt, _ = cenario
+    from _eventos import upsert_bloco
+    upsert_bloco("v", 1, status=status, forcar_status=True)
+    up.main([str(pasta)])
+    assert [u["snippet"]["title"] for u in yt.uploads] == ["Título 2", "Título 3"]
+    assert f"bloco em {status}" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("status", ["quarentena", "descartado"])
+def test_teste_sobe_mesmo_em_quarentena_ou_descartado(travado, status):
+    pasta, yt, _ = travado
+    from _eventos import upsert_bloco
+    upsert_bloco("v", 1, status=status, forcar_status=True)
+    assert up.main([str(pasta), "--bloco=1", "--teste"]) == 0
+    assert len(yt.uploads) == 1

@@ -15,7 +15,9 @@ rv = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(rv)
 
 OK = {"titulo_fiel": True, "titulo_problema": "", "thumb_ok": True, "thumb_problema": "",
-      "tela_compartilhada": False, "tela_problema": ""}
+      "tela_compartilhada": False, "tela_problema": "", "corte_sem_sentido": False,
+      "sentido_problema": ""}
+TITULO_RUIM = {**OK, "titulo_fiel": False, "titulo_problema": "não menciona Lula"}
 
 
 # ── decisão (é do código, não do modelo) ───────────────────────────────────
@@ -24,12 +26,24 @@ def test_decidir_tudo_ok_aprova():
     assert rv.decidir(OK) == ("aprovado", None)
 
 
-def test_decidir_junta_todos_os_problemas():
+def test_decidir_junta_problemas_de_titulo_e_thumb():
     ruim = {**OK, "titulo_fiel": False, "titulo_problema": "inverte o sentido",
-            "tela_compartilhada": True, "tela_problema": ""}
-    status, motivo = rv.decidir(ruim)
-    assert status == "quarentena"
-    assert motivo == "título: inverte o sentido; tela compartilhada: maior parte do corte"
+            "thumb_ok": False, "thumb_problema": ""}
+    assert rv.decidir(ruim) == ("quarentena", "título: inverte o sentido; thumb: reprovada")
+
+
+def test_decidir_conteudo_ruim_descarta_mesmo_com_titulo_ruim():
+    ruim = {**TITULO_RUIM, "tela_compartilhada": True, "corte_sem_sentido": True,
+            "sentido_problema": "termina no meio da frase"}
+    assert rv.decidir(ruim) == ("descartado", "tela compartilhada: maior parte do corte; "
+                                              "corte sem sentido: termina no meio da frase")
+    assert not rv.precisa_editor(*rv.decidir(ruim)[:1], ruim)
+
+
+def test_precisa_editor_so_com_titulo_reprovado():
+    assert rv.precisa_editor("quarentena", TITULO_RUIM)
+    assert not rv.precisa_editor("quarentena", {**OK, "thumb_ok": False})
+    assert not rv.precisa_editor("quarentena", None)   # recusa: revisar à mão
 
 
 def test_decidir_recusa_vira_quarentena():
@@ -109,6 +123,7 @@ def video(projeto, monkeypatch):
     monkeypatch.setattr(_paths, "OUTPUTS", projeto.outputs)
     monkeypatch.setattr(rv, "frames_b64", lambda v: ["f"] * 6)
     monkeypatch.setattr(rv, "ler_imagem_b64", lambda p: "thumb")
+    monkeypatch.setattr(rv._editor, "refazer_artes", lambda pasta, bid, thumb: [])
     cli = FakeClient([_resp(), _resp({**OK, "thumb_ok": False, "thumb_problema": "sem rosto"})])
     fake_anthropic = types.SimpleNamespace(Anthropic=lambda: cli, APIError=RuntimeError)
     monkeypatch.setitem(sys.modules, "anthropic", fake_anthropic)
@@ -208,3 +223,88 @@ def test_chamar_claude_sem_texto_vira_erro_tratavel():
     resp.content, resp.stop_reason = [], "max_tokens"
     with pytest.raises(json.JSONDecodeError):
         rv.chamar_claude(FakeClient([resp]), [])
+
+
+# ── loop editor → revisor (regra de produto da quarentena) ─────────────────
+
+def _edit(titulo="Novo título fiel", thumb="TEXTO NOVO", stop="end_turn"):
+    return types.SimpleNamespace(
+        stop_reason=stop, model="claude-opus-5-5",
+        content=[types.SimpleNamespace(type="text", text=json.dumps(
+            {"titulo": titulo, "texto_thumb": thumb, "mudanca": "tirei o Lula"}))],
+        usage=types.SimpleNamespace(input_tokens=2000, output_tokens=300))
+
+
+def _desc_txt(pasta, titulos):
+    partes = []
+    for bid, t in titulos.items():
+        partes += ["=" * 70, f"VÍDEO {bid:02d} — x", "=" * 70, "", f"TÍTULO ({len(t)} chars):", t,
+                   "", "-" * 70, "DESCRIÇÃO:", "-" * 70, "desc", "-" * 70, "TAGS (x):", "-" * 70,
+                   "a, b", ""]
+    (pasta / "descricoes.txt").write_text("\n".join(partes), encoding="utf-8")
+
+
+def test_titulo_reprovado_editor_reescreve_e_aprova(video):
+    pasta, cli, banco = video
+    _desc_txt(pasta, {1: "Título exagerado", 2: "Outro"})
+    cli.respostas = [_resp(TITULO_RUIM), _edit(), _resp()]
+    assert rv.main([str(pasta), "--bloco=1"]) == 0
+    row = banco("SELECT status, motivo FROM blocos WHERE bloco_id=1")[0]
+    assert row == {"status": "aprovado", "motivo": None}
+    # editor recebeu o problema; revisor reavaliou com o título novo
+    assert "não menciona Lula" in cli.chamadas[1]["messages"][0]["content"]
+    assert "TÍTULO DO YOUTUBE: Novo título fiel" in cli.chamadas[2]["messages"][0]["content"][-1]["text"]
+    # gravado no txt (só o bloco 1) e no blocos.json, com o original guardado
+    desc = rv.ler_descricoes((pasta / "descricoes.txt").read_text(encoding="utf-8"))
+    assert desc[1]["titulo"] == "Novo título fiel" and desc[2]["titulo"] == "Outro"
+    b1 = json.loads((pasta / "blocos.json").read_text(encoding="utf-8"))["blocos"][0]
+    assert b1["titulo_sugerido"] == "Novo título fiel" and b1["texto_thumb"] == "TEXTO NOVO"
+    assert b1["titulo_original"] == "Título 1"
+    rev = json.loads((pasta / "revisao.json").read_text(encoding="utf-8"))["01"]
+    assert rev["reescritas"][0]["titulo"] == "Título exagerado"
+    ev = banco("SELECT agente, custo_usd FROM eventos WHERE status='llm'")
+    assert [e["agente"] for e in ev] == ["revisor", "editor", "revisor"]
+    assert ev[1]["custo_usd"] == pytest.approx(2000 / 1e6 * 4 + 300 / 1e6 * 20)
+
+
+def test_titulo_reprova_nas_2_reescritas_chama_o_gu(video, monkeypatch, capsys):
+    pasta, cli, banco = video
+    import _eventos
+    tid = _eventos.nova_tarefa("loop editor")
+    monkeypatch.setenv("MISSAO_TAREFA", str(tid))
+    cli.respostas = [_resp(TITULO_RUIM), _edit("T2"), _resp(TITULO_RUIM),
+                     _edit("T3"), _resp(TITULO_RUIM)]
+    assert rv.main([str(pasta), "--bloco=1"]) == 0
+    assert cli.respostas == []                             # 3 revisões + 2 reescritas, e para
+    row = banco("SELECT status, motivo FROM blocos WHERE bloco_id=1")[0]
+    assert row["status"] == "quarentena" and "decisão do Gu" in row["motivo"]
+    assert "DECISÃO DO GU" in capsys.readouterr().out
+    pend = banco(f"SELECT decisao_pendente FROM tarefas WHERE id={tid}")[0]["decisao_pendente"]
+    assert "bloco 01" in pend
+    # a 2ª reescrita viu a 1ª tentativa reprovada
+    pedido = cli.chamadas[3]["messages"][0]["content"]
+    assert "REPROVADO: T2" in pedido and "TENTATIVA 1 (também reprovada): Título 1" in pedido
+
+
+def test_conteudo_ruim_descarta_sem_editor(video):
+    pasta, cli, banco = video
+    cli.respostas = [_resp({**TITULO_RUIM, "tela_compartilhada": True})]
+    rv.main([str(pasta), "--bloco=1"])
+    assert len(cli.chamadas) == 1
+    assert banco("SELECT status FROM blocos WHERE bloco_id=1")[0]["status"] == "descartado"
+
+
+def test_sem_editor_so_poe_em_quarentena(video):
+    pasta, cli, banco = video
+    cli.respostas = [_resp(TITULO_RUIM)]
+    rv.main([str(pasta), "--bloco=1", "--sem-editor"])
+    assert len(cli.chamadas) == 1
+    assert banco("SELECT status FROM blocos WHERE bloco_id=1")[0]["status"] == "quarentena"
+
+
+def test_editor_recusa_fica_em_quarentena(video):
+    pasta, cli, banco = video
+    cli.respostas = [_resp(TITULO_RUIM), _edit(stop="refusal")]
+    rv.main([str(pasta), "--bloco=1"])
+    row = banco("SELECT status, motivo FROM blocos WHERE bloco_id=1")[0]
+    assert row["status"] == "quarentena" and "editor não conseguiu" in row["motivo"]

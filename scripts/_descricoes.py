@@ -23,3 +23,17 @@ def ler_descricoes(texto: str) -> dict[int, dict]:
             "tags": [t.strip() for t in miolo.group(2).split(",") if t.strip()],
         }
     return saida
+
+
+def trocar_titulo(texto: str, bloco_id: int, novo: str) -> str:
+    """Troca o título (e a contagem de chars) de UM bloco, sem mexer no resto do txt."""
+    texto = texto.replace("\r\n", "\n")
+    cabecalhos = list(_CABECALHO_BLOCO.finditer(texto))
+    for i, cab in enumerate(cabecalhos):
+        if int(cab.group(1)) != bloco_id:
+            continue
+        fim = cabecalhos[i + 1].start() if i + 1 < len(cabecalhos) else len(texto)
+        trecho = _TITULO.sub(lambda m: f"TÍTULO ({len(novo)} chars):\n{novo}",
+                             texto[cab.end():fim], count=1)
+        return texto[:cab.end()] + trecho + texto[fim:]
+    return texto

@@ -68,6 +68,7 @@ DEFAULTS = {
 }
 PLACEHOLDER_URL = "[COLAR URL DA LIVE AQUI]"
 TESTE_JSON = "youtube_teste.json"
+NAO_SOBE = {"quarentena", "descartado"}   # decisão do revisor/editor: segura o upload
 PREFIXO_TESTE = "[TESTE] "
 MSG_TRAVA = ("[!] Upload TRAVADO: a auditoria da YouTube Data API ainda não foi aprovada "
              "(config/upload.json → \"auditoria_aprovada\": false).\n"
@@ -314,6 +315,10 @@ def main(argv: list[str]) -> int:
                 so_thumb.append((bid, nn, thumb, yt_id))
             else:
                 print(f"   {nn}: já agendado ({yt_id}) — pulando")
+            continue
+        status = (ler_bloco(stem, bid) or {}).get("status")
+        if status in NAO_SOBE and not teste:
+            print(f"   [!] {nn}: bloco em {status} no painel — não sobe")
             continue
         video = escolher_arquivo(pasta / "finalizados", f"video_{nn}_*.mp4")
         meta = descricoes.get(bid)
