@@ -301,7 +301,7 @@ def calcular_estoque(cfg: dict, hoje: date | None = None) -> dict:
     """O que está pronto e ainda não foi pro ar, de lives dos últimos DIAS_ARQUIVAR dias.
     Longo = bloco 'aprovado' (coluna "Pronto para publicar"). Short = short_NN gerado de
     bloco aprovado/agendado/publicado que ainda não foi marcado como postado
-    (registrar_publicacao.py --short)."""
+    (pelo 14_canal, que lê o canal)."""
     hoje = hoje or date.today()
     try:
         con = conectar()
@@ -454,6 +454,8 @@ def escrever_resumo(rodada: dict) -> str:
             linhas += [f"- {x['canal']}: {x['titulo']} — {x['motivo']}" for x in rodada[chave]]
             linhas.append("")
     avisos = [a for p in rodada["processados"] for a in p["avisos"]]
+    if rodada.get("aviso_canal"):
+        avisos.insert(0, rodada["aviso_canal"])
     if rodada.get("falha_llm"):
         avisos.insert(0, f"avaliação dos vídeos novos falhou ({rodada['falha_llm']}); "
                          "eles voltam amanhã")
@@ -508,6 +510,24 @@ def expirar_fila(estado: dict, hoje: date) -> list[str]:
     return expirados
 
 
+def sincronizar_canal(dry_run: bool = False) -> str | None:
+    """14_canal: marca o que já está publicado/agendado no NOSSO canal (só leitura, US$ 0).
+    Nunca abre o navegador (roda pelo Agendador) e nunca derruba a rodada: devolve o aviso."""
+    try:
+        import importlib
+        res = importlib.import_module("14_canal").sincronizar(interativo=False, dry=dry_run)
+    except Exception as e:  # noqa: BLE001 — sem canal, o estoque fica como estava
+        print(f"[aviso] não li o canal ({e}): estoque sem o que subiu desde a última leitura",
+              file=sys.stderr)
+        return f"não li o canal do YouTube ({str(e)[:200]}); rode `uv run py scripts/14_canal.py`"
+    print(f"Canal: {len(res['longos'])} longo(s) e {len(res['shorts'])} Short(s) marcados "
+          f"como agendado/publicado")
+    if res["sem_match"]:
+        return (f"{len(res['sem_match'])} vídeo(s) recente(s) do canal sem bloco correspondente "
+                f"(título editado no Studio?): " + "; ".join(x["titulo"][:50] for x in res["sem_match"]))
+    return None
+
+
 def _rodada(cfg: dict, dry_run: bool, sem_pipeline: bool, forcar: bool) -> int:
     hoje = date.today()
     estado = ler_estado()
@@ -530,6 +550,7 @@ def _rodada(cfg: dict, dry_run: bool, sem_pipeline: bool, forcar: bool) -> int:
                 novos.append(item)
                 print(f"   + {item['titulo'][:60]} ({item['duracao_s'] // 60} min, {item['data']})")
 
+    aviso_canal = sincronizar_canal(dry_run)        # antes do estoque: o que já subiu sai dele
     estoque = calcular_estoque(cfg)
     minimo = cfg["estoque"]["dias_minimos"]
     precisa = forcar or estoque["dias"] < minimo
@@ -544,7 +565,7 @@ def _rodada(cfg: dict, dry_run: bool, sem_pipeline: bool, forcar: bool) -> int:
 
     agora = datetime.now().isoformat(timespec="seconds")
     rodada = {"quando": agora, "custo": 0.0, "estoque": estoque, "escolhidos": [],
-              "fila": [], "recusados": [], "processados": []}
+              "fila": [], "recusados": [], "processados": [], "aviso_canal": aviso_canal}
     if novos:
         from anthropic import Anthropic
         from dotenv import load_dotenv
