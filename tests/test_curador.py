@@ -189,8 +189,11 @@ def test_avaliar_recusa_devolve_vazio():
 def rodada(raiz, monkeypatch):
     """Liga a rodada a fakes: canais, LLM e processamento. Devolve o registro de chamadas."""
     reg = {"listar": {}, "avaliacoes": {}, "processados": [], "llm": 0,
-           "estoque": {"longos": 0, "shorts": 0, "dias": 0.0}}
-    monkeypatch.setattr(cu, "calcular_estoque", lambda cfg, hoje=None: dict(reg["estoque"]))
+           "estoque": {"longos": 0, "shorts": 0, "dias": 0.0}, "canal": [], "aviso_canal": None}
+    monkeypatch.setattr(cu, "calcular_estoque",
+                        lambda cfg, hoje=None: reg["canal"].append("estoque") or dict(reg["estoque"]))
+    monkeypatch.setattr(cu, "sincronizar_canal",
+                        lambda dry=False: reg["canal"].append(("sync", dry)) or reg["aviso_canal"])
     monkeypatch.setattr(cu, "listar_canal", lambda canal, n: reg["listar"].get(canal["prefixo"], []))
     monkeypatch.setattr(cu, "detalhar", lambda item: item)
 
@@ -641,3 +644,45 @@ def test_tentativas_preservadas_ao_voltar_pra_fila(raiz, rodada, monkeypatch):
     assert cu.main([]) == 1
     e = cu.ler_estado()["a"]
     assert e["tentativas"] == 2 and e["decisao"] == "fila"
+
+
+# --- leitura do canal (14_canal) no começo da rodada --------------------------------------
+
+def test_rodada_le_o_canal_antes_do_estoque(raiz, rodada):
+    cu.main([])
+    assert rodada["canal"][:2] == [("sync", False), "estoque"]
+
+
+def test_dry_run_le_o_canal_sem_gravar(raiz, rodada):
+    cu.main(["--dry-run"])
+    assert rodada["canal"][0] == ("sync", True)
+
+
+def test_aviso_do_canal_vai_pro_resumo(raiz, rodada):
+    rodada["aviso_canal"] = "não li o canal do YouTube (sem login)"
+    cu.main([])
+    assert "não li o canal do YouTube" in cu.RESUMO.read_text(encoding="utf-8")
+
+
+def test_sincronizar_canal_nunca_derruba(monkeypatch):
+    import sys
+    import types
+
+    def quebra(**kw):
+        raise RuntimeError("precisa de login")
+    monkeypatch.setitem(sys.modules, "14_canal", types.SimpleNamespace(sincronizar=quebra))
+    assert "precisa de login" in cu.sincronizar_canal()
+
+
+def test_sincronizar_canal_nao_interativo_e_lista_sem_match(monkeypatch):
+    import sys
+    import types
+    pedidos = []
+
+    def sinc(**kw):
+        pedidos.append(kw)
+        return {"longos": [1], "shorts": [], "sem_match": [{"titulo": "Vídeo editado"}]}
+    monkeypatch.setitem(sys.modules, "14_canal", types.SimpleNamespace(sincronizar=sinc))
+    aviso = cu.sincronizar_canal(True)
+    assert pedidos == [{"interativo": False, "dry": True}]
+    assert "1 vídeo(s)" in aviso and "Vídeo editado" in aviso

@@ -3,7 +3,9 @@
 Só os blocos APROVADOS pelo revisor (revisao.json), em ordem de score, com arquivo final,
 thumb escolhida pelo revisor, título/descrição/tags do descricoes.txt (edição manual vale)
 e uma sugestão de dia: 1 por dia, ou 2 por dia quando há 3+ aprovados (conteúdo de live
-envelhece rápido). Usado pelo Curador (13) no fim de cada vídeo; dá pra rodar à mão:
+envelhece rápido). As datas continuam DEPOIS do último longo agendado/publicado no canal
+(state/canal.json do 14_canal + publish_at do banco), pra não brigar com o que já está na
+fila do YouTube. Usado pelo Curador (13) no fim de cada vídeo; dá pra rodar à mão:
 
   uv run py scripts/_publicacao.py <stem>
 """
@@ -14,6 +16,7 @@ from pathlib import Path
 
 from _descricoes import ler_descricoes
 
+CANAL_JSON = Path(__file__).parent.parent / "state" / "canal.json"
 DIAS_SEMANA = ["seg", "ter", "qua", "qui", "sex", "sáb", "dom"]
 HORA = "18h"
 CORTE_HOJE = 16          # processou antes das 16h: o 1º já pode sair hoje às 18h
@@ -65,10 +68,44 @@ def aprovados(pasta: Path) -> list[dict]:
     return sorted(saida, key=lambda x: (-x["score"], x["id"]))
 
 
-def agenda(n: int, agora: datetime | None = None) -> list[date]:
-    """Dia sugerido pra cada um dos n vídeos (já em ordem de score)."""
+def ultimo_agendado() -> date | None:
+    """Dia do último longo agendado/publicado: o maior entre o que o 14_canal viu no canal
+    (state/canal.json) e o publish_at dos blocos no banco."""
+    datas = []
+    try:
+        ultimo = json.loads(CANAL_JSON.read_text(encoding="utf-8")).get("ultimo_longo")
+        if ultimo:
+            datas.append(ultimo[:10])
+    except (OSError, ValueError, AttributeError):
+        pass
+    try:
+        from _eventos import conectar
+        con = conectar()
+        try:
+            r = con.execute("SELECT MAX(publish_at) FROM blocos WHERE publish_at IS NOT NULL "
+                            "AND status IN ('agendado', 'publicado')").fetchone()
+        finally:
+            con.close()
+        if r and r[0]:
+            datas.append(r[0][:10])
+    except Exception:  # noqa: BLE001 — banco é best-effort
+        pass
+    validas = []
+    for d in datas:
+        try:
+            validas.append(date.fromisoformat(d))
+        except ValueError:
+            continue
+    return max(validas, default=None)
+
+
+def agenda(n: int, agora: datetime | None = None, depois_de: date | None = None) -> list[date]:
+    """Dia sugerido pra cada um dos n vídeos (já em ordem de score), começando depois do
+    último agendado (depois_de), se houver."""
     agora = agora or datetime.now()
     inicio = agora.date() if agora.hour < CORTE_HOJE else agora.date() + timedelta(days=1)
+    if depois_de and depois_de >= inicio:
+        inicio = depois_de + timedelta(days=1)
     por_dia = 2 if n >= 3 else 1
     return [inicio + timedelta(days=i // por_dia) for i in range(n)]
 
@@ -78,10 +115,12 @@ def gerar(pasta: Path, agora: datetime | None = None) -> tuple[Path | None, list
     lista = aprovados(pasta)
     if not lista:
         return None, []
-    dias = agenda(len(lista), agora)
+    dias = agenda(len(lista), agora, ultimo_agendado())
     linhas = [f"# Publicação manual — {pasta.name}",
               f"# {len(lista)} corte(s) aprovado(s) pelo revisor, em ordem de score.",
-              "# Thumb: a metade direita preta é o espaço do collage no Canva.", ""]
+              "# Thumb: a metade direita preta é o espaço do collage no Canva.",
+              "# Short: suba com o MESMO título do vídeo (pode pôr #shorts). É pelo título",
+              "# que o 14_canal reconhece sozinho o que já foi publicado/agendado.", ""]
     for x, dia in zip(lista, dias):
         linhas +=["=" * 70,
                    f"{DIAS_SEMANA[dia.weekday()]} {dia:%d/%m} {HORA} · VÍDEO {x['id']:02d} · "
