@@ -175,3 +175,118 @@ def test_login_nao_interativo_nunca_abre_navegador(tmp_path):
     with pytest.raises(_google.LoginNecessario):
         _google.credenciais(yl.ESCOPOS, tmp_path / "token.json", tmp_path / "cs.json",
                             interativo=False)
+
+
+# --- cobertura extra ------------------------------------------------------------------------
+
+def test_titulos_locais_usa_descricoes_editado(projeto):
+    pasta = projeto.video("kim_x", blocos=[1])
+    (pasta / "descricoes.txt").write_text(
+        "====\nVÍDEO 1 — x\n====\nTÍTULO (20 chars):\nTítulo editado à mão #mbl\n\n"
+        "----\nDESCRIÇÃO:\n----\nresumo\n----\nTAGS:\n----\na, b\n", encoding="utf-8")
+    ls = ca.titulos_locais(projeto.outputs)
+    assert "titulo editado a mao" in {x["chave"] for x in ls}
+    assert "titulo 1" in {x["chave"] for x in ls}      # o do blocos.json continua
+
+
+def test_titulos_locais_blocos_json_quebrado(projeto):
+    pasta = projeto.video("kim_y", blocos=[1])
+    (pasta / "blocos.json").write_text("{lixo", encoding="utf-8")
+    assert ca.titulos_locais(projeto.outputs) == []
+
+
+@pytest.mark.parametrize("conteudo", ["{lixo", "[]", '{"01": "x"}', '{"02": {}}'])
+def test_marcar_short_malformado_nao_quebra(tmp_path, conteudo):
+    (tmp_path / "shorts").mkdir()
+    (tmp_path / "shorts" / "shorts.json").write_text(conteudo, encoding="utf-8")
+    assert ca.marcar_short(tmp_path, 1, "S1", AGORA, False) is False
+
+
+def test_marcar_short_sem_arquivo(tmp_path):
+    assert ca.marcar_short(tmp_path, 1, "S1", AGORA, False) is False
+
+
+def test_sincronizar_e_main_com_mocks(local, monkeypatch, capsys):
+    _, _, _ = local
+    monkeypatch.setattr(ca, "OUTPUTS", local[0].parent)
+    chamadas = []
+    monkeypatch.setattr(ca, "youtube", lambda interativo=True: chamadas.append(interativo) or "yt")
+    monkeypatch.setattr(ca, "listar_videos", lambda yt: [
+        _v("L1", TITULO_1, "private", "2026-10-26T21:00:00Z"), _v("S1", TITULO_1, dur=40)])
+    res = ca.sincronizar(interativo=False)
+    assert chamadas == [False] and len(res["longos"]) == 1 and len(res["shorts"]) == 1
+    assert ca.main(["--dry-run"]) == 0
+    assert "dry-run" in capsys.readouterr().out
+    assert chamadas == [False, True]
+
+
+def test_main_sem_login_propaga(local, monkeypatch):
+    def boom(interativo=True):
+        raise _google.LoginNecessario("x")
+    monkeypatch.setattr(ca, "youtube", boom)
+    with pytest.raises(_google.LoginNecessario):
+        ca.sincronizar(interativo=False)
+
+
+def test_listar_videos_pagina_e_lota_em_50():
+    ns = types.SimpleNamespace
+    paginas = {None: {"items": [{"contentDetails": {"videoId": f"v{i}"}} for i in range(50)],
+                      "nextPageToken": "P2"},
+               "P2": {"items": [{"contentDetails": {"videoId": f"v{i}"}} for i in range(50, 60)]}}
+    lotes = []
+
+    def vlist(**k):
+        ids = k["id"].split(",")
+        lotes.append(len(ids))
+        return _Req({"items": [{"id": i, "snippet": {"title": i, "publishedAt": "2026-10-20T21:00:00Z"},
+                                "status": {"privacyStatus": "public"},
+                                "contentDetails": {"duration": "PT1M"}} for i in ids]})
+    yt = ns(channels=lambda: ns(list=lambda **k: _Req(
+                {"items": [{"contentDetails": {"relatedPlaylists": {"uploads": "UU1"}}}]})),
+            playlistItems=lambda: ns(list=lambda **k: _Req(paginas[k["pageToken"]])),
+            videos=lambda: ns(list=vlist))
+    vs = yl.listar_videos(yt)
+    assert len(vs) == 60 and lotes == [50, 10]
+
+
+# --- correções da revisão: casamento conservador, 1 vídeo por bloco, nunca rebaixa ---------
+
+def test_titulo_parecido_com_2_blocos_nao_casa(projeto, monkeypatch):
+    """Blocos da mesma live com títulos quase iguais: na dúvida vira sem-match."""
+    pasta = projeto.video("renan_y", blocos=[1, 2])
+    blocos = json.loads((pasta / "blocos.json").read_text(encoding="utf-8"))
+    blocos["blocos"][0]["titulo_sugerido"] = "Renan Santos detona o Lula no debate da Band"
+    blocos["blocos"][1]["titulo_sugerido"] = "Renan Santos detona o Flávio no debate da Band"
+    (pasta / "blocos.json").write_text(json.dumps(blocos), encoding="utf-8")
+    locais = [x for x in ca.titulos_locais(projeto.outputs) if x["tipo"] == "titulo"]
+    assert ca.casar("Renan Santos detona o Lula no debate da Band", locais)["bloco"] == 1
+    assert ca.casar("Renan Santos detona o Lula no debate da Band", locais[:1] + locais)["bloco"] == 1
+    assert ca.casar("Renan Santos detona o rival no debate da Band", locais) is None   # ambíguo
+
+
+def test_reupload_fica_o_publico_e_nao_alterna(local):
+    _, banco, locais = local
+    videos = [_v("PRIVADO0001", TITULO_1, "private", "2026-10-28T21:00:00Z"),
+              _v("PUBLICO0001", TITULO_1, publicado="2026-10-21T21:00:00Z")]
+    ca.aplicar(videos, locais, AGORA)
+    ca.aplicar(list(reversed(videos)), locais, AGORA)
+    b = banco("SELECT status, youtube_id FROM blocos WHERE bloco_id=1")[0]
+    assert (b["status"], b["youtube_id"]) == ("publicado", "PUBLICO0001")
+    assert len(banco("SELECT 1 FROM eventos WHERE etapa='14_canal'")) == 1
+
+
+def test_publicado_nunca_volta_pra_agendado(local):
+    _, banco, locais = local
+    ca.aplicar([_v("L1", TITULO_1, publicado="2026-10-21T21:00:00Z")], locais, AGORA)
+    ca.aplicar([_v("L2", TITULO_1, "private", "2026-10-28T21:00:00Z")], locais, AGORA)
+    b = banco("SELECT status, youtube_id FROM blocos WHERE bloco_id=1")[0]
+    assert (b["status"], b["youtube_id"]) == ("publicado", "L1")
+
+
+def test_longo_e_short_do_mesmo_bloco_nao_competem(local):
+    pasta, banco, locais = local
+    ca.aplicar([_v("L1", TITULO_1, "private", "2026-10-26T21:00:00Z"),
+                _v("S1", TITULO_1, dur=40)], locais, AGORA)
+    assert banco("SELECT youtube_id FROM blocos WHERE bloco_id=1")[0]["youtube_id"] == "L1"
+    short = json.loads((pasta / "shorts" / "shorts.json").read_text(encoding="utf-8"))["01"]
+    assert short["youtube_id"] == "S1"

@@ -35,7 +35,8 @@ from _youtube_leitura import listar_videos, normalizar, youtube
 ROOT = Path(__file__).parent.parent
 ESTADO = ROOT / "state" / "canal.json"
 MAX_SHORT_S = 180
-SIMILARIDADE = 0.85         # título editado de leve no Studio ainda casa
+SIMILARIDADE = 0.92         # título editado de leve no Studio ainda casa
+MARGEM = 0.05               # e tem que ganhar com folga do 2º bloco mais parecido
 DIAS_SEM_MATCH = 15         # só lista sem-match recente (o canal tem vídeos antigos à mão)
 BRT = timezone(timedelta(hours=-3))
 
@@ -74,23 +75,29 @@ def titulos_locais(outputs: Path) -> list[dict]:
 
 
 def casar(titulo: str, locais: list[dict]) -> dict | None:
-    """Bloco local do título: exato primeiro; senão o mais parecido, se passar do limiar
-    e não empatar com outro bloco."""
+    """Bloco local do título: exato primeiro; senão o mais parecido, se passar do limiar E
+    ganhar com folga (MARGEM) do bloco seguinte. Na dúvida não casa: vira sem-match pra
+    conferir, em vez de marcar o bloco errado (blocos da mesma live têm títulos parecidos)."""
     k = chave(titulo)
     exatos = {(x["pasta"], x["bloco"]): x for x in locais if x["chave"] == k}
     if len(exatos) == 1:
         return next(iter(exatos.values()))
     if exatos:
         return None                         # mesmo título em 2 blocos: não chuta
-    notas = sorted(((SequenceMatcher(None, k, x["chave"]).ratio(), x) for x in locais
-                    if x["tipo"] == "titulo"), key=lambda n: -n[0])
+    por_bloco: dict = {}                    # melhor nota de cada bloco (vários títulos por bloco)
+    for x in locais:
+        if x["tipo"] != "titulo":
+            continue
+        n = SequenceMatcher(None, k, x["chave"]).ratio()
+        chave_bloco = (x["pasta"], x["bloco"])
+        if n > por_bloco.get(chave_bloco, (0.0, None))[0]:
+            por_bloco[chave_bloco] = (n, x)
+    notas = sorted(por_bloco.values(), key=lambda n: -n[0])
     if not notas or notas[0][0] < SIMILARIDADE:
         return None
-    melhor = notas[0][1]
-    if len(notas) > 1 and notas[1][0] == notas[0][0] and \
-            (notas[1][1]["pasta"], notas[1][1]["bloco"]) != (melhor["pasta"], melhor["bloco"]):
+    if len(notas) > 1 and notas[0][0] - notas[1][0] < MARGEM:
         return None
-    return melhor
+    return notas[0][1]
 
 
 def para_brt(iso: str) -> datetime:
@@ -118,7 +125,11 @@ def marcar_short(pasta: Path, bloco: int, vid: str, quando: datetime, dry: bool)
         return False
     item.update(postado=quando.date().isoformat(), youtube_id=vid)
     if not dry:
-        caminho.write_text(json.dumps(registro, ensure_ascii=False, indent=2), encoding="utf-8")
+        try:
+            caminho.write_text(json.dumps(registro, ensure_ascii=False, indent=2), encoding="utf-8")
+        except OSError as e:
+            print(f"[aviso] não gravei {caminho}: {e}", file=sys.stderr)
+            return False
     return True
 
 
@@ -129,6 +140,8 @@ def marcar_longo(stem: str, bloco: int, vid: str, status: str, quando: datetime,
     if (atual.get("status"), atual.get("youtube_id"), atual.get("publish_at")) == \
             (status, vid, publish_at):
         return False
+    if atual.get("status") == "publicado" and status == "agendado":
+        return False                        # já está no ar: nunca volta pra agendado
     if not dry:
         upsert_bloco(stem, bloco, status=status, youtube_id=vid, publish_at=publish_at,
                      forcar_status=True)
@@ -139,6 +152,10 @@ def aplicar(videos: list[dict], locais: list[dict], agora: datetime | None = Non
             dry: bool = False) -> dict:
     agora = agora or datetime.now(BRT)
     res = {"longos": [], "shorts": [], "sem_match": [], "ultimo_longo": None}
+    so_titulos = [x for x in locais if x["tipo"] == "titulo"]
+    # 1 vídeo por bloco (e por tipo): reupload casa com o mesmo bloco, então fica o público
+    # e, entre iguais, o mais recente. Assim duas rodadas não ficam trocando o youtube_id.
+    escolhidos: dict = {}
     for v in videos:
         s = situacao(v)
         if s is None:
@@ -147,12 +164,17 @@ def aplicar(videos: list[dict], locais: list[dict], agora: datetime | None = Non
         short = v["duracao_s"] <= MAX_SHORT_S
         if not short and (res["ultimo_longo"] is None or quando.isoformat() > res["ultimo_longo"]):
             res["ultimo_longo"] = quando.isoformat(timespec="seconds")
-        m = casar(v["titulo"], locais if short else [x for x in locais if x["tipo"] == "titulo"])
+        m = casar(v["titulo"], locais if short else so_titulos)
         if m is None:
             if (agora - quando).days <= DIAS_SEM_MATCH:
                 res["sem_match"].append({"id": v["id"], "titulo": v["titulo"], "status": status,
                                          "short": short})
             continue
+        chave_bloco = (m["pasta"], m["bloco"], short)
+        ordem = (status == "publicado", quando)
+        if chave_bloco not in escolhidos or ordem > escolhidos[chave_bloco][0]:
+            escolhidos[chave_bloco] = (ordem, v, m, status, quando, short)
+    for _, v, m, status, quando, short in escolhidos.values():
         linha = {"stem": m["stem"], "bloco": m["bloco"], "id": v["id"], "status": status,
                  "quando": quando.strftime("%d/%m %H:%M"), "titulo": v["titulo"]}
         if short:
@@ -167,11 +189,14 @@ def aplicar(videos: list[dict], locais: list[dict], agora: datetime | None = Non
                 evento(m["stem"], "14_canal", "ok", bloco_id=m["bloco"], agente="publicador",
                        mensagem=f"longo {status} no canal: {v['id']} em {linha['quando']}")
     if not dry:
-        ESTADO.parent.mkdir(parents=True, exist_ok=True)
-        ESTADO.write_text(json.dumps({"atualizado": agora.isoformat(timespec="seconds"),
-                                      "ultimo_longo": res["ultimo_longo"],
-                                      "sem_match": res["sem_match"]},
-                                     ensure_ascii=False, indent=2), encoding="utf-8")
+        try:
+            ESTADO.parent.mkdir(parents=True, exist_ok=True)
+            ESTADO.write_text(json.dumps({"atualizado": agora.isoformat(timespec="seconds"),
+                                          "ultimo_longo": res["ultimo_longo"],
+                                          "sem_match": res["sem_match"]},
+                                         ensure_ascii=False, indent=2), encoding="utf-8")
+        except OSError as e:
+            print(f"[aviso] não gravei {ESTADO}: {e}", file=sys.stderr)
     return res
 
 
