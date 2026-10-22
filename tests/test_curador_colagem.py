@@ -10,7 +10,8 @@ def _thumb_cfg(raiz, conteudo):
 
 @pytest.mark.parametrize("conteudo,esperado", [
     (None, "desligado"), ('{"colagem": "teste"}', "teste"), ('{"colagem": "padrao"}', "padrao"),
-    ('{"colagem": "xpto"}', "desligado"), ("{quebrado", "desligado"), ("{}", "desligado")])
+    ('{"colagem": "xpto"}', "desligado"), ("{quebrado", "desligado"), ("{}", "desligado"),
+    ("[]", "desligado"), ('"teste"', "desligado")])
 def test_modo_colagem(raiz, conteudo, esperado):
     if conteudo is not None:
         _thumb_cfg(raiz, conteudo)

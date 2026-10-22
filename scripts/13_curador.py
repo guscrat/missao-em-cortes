@@ -373,7 +373,7 @@ def modo_colagem() -> str:
     """config/thumb.json → 'desligado' | 'teste' | 'padrao' (sem arquivo: desligado)."""
     try:
         modo = json.loads((ROOT / "config" / "thumb.json").read_text(encoding="utf-8")).get("colagem")
-    except (OSError, ValueError):
+    except (OSError, ValueError, AttributeError):
         return "desligado"
     return modo if modo in ("teste", "padrao") else "desligado"
 

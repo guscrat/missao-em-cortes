@@ -351,8 +351,9 @@ def test_texto_colagem_filtra_invalidas_e_limita():
 
 def test_texto_colagem_refusal_e_sem_texto():
     assert _editor.texto_colagem(_cli_ed(_resp_ed(stop="refusal")), "p")[0] is None
-    with pytest.raises(json.JSONDecodeError):
-        _editor.texto_colagem(_cli_ed(_resp_ed(None)), "p")
+    # resposta paga sem texto vira [] (com a resposta, pra logar o custo), não exceção
+    r, resp = _editor.texto_colagem(_cli_ed(_resp_ed(None)), "p")
+    assert r == [] and resp is not None
 
 
 def test_montar_pedido_colagem():

@@ -273,7 +273,12 @@ def main(argv: list[str]) -> int:
         if reg["status"] == "ok":
             ok += 1
             if aplicar_padrao:
-                aplicar(pasta, saida_dir, bid, reg)
+                try:
+                    aplicar(pasta, saida_dir, bid, reg)
+                except OSError as e:
+                    print(f"  [aviso] não aplicou a colagem ({e}): fica a thumb atual")
+                    evento(stem, "07b_colagem", "aviso", agente="editor", bloco_id=bid,
+                           mensagem=f"colagem não aplicada: {e}"[:300])
             evento(stem, "07b_colagem", "ok", agente="editor", bloco_id=bid,
                    duracao_s=time.time() - t0, mensagem=f"cenas: {'; '.join(reg['cenas'])}"[:300])
         else:

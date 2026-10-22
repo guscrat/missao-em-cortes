@@ -157,11 +157,13 @@ def texto_colagem(client, pedido: str) -> tuple[list[list[str]] | None, object]:
     )
     if resp.stop_reason == "refusal":
         return None, resp
+    # Resposta paga mas ilegível volta [] (não exceção) pra o custo ainda ser logado
     texto = next((b.text for b in resp.content if b.type == "text"), None)
-    if texto is None:
-        raise json.JSONDecodeError(f"resposta sem texto (stop_reason={resp.stop_reason})", "", 0)
-    opcoes = [[o["linha1"].strip().upper(), o["linha2"].strip().upper()]
-              for o in json.loads(texto)["opcoes"]]
+    try:
+        opcoes = [[o["linha1"].strip().upper(), o["linha2"].strip().upper()]
+                  for o in json.loads(texto)["opcoes"]]
+    except (TypeError, ValueError, KeyError, AttributeError):
+        return [], resp
     return [o for o in opcoes if opcao_valida(o)][:3], resp
 
 
