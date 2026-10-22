@@ -44,6 +44,7 @@ ESTADO = ROOT / "state" / "curadoria.json"
 RESUMO = ROOT / "state" / "curador_resumo.md"
 TRAVA = ROOT / "state" / "curador.lock"
 TRAVA_HORAS = 12             # rodada mais velha que isso = morreu no meio: libera
+MAX_TENTATIVAS = 3           # falhou antes de baixar: volta pra fila até isso, depois desiste
 
 MODELO = "claude-opus-5-5"
 PRECO_IN, PRECO_OUT = 4.0, 20.0        # US$ por 1M tokens (opus 5.5)
@@ -125,8 +126,13 @@ def pegar_trava() -> bool:
         idade = datetime.now() - datetime.fromtimestamp(TRAVA.stat().st_mtime)
         if idade < timedelta(hours=TRAVA_HORAS):
             return False
-    TRAVA.write_text(f"{os.getpid()} {datetime.now().isoformat(timespec='seconds')}\n",
-                     encoding="utf-8")
+        TRAVA.unlink(missing_ok=True)               # rodada que morreu no meio
+    try:                                            # O_EXCL: criação atômica
+        fd = os.open(TRAVA, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        return False
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(f"{os.getpid()} {datetime.now().isoformat(timespec='seconds')}\n")
     return True
 
 
@@ -332,6 +338,17 @@ def processar(item: dict) -> dict:
     return res
 
 
+def processar_seguro(item: dict) -> dict:
+    """processar() sem derrubar a rodada: erro de um vídeo vira falha dele e segue."""
+    try:
+        return processar(item)
+    except (Exception, SystemExit) as e:  # noqa: BLE001 — achar_pasta ambíguo dá SystemExit
+        erro = f"{type(e).__name__}: {e}"[:300]
+        evento(item["stem"], "curador_pipeline", "falha", agente="curador", mensagem=erro)
+        return {"stem": item["stem"], "titulo": item["titulo"], "canal": item["canal"],
+                "ok": False, "aprovados": 0, "publicacao": None, "avisos": [], "erro": erro}
+
+
 # --- resumo -------------------------------------------------------------------------------
 
 def escrever_resumo(rodada: dict) -> str:
@@ -343,6 +360,12 @@ def escrever_resumo(rodada: dict) -> str:
         linhas.append("## Prontos pra publicar")
         linhas += [f"- **{p['aprovados']} corte(s)** de {p['canal']}: {p['titulo']} → "
                    f"`{p['publicacao']}`" for p in prontos]
+        linhas.append("")
+    zerados = [p for p in rodada["processados"] if p["ok"] and not p.get("aprovados")]
+    if zerados:
+        linhas.append("## Processados sem corte aprovado")
+        linhas += [f"- {p['canal']}: {p['titulo']} (veja o revisao.json de {p['stem']})"
+                   for p in zerados]
         linhas.append("")
     falhas = [p for p in rodada["processados"] if not p["ok"]]
     if falhas:
@@ -389,7 +412,7 @@ def _rodada(cfg: dict, maximo: int, dry_run: bool, sem_pipeline: bool) -> int:
     hoje = date.today()
     estado = ler_estado()
     vistos = ids_ja_processados() | {k for k, v in estado.items()
-                                     if v.get("decisao") in ("escolhido", "recusado")}
+                                     if v.get("decisao") in ("escolhido", "recusado", "falhou")}
     print(f"Curador · {len(cfg['canais'])} canais · últimos {cfg['dias']} dias · "
           f"{cfg['duracao_min']}-{cfg['duracao_max']} min")
 
@@ -445,7 +468,8 @@ def _rodada(cfg: dict, maximo: int, dry_run: bool, sem_pipeline: bool) -> int:
             continue
         registro = {"titulo": c["titulo"], "canal": c["canal"], "url": c["url"],
                     "data": c["data"], "prioridade": a["prioridade"], "motivo": a["motivo"],
-                    "avaliado_em": estado.get(c["id"], {}).get("avaliado_em", agora)}
+                    "avaliado_em": estado.get(c["id"], {}).get("avaliado_em", agora),
+                    "tentativas": estado.get(c["id"], {}).get("tentativas", 0)}
         if not a["vale"]:
             estado[c["id"]] = {**registro, "decisao": "recusado"}
             rodada["recusados"].append(registro)
@@ -467,7 +491,15 @@ def _rodada(cfg: dict, maximo: int, dry_run: bool, sem_pipeline: bool) -> int:
     if escolhidos and not sem_pipeline:
         print(f"\nProcessando {len(escolhidos)} vídeo(s) (~US$ {CUSTO_POR_VIDEO * len(escolhidos):.2f})")
         for c in escolhidos:
-            rodada["processados"].append(processar(c))
+            res = processar_seguro(c)
+            rodada["processados"].append(res)
+            if not res["ok"] and not (INPUTS / f"{c['stem']}.url").exists():
+                # nem baixou: volta pra fila (sem nova chamada de LLM) até MAX_TENTATIVAS
+                tentativas = estado[c["id"]].get("tentativas", 0) + 1
+                estado[c["id"]].update(
+                    tentativas=tentativas,
+                    decisao="fila" if tentativas < MAX_TENTATIVAS else "falhou")
+                gravar_estado(estado)
 
     print("\n" + escrever_resumo(rodada))
     return 0 if all(p["ok"] for p in rodada["processados"]) else 1

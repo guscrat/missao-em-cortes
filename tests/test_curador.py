@@ -390,3 +390,66 @@ def test_processamento_com_falha_sai_com_codigo_1(raiz, rodada, monkeypatch):
     assert cu.main([]) == 1
     assert "01_baixar.py falhou" in cu.RESUMO.read_text(encoding="utf-8")
     assert not cu.TRAVA.exists()
+
+
+# --- robustez (rodada 2 do revisor) -------------------------------------------------------
+
+def test_excecao_num_video_nao_derruba_os_outros(raiz, rodada, monkeypatch, banco):
+    rodada["listar"] = {"renan": [_item("a", "Live Alfa"), _item("b", "Live Bravo")]}
+    rodada["avaliacoes"] = {"a": _av(True, 6), "b": _av(True, 9)}
+    feitos = []
+
+    def processar(item):
+        feitos.append(item["stem"])
+        if item["stem"] == "renan_live_bravo":
+            raise SystemExit("[!] mais de uma pasta pro stem")
+        return {"stem": item["stem"], "titulo": item["titulo"], "canal": item["canal"],
+                "ok": True, "aprovados": 1, "publicacao": "p.txt", "avisos": []}
+    monkeypatch.setattr(cu, "processar", processar)
+    assert cu.main(["--max=2"]) == 1
+    assert feitos == ["renan_live_bravo", "renan_live_alfa"]       # seguiu depois do erro
+    resumo = cu.RESUMO.read_text(encoding="utf-8")
+    assert "SystemExit" in resumo and "Live Alfa" in resumo
+    assert banco("SELECT 1 FROM eventos WHERE agente='curador' AND status='falha'")
+    assert not cu.TRAVA.exists()
+
+
+def _falha(item):
+    return {"stem": item["stem"], "titulo": item["titulo"], "canal": item["canal"],
+            "ok": False, "aprovados": 0, "publicacao": None, "avisos": [], "erro": "01_baixar.py falhou"}
+
+
+def test_download_falho_volta_pra_fila_e_desiste_na_terceira(raiz, rodada, monkeypatch):
+    rodada["listar"] = {"renan": [_item("a", "Live Alfa")]}
+    rodada["avaliacoes"] = {"a": _av(True, 6)}
+    monkeypatch.setattr(cu, "processar", _falha)
+    for tentativa in (1, 2):
+        cu.main([])
+        e = json.loads(cu.ESTADO.read_text(encoding="utf-8"))["a"]
+        assert e["decisao"] == "fila" and e["tentativas"] == tentativa
+    assert rodada["llm"] == 1                                       # a fila não chama o LLM de novo
+    cu.main([])
+    assert json.loads(cu.ESTADO.read_text(encoding="utf-8"))["a"]["decisao"] == "falhou"
+    rodada["processados"].clear()
+    cu.main([])                                                     # "falhou" não volta mais
+    assert json.loads(cu.ESTADO.read_text(encoding="utf-8"))["a"]["decisao"] == "falhou"
+
+
+def test_falha_depois_do_download_fica_escolhido(raiz, rodada, monkeypatch):
+    rodada["listar"] = {"renan": [_item("a", "Live Alfa")]}
+    rodada["avaliacoes"] = {"a": _av(True, 6)}
+
+    def baixou_e_falhou(item):
+        (raiz / "inputs" / f"{item['stem']}.url").write_text(item["url"], encoding="utf-8")
+        return _falha(item)
+    monkeypatch.setattr(cu, "processar", baixou_e_falhou)
+    cu.main([])
+    assert json.loads(cu.ESTADO.read_text(encoding="utf-8"))["a"]["decisao"] == "escolhido"
+
+
+def test_resumo_cita_processado_sem_aprovado(raiz):
+    texto = cu.escrever_resumo({"quando": "x", "custo": 0, "escolhidos": [], "fila": [],
+                                "recusados": [], "processados": [
+                                    {"stem": "s", "titulo": "Live", "canal": "Kim", "ok": True,
+                                     "aprovados": 0, "publicacao": None, "avisos": []}]})
+    assert "sem corte aprovado" in texto and "revisao.json de s" in texto
