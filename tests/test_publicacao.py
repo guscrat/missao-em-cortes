@@ -99,3 +99,15 @@ def test_gerar_sem_thumb_e_titulo_cai_pro_sugerido(tmp_path):
     texto = caminho.read_text(encoding="utf-8")
     assert "(sem thumb)" in texto and "sug 1" in texto
     assert "sex 23/10 18h" in texto                       # depois das 16h: começa amanhã
+
+
+def test_gerar_lista_short_quando_existe(tmp_path):
+    pasta = _pasta(tmp_path, {"01": {"status": "aprovado", "thumb": "thumb_01_a.png"},
+                              "02": {"status": "aprovado"}},
+                   [_bloco(1, 8), _bloco(2, 7)], ["video_01_a.mp4", "video_02_b.mp4"])
+    (pasta / "shorts").mkdir()
+    (pasta / "shorts" / "shorts.json").write_text(
+        json.dumps({"01": {"arquivo": "short_01_x.mp4"}}), encoding="utf-8")
+    caminho, _ = pub.gerar(pasta, datetime(2026, 10, 22, 9))
+    texto = caminho.read_text(encoding="utf-8")
+    assert "SHORT:   shorts/short_01_x.mp4" in texto and "SHORT:   (sem Short)" in texto

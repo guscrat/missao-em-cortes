@@ -1,14 +1,38 @@
 {
-  "_comment": "Canais que o agente Curador (scripts/13_curador.py) monitora 1x/dia. zoom = crop anti-overlay padrão do canal, copiado pro config/zoom.json do stem novo (null = sem zoom calibrado: processa e avisa no resumo pra calibrar). dias = idade máxima do vídeo; duracao_min/max em minutos; max_por_dia = quantos vídeos o Curador processa por rodada (~US$ 0,65 cada); por_canal = quantos itens recentes ler de cada aba.",
+  "_comment": "Canais que o agente Curador (scripts/13_curador.py) verifica 1x/dia. zoom = crop anti-overlay padrão do canal, copiado pro config/zoom.json do stem novo (null = sem zoom calibrado: processa e avisa no resumo). dias = idade máxima do vídeo novo; duracao_min/max em minutos; por_canal = itens recentes lidos por aba. estoque: só processa (1 vídeo, ~US$ 0,65) quando o pronto-pra-publicar cobre menos de dias_minimos, contando longos_por_dia longos + shorts_por_dia Shorts por dia.",
   "dias": 3,
   "duracao_min": 20,
   "duracao_max": 240,
-  "max_por_dia": 2,
   "por_canal": 8,
+  "estoque": {
+    "dias_minimos": 2,
+    "longos_por_dia": 1,
+    "shorts_por_dia": 2
+  },
   "canais": [
-    {"nome": "Renan Santos", "url": "https://www.youtube.com/@renansantosmbl", "prefixo": "renan", "zoom": "1696:954:16:0"},
-    {"nome": "Kim Kataguiri", "url": "https://www.youtube.com/@kimkataguiri", "prefixo": "kim", "zoom": null},
-    {"nome": "Mamãefalei (Arthur do Val)", "url": "https://www.youtube.com/@Mamaefalei", "prefixo": "arthur", "zoom": "1454:818:196:58"},
-    {"nome": "TV do MBL", "url": "https://www.youtube.com/@TVdoMBL", "prefixo": "mbl", "zoom": "1476:830:200:100"}
+    {
+      "nome": "Renan Santos",
+      "url": "https://www.youtube.com/@renansantosmbl",
+      "prefixo": "renan",
+      "zoom": "1696:954:16:0"
+    },
+    {
+      "nome": "Kim Kataguiri",
+      "url": "https://www.youtube.com/@kimkataguiri",
+      "prefixo": "kim",
+      "zoom": null
+    },
+    {
+      "nome": "Mamãefalei (Arthur do Val)",
+      "url": "https://www.youtube.com/@Mamaefalei",
+      "prefixo": "arthur",
+      "zoom": "1454:818:196:58"
+    },
+    {
+      "nome": "TV do MBL",
+      "url": "https://www.youtube.com/@TVdoMBL",
+      "prefixo": "mbl",
+      "zoom": "1476:830:200:100"
+    }
   ]
 }

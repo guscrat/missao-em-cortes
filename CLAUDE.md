@@ -73,7 +73,8 @@ missao-em-cortes/
 │   ├── 08_descricao.py               # gera txt com titulo+descricao+tags pro YouTube
 │   ├── 12_metricas.py                # retenção COM legenda x SEM (YouTube Analytics, só leitura) pro resumo semanal (off-pipeline)
 │   ├── 13_curador.py                 # agente Curador: acha vídeos novos dos canais, escolhe (LLM) e dispara o pipeline (1x/dia, off-pipeline)
-│   ├── _publicacao.py                # lista de publicação manual (publicacao.txt: aprovados por score + dia sugerido)
+│   ├── _publicacao.py                # lista de publicação manual (publicacao.txt: aprovados por score + Short + dia sugerido)
+│   ├── registrar_publicacao.py       # registra upload manual (longo agendado/publicado, Short postado) → painel e estoque do Curador
 │   ├── 11_revisor.py                 # agente revisor (Claude com visão) + loop do editor: aprovado / quarentena / descartado (off-pipeline)
 │   ├── _editor.py                    # agente editor: reescreve título + texto_thumb reprovados (chamado pelo 11)
 │   ├── 10_shorts.py                  # Shorts 9:16 dos cold opens: crop no rosto + manchete + legenda karaokê (off-pipeline)
@@ -102,7 +103,7 @@ missao-em-cortes/
 │   └── segmentacao.md                # Prompt do LLM pra topic segmentation
 ├── config/
 │   ├── zoom.json                     # crop anti-overlay por stem (lido pelo 04_cortar.py)
-│   ├── canais.json                   # canais que o Curador monitora + zoom padrão por canal + limites (dias, duração, max_por_dia)
+│   ├── canais.json                   # canais que o Curador monitora + zoom padrão por canal + limites (dias, duração) + estoque mínimo
 │   └── upload.json                   # trava da auditoria (auditoria_aprovada), agendamento do 09 e custos de cota
 ├── secrets/                          # youtube_client_secret.json + youtube_token.json (upload, projeto publisher) + analytics_client_secret.json + analytics_token.json (métricas, projeto analytics) — gitignored
 ├── .env                              # ANTHROPIC_API_KEY
@@ -156,21 +157,33 @@ O step 12 (`uv run py scripts/12_metricas.py [--desde=AAAA-MM-DD]`) é o **anali
 
 > **Os dois apps OAuth ficam "Em produção"** (status em Google Auth Platform → Público-alvo): o `missao-em-cortes-publisher` (upload, 09) e o `missao-em-cortes-analytics` (métricas, 12). Nenhum volta pra "Em teste", senão os tokens passam a expirar em 7 dias.
 
-O step 13 (`uv run py scripts/13_curador.py [--dry-run] [--sem-pipeline] [--max=N]`) é o **agente Curador** (`agente="curador"`, off-pipeline, roda **1x por dia**). Ele monitora os canais de `config/canais.json` (abas streams + videos) e acha vídeos dos últimos `dias` (padrão 3) que ainda não foram processados. "Já processado" = id em `inputs/*.url`, no banco ou já decidido em `state/curadoria.json`. Antes de gastar, aplica um filtro grátis: duração entre `duracao_min` e `duracao_max` (20-240 min) e nada de live em andamento/agendada (volta no dia seguinte). Os que passam vão numa **única** chamada pro Claude (`claude-opus-5-5`, effort low, ~US$ 0,02-0,05/rodada), que decide `vale`, `prioridade` (1-10) e `motivo` (a frase que aparece no painel). Os melhores, até `max_por_dia` (padrão 2), viram stem novo (`<prefixo>_<slug do título>`) e seguem `01_baixar` → `pipeline.py --polir` → `11_revisor` → `publicacao.txt` (~US$ 0,65 por vídeo). Os outros que valem ficam na **fila** e entram no dia seguinte sem nova chamada de LLM. Os recusados nunca são reavaliados.
+O step 13 (`uv run py scripts/13_curador.py [--dry-run] [--sem-pipeline] [--forcar]`) é o **agente Curador** (`agente="curador"`, off-pipeline, roda **1x por dia às 17h**). Ele **verifica** os canais de `config/canais.json` (abas streams + videos) todo dia, mas só **processa** quando falta estoque.
 
+1. **Achar vídeos novos:** só os dos últimos `dias` (padrão 3) que nunca foram vistos. "Visto" = id em `inputs/*.url`, no banco ou já avaliado em `state/curadoria.json`. Antes de gastar, aplica um filtro grátis: duração entre `duracao_min` e `duracao_max` (20-240 min) e nada de live em andamento/agendada (volta no dia seguinte).
+2. **Avaliar:** os novos vão numa **única** chamada pro Claude (`claude-opus-5-5`, effort low, ~US$ 0,02-0,05/rodada), que decide `vale`, `prioridade` (1-10) e `motivo` (a frase que aparece no painel). O que vale entra na **fila**. Os recusados nunca são reavaliados.
+3. **Estoque:** dias de estoque = min(longos prontos ÷ `longos_por_dia`, Shorts prontos ÷ `shorts_por_dia`). Longo pronto = bloco `aprovado` (coluna "Pronto para publicar"). Short pronto = Short gerado de bloco aprovado/agendado/publicado e ainda não marcado como postado. Só conta live dos últimos 15 dias (`DIAS_ARQUIVAR`). Os limites ficam em `config/canais.json` → `estoque` (padrão: mínimo 2 dias, 1 longo + 2 Shorts por dia).
+4. **Processar:** só se o estoque estiver **abaixo do mínimo** (ou com `--forcar`). Aí processa **1 vídeo**, o de maior prioridade da fila (empate: o mais recente): `01_baixar` → `pipeline.py --polir` → `11_revisor` → `10_shorts` (só dos aprovados, $0) → `publicacao.txt`. Custa ~US$ 0,65 por vídeo. O resto continua na fila, e item da fila com mais de 15 dias vira `expirado`.
+
+- **Registrar o que foi publicado à mão** (obrigatório enquanto o upload pela API está travado; sem isso o Curador acha que o estoque está cheio):
+  - Longo: `uv run py scripts/registrar_publicacao.py <stem> --bloco=N --video=<URL ou id> [--quando=AAAA-MM-DDTHH:MM]`. Futuro vira `agendado`, passado vira `publicado`, com `youtube_id`/`publish_at`.
+  - Short: `uv run py scripts/registrar_publicacao.py <stem> --bloco=N --short [--quando=AAAA-MM-DD]` (marca `postado` no `shorts.json`; o `10_shorts` preserva a marca se o Short for regerado).
 - **Zoom:** o `zoom` do canal é copiado pro `config/zoom.json` do stem novo (como o `calibrar_zoom --salvar`). Canal com `zoom: null` (Kim) é processado sem zoom, e o resumo avisa pra calibrar e re-cortar com `--desde=4`. Estúdio diferente do padrão do canal também pede conferência.
-- **Saída:** `state/curador_resumo.md` (prontos pra publicar com o caminho do `publicacao.txt`, falhas, escolhidos, fila e recusados com motivo, avisos) e eventos no painel (escolhido/recusado com motivo, custo `llm`, falha por etapa). O resumo semanal de sexta lê o `curador_resumo.md`.
-- **Trava:** `state/curador.lock` impede duas rodadas ao mesmo tempo. Trava com mais de 12h é considerada morta e é liberada.
-- **`publicacao.txt`** (`scripts/_publicacao.py`, dá pra rodar à mão: `uv run py scripts/_publicacao.py <stem>`): só blocos `aprovado` no `revisao.json`, em ordem de score, com arquivo final (prefere `_polido_legendado`), thumb escolhida pelo revisor, título/descrição/tags do `descricoes.txt` e dia sugerido às 18h. É 1 por dia, ou 2 por dia com 3+ aprovados. Começa hoje se rodou antes das 16h.
+- **Falha:** erro num vídeo não derruba a rodada. Se o vídeo nem chegou a baixar, ele volta pra fila e é tentado de novo, no máximo 3 vezes (`falhou`). Se a falha veio depois do download, o vídeo fica `escolhido` e o resumo mostra o erro. Retomar com `pipeline.py <stem> --desde=N`.
+- **Saída:** `state/curador_resumo.md` (estoque no início/fim, prontos pra publicar com o caminho do `publicacao.txt`, falhas, escolhido, fila, recusados com motivo, avisos) e eventos no painel. O resumo semanal de sexta lê o `curador_resumo.md`. O log do agendamento vai pra `state/curador.log`.
+- **Trava:** `state/curador.lock` (criação atômica) impede duas rodadas ao mesmo tempo. Trava com mais de 12h é considerada morta e é liberada.
+- **`publicacao.txt`** (`scripts/_publicacao.py`, dá pra rodar à mão: `uv run py scripts/_publicacao.py <stem>`): só blocos `aprovado` no `revisao.json`, em ordem de score, com arquivo final (prefere `_polido_legendado`), thumb escolhida pelo revisor, Short (se gerado), título/descrição/tags do `descricoes.txt` e dia sugerido às 18h. É 1 por dia, ou 2 por dia com 3+ aprovados. Começa hoje se rodou antes das 16h.
 - **yt-dlp:** precisa da versão com solver JS (`yt-dlp[default]`, Node no PATH). Sem isso o YouTube devolve 403 no download.
 
-**Agendamento (Agendador de Tarefas do Windows, PC ligado com GPU):** registrar uma vez, rodando da **pasta principal**:
+**Agendamento (Agendador de Tarefas do Windows):** todo dia às 17:00. Se o PC estiver desligado no horário, roda assim que ligar (`-StartWhenAvailable`). Registrar uma vez, no PowerShell, apontando pra **pasta principal**:
 
-```
-schtasks /Create /SC DAILY /ST 07:00 /TN "MissaoEmCortes-Curador" /TR "cmd /c cd /d C:\Users\gusta\Downloads\projetos\missao-em-cortes && uv run py scripts/13_curador.py >> state\curador.log 2>&1"
+```powershell
+$a = New-ScheduledTaskAction -Execute "cmd.exe" -Argument '/c cd /d "C:\Users\gusta\Downloads\projetos\missao-em-cortes" && "C:\Users\gusta\.local\bin\uv.exe" run py scripts\13_curador.py >> state\curador.log 2>&1'
+$t = New-ScheduledTaskTrigger -Daily -At 17:00
+$s = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 6) -DontStopIfGoingOnBatteries -AllowStartIfOnBatteries
+Register-ScheduledTask -TaskName "MissaoEmCortes-Curador" -Action $a -Trigger $t -Settings $s -Description "Missão em Cortes: agente Curador (13_curador.py)"
 ```
 
-Conferir: `schtasks /Query /TN "MissaoEmCortes-Curador"`. Remover: `schtasks /Delete /TN "MissaoEmCortes-Curador" /F`.
+Conferir: `Get-ScheduledTask -TaskName "MissaoEmCortes-Curador" | Get-ScheduledTaskInfo`. Rodar agora: `Start-ScheduledTask -TaskName "MissaoEmCortes-Curador"`. Remover: `Unregister-ScheduledTask -TaskName "MissaoEmCortes-Curador" -Confirm:$false`.
 
 O step 7 é opcional e não afeta a montagem — gera 3 variantes de thumb por bloco (`thumb_NN_a/b/c.png`) com frames extraídos a 25/50/75% do cold open. Você escolhe a melhor variante e finaliza no Canva (colar collage de figuras na metade direita). Layout: frame do speaker deslocado pra direita (`FRAME_X=150`), título adaptativo (fonte 96→64 dependendo do comprimento), gradient escuro embaixo pra contraste.
 

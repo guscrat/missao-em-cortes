@@ -92,13 +92,6 @@ def test_montar_stem_slug_ascii_e_colisao(raiz):
     assert cu.montar_stem("kim", "Live boa", {"kim_live_boa_3"}) == "kim_live_boa_4"
 
 
-def test_rodada_mesmo_titulo_nao_colide(raiz, rodada):
-    rodada["listar"] = {"renan": [_item("a", "Live de hoje"), _item("b", "Live de hoje!")]}
-    rodada["avaliacoes"] = {"a": _av(True, 6), "b": _av(True, 9)}
-    cu.main(["--max=2"])
-    assert sorted(rodada["processados"]) == ["renan_live_hoje", "renan_live_hoje_2"]
-
-
 def test_cadastrar_zoom_copia_do_canal_sem_sobrescrever(raiz):
     assert cu.cadastrar_zoom("novo", "1696:954:16:0") is True
     assert cu.cadastrar_zoom("antigo", "9:9:9:9") is True          # já tinha: mantém
@@ -195,7 +188,9 @@ def test_avaliar_recusa_devolve_vazio():
 @pytest.fixture
 def rodada(raiz, monkeypatch):
     """Liga a rodada a fakes: canais, LLM e processamento. Devolve o registro de chamadas."""
-    reg = {"listar": {}, "avaliacoes": {}, "processados": [], "llm": 0}
+    reg = {"listar": {}, "avaliacoes": {}, "processados": [], "llm": 0,
+           "estoque": {"longos": 0, "shorts": 0, "dias": 0.0}}
+    monkeypatch.setattr(cu, "calcular_estoque", lambda cfg, hoje=None: dict(reg["estoque"]))
     monkeypatch.setattr(cu, "listar_canal", lambda canal, n: reg["listar"].get(canal["prefixo"], []))
     monkeypatch.setattr(cu, "detalhar", lambda item: item)
 
@@ -225,7 +220,7 @@ def test_rodada_escolhe_por_prioridade_fila_e_recusa(raiz, rodada, banco):
                         "kim": [_item("c", "Jingle", canal=1)]}
     rodada["avaliacoes"] = {"a": _av(True, 6), "b": _av(True, 9), "c": _av(False, 1, "jingle")}
     assert cu.main([]) == 0
-    assert rodada["processados"] == ["renan_live_bravo"]               # max_por_dia = 1
+    assert rodada["processados"] == ["renan_live_bravo"]               # 1 por rodada
     estado = json.loads(cu.ESTADO.read_text(encoding="utf-8"))
     assert {k: v["decisao"] for k, v in estado.items()} == \
         {"a": "fila", "b": "escolhido", "c": "recusado"}
@@ -239,7 +234,8 @@ def test_rodada_escolhe_por_prioridade_fila_e_recusa(raiz, rodada, banco):
 
 def test_rodada_seguinte_usa_fila_sem_llm_e_nao_reavalia(raiz, rodada):
     cu.gravar_estado({"a": {"decisao": "fila", "prioridade": 6, "motivo": "m", "titulo": "Live Alfa",
-                            "canal": "Renan Santos"},
+                            "canal": "Renan Santos", "url": "https://www.youtube.com/watch?v=a",
+                            "data": HOJE.isoformat()},
                       "c": {"decisao": "recusado", "motivo": "jingle"},
                       "b": {"decisao": "escolhido", "stem": "renan_live_bravo"}})
     rodada["listar"] = {"renan": [_item("a", "Live Alfa"), _item("b", "Live Bravo")],
@@ -261,14 +257,43 @@ def test_sem_pipeline_registra_mas_nao_processa(raiz, rodada):
     rodada["avaliacoes"] = {"a": _av(True, 7)}
     assert cu.main(["--sem-pipeline"]) == 0
     assert rodada["processados"] == []
-    assert json.loads(cu.ESTADO.read_text(encoding="utf-8"))["a"]["decisao"] == "escolhido"
+    assert json.loads(cu.ESTADO.read_text(encoding="utf-8"))["a"]["decisao"] == "fila"
 
 
-def test_max_sobrescreve_config(raiz, rodada):
+def test_estoque_cheio_avalia_mas_nao_processa(raiz, rodada):
+    rodada["estoque"] = {"longos": 4, "shorts": 4, "dias": 2.0}
+    rodada["listar"] = {"renan": [_item("a", "Live Alfa")]}
+    rodada["avaliacoes"] = {"a": _av(True, 9)}
+    assert cu.main([]) == 0
+    assert rodada["llm"] == 1 and rodada["processados"] == []
+    assert json.loads(cu.ESTADO.read_text(encoding="utf-8"))["a"]["decisao"] == "fila"
+    assert "Estoque no início: 4 longo(s) + 4 Short(s) = 2.0" in cu.RESUMO.read_text(encoding="utf-8")
+
+
+def test_estoque_baixo_processa_so_um(raiz, rodada):
+    rodada["estoque"] = {"longos": 1, "shorts": 2, "dias": 1.0}
     rodada["listar"] = {"renan": [_item("a", "Live Alfa"), _item("b", "Live Bravo")]}
-    rodada["avaliacoes"] = {"a": _av(True, 6), "b": _av(True, 9)}
-    cu.main(["--max=2"])
-    assert rodada["processados"] == ["renan_live_bravo", "renan_live_alfa"]
+    rodada["avaliacoes"] = {"a": _av(True, 9), "b": _av(True, 9)}
+    cu.main([])
+    assert len(rodada["processados"]) == 1
+
+
+def test_forcar_processa_com_estoque_cheio(raiz, rodada):
+    rodada["estoque"] = {"longos": 9, "shorts": 9, "dias": 4.5}
+    rodada["listar"] = {"renan": [_item("a", "Live Alfa")]}
+    rodada["avaliacoes"] = {"a": _av(True, 5)}
+    cu.main(["--forcar"])
+    assert rodada["processados"] == ["renan_live_alfa"]
+
+
+def test_minimo_vem_do_config(raiz, rodada):
+    cfg = {**CFG, "estoque": {"dias_minimos": 5, "longos_por_dia": 1, "shorts_por_dia": 2}}
+    cu.CONFIG.write_text(json.dumps(cfg), encoding="utf-8")
+    rodada["estoque"] = {"longos": 8, "shorts": 8, "dias": 4.0}
+    rodada["listar"] = {"renan": [_item("a", "Live Alfa")]}
+    rodada["avaliacoes"] = {"a": _av(True, 5)}
+    cu.main([])
+    assert rodada["processados"] == ["renan_live_alfa"]          # 4 dias < mínimo 5
 
 
 def test_trava_impede_rodada_dupla(raiz, rodada):
@@ -294,6 +319,35 @@ def test_falha_no_llm_registra_e_sai_com_erro(raiz, rodada, monkeypatch, banco):
     monkeypatch.setattr(cu, "avaliar", quebra)
     assert cu.main([]) == 1
     assert banco("SELECT status FROM eventos WHERE agente='curador' AND status='falha'")
+    assert not banco("SELECT status FROM eventos WHERE agente='curador' AND status='llm'")
+    assert "a" not in json.loads(cu.ESTADO.read_text(encoding="utf-8"))   # reavalia amanhã
+    assert "API fora" in cu.RESUMO.read_text(encoding="utf-8")
+
+
+def test_falha_no_llm_ainda_processa_a_fila(raiz, rodada, monkeypatch):
+    cu.gravar_estado({"a": {"decisao": "fila", "prioridade": 6, "motivo": "m", "titulo": "Live Alfa",
+                            "canal": "Renan Santos", "url": "https://www.youtube.com/watch?v=a",
+                            "data": HOJE.isoformat()}})
+    rodada["listar"] = {"renan": [_item("b", "Live Bravo")]}
+    monkeypatch.setattr(cu, "avaliar", lambda client, itens: (_ for _ in ()).throw(RuntimeError("x")))
+    assert cu.main([]) == 1                                         # avisa a falha...
+    assert rodada["processados"] == ["renan_live_alfa"]             # ...mas a fila andou
+
+
+def test_expirar_fila_ignora_data_malformada():
+    estado = {"a": {"decisao": "fila", "data": "ontem"}, "b": {"decisao": "fila", "data": None},
+              "c": {"decisao": "fila", "data": (HOJE - timedelta(days=99)).isoformat()}}
+    assert cu.expirar_fila(estado, HOJE) == ["c"]
+    assert estado["a"]["decisao"] == estado["b"]["decisao"] == "fila"
+
+
+@pytest.mark.parametrize("conteudo", ['[1, 2]', '{"01": "short_01.mp4"}', '{"01": {"postado": null}}'])
+def test_shorts_json_com_formato_estranho_nao_quebra(raiz, conteudo):
+    pasta = raiz / "outputs" / "x"
+    (pasta / "shorts").mkdir(parents=True)
+    (pasta / "shorts" / "shorts.json").write_text(conteudo, encoding="utf-8")
+    sh = cu.ler_shorts(pasta)
+    assert isinstance(sh, dict) and all(isinstance(v, dict) for v in sh.values())
 
 
 # --- processar ----------------------------------------------------------------------------
@@ -339,7 +393,7 @@ def test_escrever_resumo_falhas_avisos_e_secoes(raiz):
     assert "US$ 0.012" in texto and "2 vídeo(s)" in texto
     assert "2 corte(s)" in texto and "`pub.txt`" in texto
     assert "## Falhas" in texto and "- b: pipeline.py falhou" in texto
-    assert "Na fila" in texto and "Recusados" in texto and "tema fraco" in texto
+    assert "Entraram na fila" in texto and "Recusados" in texto and "tema fraco" in texto
     assert "## Avisos" in texto and "a: canal sem zoom" in texto
     assert "b: pipeline.py falhou" in texto
     assert cu.RESUMO.read_text(encoding="utf-8") == texto
@@ -394,22 +448,16 @@ def test_processamento_com_falha_sai_com_codigo_1(raiz, rodada, monkeypatch):
 
 # --- robustez (rodada 2 do revisor) -------------------------------------------------------
 
-def test_excecao_num_video_nao_derruba_os_outros(raiz, rodada, monkeypatch, banco):
+def test_excecao_no_video_vira_falha_e_resumo_sai(raiz, rodada, monkeypatch, banco):
     rodada["listar"] = {"renan": [_item("a", "Live Alfa"), _item("b", "Live Bravo")]}
     rodada["avaliacoes"] = {"a": _av(True, 6), "b": _av(True, 9)}
-    feitos = []
 
     def processar(item):
-        feitos.append(item["stem"])
-        if item["stem"] == "renan_live_bravo":
-            raise SystemExit("[!] mais de uma pasta pro stem")
-        return {"stem": item["stem"], "titulo": item["titulo"], "canal": item["canal"],
-                "ok": True, "aprovados": 1, "publicacao": "p.txt", "avisos": []}
+        raise SystemExit("[!] mais de uma pasta pro stem")
     monkeypatch.setattr(cu, "processar", processar)
-    assert cu.main(["--max=2"]) == 1
-    assert feitos == ["renan_live_bravo", "renan_live_alfa"]       # seguiu depois do erro
+    assert cu.main([]) == 1
     resumo = cu.RESUMO.read_text(encoding="utf-8")
-    assert "SystemExit" in resumo and "Live Alfa" in resumo
+    assert "SystemExit" in resumo and "Live Alfa" in resumo          # a outra ficou na fila
     assert banco("SELECT 1 FROM eventos WHERE agente='curador' AND status='falha'")
     assert not cu.TRAVA.exists()
 
@@ -453,3 +501,143 @@ def test_resumo_cita_processado_sem_aprovado(raiz):
                                     {"stem": "s", "titulo": "Live", "canal": "Kim", "ok": True,
                                      "aprovados": 0, "publicacao": None, "avisos": []}]})
     assert "sem corte aprovado" in texto and "revisao.json de s" in texto
+
+
+# --- estoque e fila -----------------------------------------------------------------------
+
+def _pasta_com_blocos(raiz, nome, stem, status_por_bloco, shorts=None):
+    import _eventos
+    pasta = raiz / "outputs" / nome
+    (pasta / "shorts").mkdir(parents=True)
+    _eventos.upsert_video(stem, pasta=nome)
+    for bid, status in status_por_bloco.items():
+        _eventos.upsert_bloco(stem, bid, status=status, forcar_status=True)
+    registro = {}
+    for bid, postado in (shorts or {}).items():
+        arq = f"short_{bid:02d}_x.mp4"
+        (pasta / "shorts" / arq).touch()
+        registro[f"{bid:02d}"] = {"arquivo": arq, **({"postado": "2026-10-22"} if postado else {})}
+    (pasta / "shorts" / "shorts.json").write_text(json.dumps(registro), encoding="utf-8")
+    return pasta
+
+
+def test_calcular_estoque_conta_longos_aprovados_e_shorts_nao_postados(raiz):
+    hoje = date(2026, 10, 22)
+    _pasta_com_blocos(raiz, "2026-10-21_renan_a", "renan_a",
+                      {1: "aprovado", 2: "agendado", 3: "descartado", 4: "aprovado"},
+                      shorts={1: False, 2: False, 3: False, 4: True})
+    _pasta_com_blocos(raiz, "2026-09-01_renan_velho", "renan_velho",       # > 15 dias: fora
+                      {1: "aprovado"}, shorts={1: False})
+    est = cu.calcular_estoque({"estoque": {"longos_por_dia": 1, "shorts_por_dia": 2}}, hoje)
+    # longos: blocos 1 e 4; shorts: 1 e 2 (3 descartado, 4 já postado)
+    assert est == {"longos": 2, "shorts": 2, "dias": 1.0}
+
+
+def test_calcular_estoque_shorts_limitam_os_dias(raiz):
+    hoje = date(2026, 10, 22)
+    _pasta_com_blocos(raiz, "2026-10-22_kim_b", "kim_b",
+                      {1: "aprovado", 2: "aprovado", 3: "aprovado", 4: "aprovado"})
+    est = cu.calcular_estoque({"estoque": {"longos_por_dia": 1, "shorts_por_dia": 2}}, hoje)
+    assert est["longos"] == 4 and est["shorts"] == 0 and est["dias"] == 0.0
+
+
+def test_proximo_da_fila_prioridade_depois_mais_recente():
+    estado = {"a": {"decisao": "fila", "prioridade": 8, "data": "2026-10-20"},
+              "b": {"decisao": "fila", "prioridade": 8, "data": "2026-10-21"},
+              "c": {"decisao": "fila", "prioridade": 5, "data": "2026-10-22"},
+              "d": {"decisao": "recusado", "prioridade": 10, "data": "2026-10-22"}}
+    assert cu.proximo_da_fila(estado) == "b"
+    assert cu.proximo_da_fila({}) is None
+
+
+def test_expirar_fila_depois_de_15_dias():
+    estado = {"a": {"decisao": "fila", "data": "2026-10-01"},
+              "b": {"decisao": "fila", "data": "2026-10-10"},
+              "c": {"decisao": "recusado", "data": "2026-09-01"}}
+    assert cu.expirar_fila(estado, date(2026, 10, 22)) == ["a"]
+    assert estado["a"]["decisao"] == "expirado" and estado["b"]["decisao"] == "fila"
+    assert estado["c"]["decisao"] == "recusado"
+
+
+def test_reprocessar_da_fila_reusa_stem_anterior(raiz, rodada):
+    cu.gravar_estado({"a": {"decisao": "fila", "prioridade": 6, "motivo": "m", "titulo": "Live Alfa",
+                            "canal": "Renan Santos", "url": "https://www.youtube.com/watch?v=a",
+                            "data": HOJE.isoformat(), "stem": "renan_live_alfa", "tentativas": 1}})
+    (raiz / "outputs" / "2026-10-22_renan_live_alfa").mkdir()      # pasta da tentativa anterior
+    cu.main([])
+    assert rodada["processados"] == ["renan_live_alfa"]           # não vira renan_live_alfa_2
+
+
+def test_processar_gera_short_dos_aprovados(raiz, monkeypatch):
+    chamadas = []
+    monkeypatch.setattr(cu, "rodar", lambda script, *a: chamadas.append((script, *a)) or True)
+    import _paths, _publicacao
+    monkeypatch.setattr(_paths, "achar_pasta", lambda stem: raiz / "outputs" / stem)
+    monkeypatch.setattr(_publicacao, "aprovados", lambda pasta: [{"id": 4}, {"id": 1}])
+    monkeypatch.setattr(_publicacao, "gerar", lambda pasta: (pasta / "publicacao.txt", [1, 2]))
+    cu.processar({**_item("a"), "stem": "renan_x"})
+    assert ("10_shorts.py", "renan_x", "--bloco=4") in chamadas
+    assert ("10_shorts.py", "renan_x", "--bloco=1") in chamadas
+    assert [c[0] for c in chamadas][:3] == ["01_baixar.py", "pipeline.py", "11_revisor.py"]
+
+
+def test_short_que_falha_vira_aviso(raiz, monkeypatch):
+    monkeypatch.setattr(cu, "rodar", lambda script, *a: script != "10_shorts.py")
+    import _paths, _publicacao
+    monkeypatch.setattr(_paths, "achar_pasta", lambda stem: raiz / "outputs" / stem)
+    monkeypatch.setattr(_publicacao, "aprovados", lambda pasta: [{"id": 2}])
+    monkeypatch.setattr(_publicacao, "gerar", lambda pasta: (None, []))
+    res = cu.processar({**_item("a"), "stem": "renan_x"})
+    assert res["ok"] and any("Short do bloco 2" in a for a in res["avisos"])
+
+
+# --- lacunas extras do estoque/fila ---------------------------------------------------------
+
+def test_estoque_pasta_none_no_banco_cai_no_glob(raiz):
+    import _eventos
+    pasta = _pasta_com_blocos(raiz, "2026-10-21_kim_c", "kim_c", {1: "aprovado"}, shorts={1: False})
+    _eventos.upsert_video("kim_c", pasta=None)
+    est = cu.calcular_estoque({"estoque": {"longos_por_dia": 1, "shorts_por_dia": 1}}, date(2026, 10, 22))
+    assert pasta.exists() and est == {"longos": 1, "shorts": 1, "dias": 1.0}
+
+
+def test_estoque_sem_pasta_nenhuma_nao_conta(raiz):
+    import _eventos
+    _eventos.upsert_bloco("fantasma", 1, status="aprovado", forcar_status=True)
+    est = cu.calcular_estoque({"estoque": {"longos_por_dia": 1, "shorts_por_dia": 1}}, date(2026, 10, 22))
+    assert est["longos"] == 0 and est["shorts"] == 0
+
+
+def test_estoque_short_postado_nao_conta_e_arquivo_sumido_nao_conta(raiz):
+    pasta = _pasta_com_blocos(raiz, "2026-10-22_kim_d", "kim_d", {1: "aprovado", 2: "aprovado"},
+                              shorts={1: True, 2: False})
+    (pasta / "shorts" / "short_02_x.mp4").unlink()
+    est = cu.calcular_estoque({"estoque": {"longos_por_dia": 1, "shorts_por_dia": 1}}, date(2026, 10, 22))
+    assert est["longos"] == 2 and est["shorts"] == 0 and est["dias"] == 0.0
+
+
+def test_fila_expirada_nao_e_escolhida(raiz, rodada):
+    velho = (HOJE - timedelta(days=cu.DIAS_ARQUIVAR + 2)).isoformat()
+    cu.gravar_estado({"a": {"decisao": "fila", "prioridade": 10, "motivo": "m", "titulo": "Velha",
+                            "canal": "Renan Santos", "url": "u", "data": velho}})
+    cu.main([])
+    assert rodada["processados"] == []
+    assert cu.ler_estado()["a"]["decisao"] == "expirado"
+
+
+def test_forcar_com_fila_vazia_nao_processa_nada(raiz, rodada):
+    rodada["estoque"] = {"longos": 9, "shorts": 9, "dias": 9.0}
+    assert cu.main(["--forcar"]) == 0
+    assert rodada["processados"] == []
+
+
+def test_tentativas_preservadas_ao_voltar_pra_fila(raiz, rodada, monkeypatch):
+    cu.gravar_estado({"a": {"decisao": "fila", "prioridade": 6, "motivo": "m", "titulo": "Live Alfa",
+                            "canal": "Renan Santos", "url": "u", "data": HOJE.isoformat(),
+                            "tentativas": 1}})
+    monkeypatch.setattr(cu, "processar", lambda item: {
+        "stem": item["stem"], "titulo": item["titulo"], "canal": item["canal"],
+        "ok": False, "erro": "download", "aprovados": 0, "publicacao": None, "avisos": []})
+    assert cu.main([]) == 1
+    e = cu.ler_estado()["a"]
+    assert e["tentativas"] == 2 and e["decisao"] == "fila"
