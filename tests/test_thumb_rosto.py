@@ -206,3 +206,45 @@ def test_ranquear_pula_none_e_frames_ilegiveis(monkeypatch):
     monkeypatch.setattr(tr, "analisar", lambda f: {"rosto": None, "nota": 0.0})
     r = tr.ranquear(None, Path("c.mp4"))
     assert len(r) == tr.AMOSTRAS_CORTE and all(c["fonte"] == "corte" for c in r)
+
+
+# ── _canto / _conectados / detectar_overlays ────────────────────────────────
+
+@pytest.mark.parametrize("lado_v,lado_h,v,h,esperado", [
+    # dentro à esquerda de v (-1), h abaixo (+1): h termina em x=100, v desce de y=50
+    (-1, 1, (100, 50, 101, 200), (0, 50, 100, 51), True),
+    (-1, 1, (100, 50, 101, 200), (200, 50, 300, 51), False),   # h do lado errado de v
+    (1, 1, (100, 50, 101, 200), (100, 50, 220, 51), True),
+    (1, 1, (100, 50, 101, 200), (0, 50, 60, 51), False),
+    (-1, -1, (100, 0, 101, 50), (0, 50, 100, 51), True),       # h com dentro acima: v termina em y=50
+    (1, -1, (100, 0, 101, 50), (100, 50, 200, 51), True),
+    (1, -1, (100, 300, 101, 400), (100, 50, 200, 51), False),  # v longe de h
+])
+def test_canto_orientacoes(lado_v, lado_h, v, h, esperado):
+    assert tr._canto(v + (lado_v,), h + (lado_h,)) is esperado
+
+
+def test_conectados_colinear_respeita_vao_max():
+    a = (100, 0, 101, 100, 1)
+    perto = (100, 100 + tr.VAO_MAX, 101, 100 + tr.VAO_MAX + 50, 1)
+    longe = (100, 100 + tr.VAO_MAX + 1, 101, 100 + tr.VAO_MAX + 50, 1)
+    assert tr._conectados(a, perto)
+    assert not tr._conectados(a, longe)
+
+
+def test_conectados_lados_diferentes_ou_linhas_diferentes_nao_ligam():
+    a = (100, 0, 101, 100, 1)
+    assert not tr._conectados(a, (100, 110, 101, 200, -1))
+    assert not tr._conectados(a, (100 + tr.JUNTA_PX + 1, 110, 101 + tr.JUNTA_PX + 1, 200, 1))
+
+
+def test_detectar_overlays_sem_video_e_vazio():
+    assert tr.detectar_overlays(None) == []
+
+
+def test_detectar_overlays_usa_frames_amostrados(monkeypatch):
+    chamadas = []
+    monkeypatch.setattr(tr, "duracao", lambda v: 100.0)
+    monkeypatch.setattr(tr, "ler_frame", lambda v, t: chamadas.append(t) or None)
+    assert tr.detectar_overlays(Path("x.mp4")) == []   # todos None -> <6 frames
+    assert len(chamadas) == tr.AMOSTRAS_OVERLAY
