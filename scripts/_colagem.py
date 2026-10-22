@@ -23,6 +23,7 @@ from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
+import _grafias
 import _thumb_rosto as tr
 
 ROOT = Path(__file__).parent.parent
@@ -43,8 +44,9 @@ ROSTO_CENA = 0.30          # altura do rosto-chave como fração da altura da ce
 ZOOM_CENA_MAX = 2.2
 CARTAO_MARGEM, CARTAO_TOPO = 34, 40   # cartão da cena 2: posição dentro do painel 2...
 CARTAO_W, CARTAO_H_MAX = 420, 380     # ...e tamanho máximo (fica entre a divisa e o apresentador)
-ROSTO_APRES = 0.30         # altura do rosto do apresentador na thumb
-APRES_X, APRES_Y = 0.81, 0.36   # centro do rosto do apresentador
+ROSTO_APRES = 0.42         # altura do rosto (caixa do Haar) na thumb: a cabeça fica com ~45-50%
+ZOOM_APRES_MAX = 3.0       # ampliação máxima do frame (720p) do apresentador
+APRES_X, APRES_Y = 0.81, 0.39   # centro do rosto do apresentador
 CONTORNO_APRES = 7         # px do contorno branco do recorte
 TEXTO_X, TEXTO_MAX_W = 36, 860
 TEXTO_MAX, TEXTO_MIN = 150, 70
@@ -157,6 +159,19 @@ def variante_aplicada(thumb: Path | None) -> dict | None:
                  if v.get("arquivo") == thumb.name), None)
 
 
+def colagem_aplicada(thumbs: Path, bid: int) -> dict | None:
+    """Registro do bloco no colagem.json (variantes, créditos...) se alguma thumb_NN_a/b/c do
+    bloco é a colagem aplicada; None se não é (ou se a colagem do bloco não saiu)."""
+    nn = f"{bid:02d}"
+    if not any(variante_aplicada(thumbs / f"thumb_{nn}_{l}.png") for l in "abc"):
+        return None
+    try:
+        reg = json.loads((thumbs / "colagem" / "colagem.json").read_text(encoding="utf-8")).get(str(bid))
+    except (OSError, ValueError, AttributeError):
+        return None
+    return reg if isinstance(reg, dict) and reg.get("status") == "ok" else None
+
+
 # ── personagens ─────────────────────────────────────────────────────────────
 
 def normalizar(texto: str) -> str:
@@ -171,18 +186,32 @@ def ler_licencas() -> list[dict]:
         return []
 
 
+def campos_de_nomes(bloco: dict) -> list[str]:
+    """Onde o bloco cita pessoas: tags, tema, título sugerido e texto da thumb."""
+    return [*bloco.get("tags", []), bloco.get("tema", ""), bloco.get("titulo_sugerido", ""),
+            bloco.get("texto_thumb", "")]
+
+
 def personagens_do_bloco(bloco: dict, excluir: str = "", licencas: list[dict] | None = None) -> list[dict]:
     """Personagens do banco citados no bloco (tags, tema, título, texto da thumb), na ordem em
     que aparecem nas tags. `excluir` = nome do apresentador da live (não vira cena dele mesmo)."""
     licencas = ler_licencas() if licencas is None else licencas
-    campos = [*bloco.get("tags", []), bloco.get("tema", ""), bloco.get("titulo_sugerido", ""),
-              bloco.get("texto_thumb", "")]
+    campos = campos_de_nomes(bloco)
     textos = [f" {normalizar(c)} " for c in campos if c]
     fora = f" {normalizar(excluir)} "
+    # quem está na lista de grafias casa por ela (também a grafia errada das tags, e sem
+    # confundir 'Lula' com 'Fábio Luís Lula da Silva')
+    grafias = _grafias.carregar()
+    conhecidos = {g["nome"] for g in grafias}
+    citados = set(_grafias.citados(campos, excluir, grafias))
     achados = []
     for p in licencas:
         nomes = [normalizar(n) for n in [p["nome"], *p.get("apelidos", [])]]
-        if any(f" {n} " in fora for n in nomes):
+        if p["nome"] in conhecidos:
+            if p["nome"] not in citados:
+                continue
+            nomes += [normalizar(n) for n in _grafias.variantes(p["nome"], grafias)]
+        elif any(f" {n} " in fora for n in nomes):
             continue
         pos = [i for i, t in enumerate(textos) for n in nomes if f" {n} " in t]
         if pos and (PERSONAGENS / p["arquivo"]).exists():
@@ -338,10 +367,14 @@ SISTEMA_VISAO = """Você escolhe imagens para a thumbnail de um corte de live po
 (canal "Missão em Cortes"). Responda só o JSON pedido.
 
 - expressoes: índices das imagens ROSTO, da mais expressiva para a menos (no máximo 3). \
-Expressiva = emoção clara e legível em miniatura (indignação, ironia, espanto, riso, \
-apontando). Evite olhos fechados, boca torta no meio de uma sílaba, rosto de lado ou borrado.
+PRIORIDADE MÁXIMA a emoção FORTE, legível em miniatura: surpresa/espanto (boca aberta, \
+sobrancelha erguida), indignação, riso aberto, gesto de apontar. Rosto neutro, sério ou \
+"falando normal" vai por último, mesmo que esteja mais nítido. Evite olhos fechados, boca \
+torta no meio de uma sílaba, rosto de lado ou borrado.
 - cena_assunto: índice da imagem CENA que melhor mostra a pessoa ou o assunto comentado \
-(ex.: o político no vídeo, o post, a manchete). -1 se nenhuma serve.
+(ex.: o político no vídeo, o post, a manchete). Se o pedido lista PESSOAS CITADAS, prefira \
+a CENA em que o nome de uma delas aparece ESCRITO (legenda, púlpito, @ do post). -1 se \
+nenhuma serve.
 - cena_contexto: índice de OUTRA imagem CENA que dá o contexto (outro participante, notícia, \
 gráfico, post, plateia do evento). -1 se nenhuma serve. Nunca o mesmo índice da cena_assunto.
 - As imagens ROSTO são o apresentador da live. Uma CENA que mostra essa mesma pessoa ou o \
@@ -363,10 +396,14 @@ def b64_jpeg(img: Image.Image, largura: int = LARGURA_LLM) -> str:
     return base64.standard_b64encode(buf.getvalue()).decode()
 
 
-def montar_conteudo_visao(rostos: list[Image.Image], cenas: list[Image.Image], tema: str) -> list[dict]:
+def montar_conteudo_visao(rostos: list[Image.Image], cenas: list[Image.Image], tema: str,
+                          pessoas: list[str] = ()) -> list[dict]:
     img = lambda im: {"type": "image",   # noqa: E731
                       "source": {"type": "base64", "media_type": "image/jpeg", "data": b64_jpeg(im)}}
-    conteudo = [{"type": "text", "text": f"ASSUNTO DO CORTE: {tema}"}]
+    texto = f"ASSUNTO DO CORTE: {tema}"
+    if pessoas:
+        texto += f"\nPESSOAS CITADAS: {', '.join(pessoas)}"
+    conteudo = [{"type": "text", "text": texto}]
     for i, r in enumerate(rostos):
         conteudo += [{"type": "text", "text": f"ROSTO {i}:"}, img(r)]
     for i, c in enumerate(cenas):
@@ -397,13 +434,14 @@ def escolha_sem_llm(n_rostos: int, n_cenas: int) -> dict:
             "contexto_descricao": "", "motivo": "sem LLM: ordem da nota"}
 
 
-def escolher(client, rostos: list[Image.Image], cenas: list[Image.Image], tema: str):
+def escolher(client, rostos: list[Image.Image], cenas: list[Image.Image], tema: str,
+             pessoas: list[str] = ()):
     """(escolha validada ou None se recusou, resposta). Haiku, effort low."""
     resp = client.messages.create(
         model=MODELO_VISAO,
         max_tokens=4000,
         system=SISTEMA_VISAO,
-        messages=[{"role": "user", "content": montar_conteudo_visao(rostos, cenas, tema)}],
+        messages=[{"role": "user", "content": montar_conteudo_visao(rostos, cenas, tema, pessoas)}],
         output_config={"effort": "low", "format": {"type": "json_schema", "schema": SCHEMA_VISAO}},
     )
     if resp.stop_reason == "refusal":
@@ -516,7 +554,7 @@ def colar_apresentador(canvas: Image.Image, recorte: Image.Image, rosto: tuple |
     """Recorte com contorno branco e sombra, rosto em (APRES_X, APRES_Y) com ~ROSTO_APRES da
     altura; se o corpo terminava na borda de baixo do frame, continua até a borda da thumb."""
     if rosto:
-        esc = min(2.2, ALTURA * ROSTO_APRES / rosto[3])
+        esc = min(ZOOM_APRES_MAX, ALTURA * ROSTO_APRES / rosto[3])
         cx, cy = (rosto[0] + rosto[2] / 2) * esc, (rosto[1] + rosto[3] / 2) * esc
     else:
         esc = ALTURA * 0.95 / recorte.height
