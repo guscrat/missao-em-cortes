@@ -25,7 +25,7 @@ Identifique 2 a 6 blocos temáticos CONTÍNUOS da live (não compilação de tre
 3. **Início natural**: começa em frase completa — pergunta, afirmação forte ou abertura de tópico. NUNCA no meio de uma frase ou raciocínio.
 4. **Fim natural**: termina com conclusão de raciocínio, frase de impacto ou pausa clara. NUNCA cortar antes de uma conclusão.
 5. **Autossuficiência**: o espectador entende o corte sem ter visto o resto da live.
-6. **Gancho**: tem pelo menos um momento forte (declaração polêmica, dado impactante, frase de efeito, embate) que pode virar thumbnail/título. O `texto_thumb` deve destilar esse gancho em 2-5 palavras de impacto (curto e legível em miniatura) — distinto do `titulo_sugerido`, que é a frase completa pro título do YouTube.
+6. **Gancho**: tem pelo menos um momento forte (declaração polêmica, dado impactante, frase de efeito, embate) que pode virar thumbnail/título. O `texto_thumb` deve destilar esse gancho em 2-5 palavras de impacto (curto e legível em miniatura) — distinto do `titulo_sugerido`, que é a frase completa pro título do YouTube. Título e `texto_thumb` NUNCA destacam palavrão nem termo que possa soar como ofensa a um grupo (raça, etnia, gênero, orientação sexual, religião, origem, deficiência etc.), MESMO que esteja na fala: descreva o tom ("desabafo sem filtro", "detona") em vez de citar o termo.
 7. **Duração contextual**: ajuste a duração-alvo conforme o tipo de conteúdo:
    - Comentário de notícia/reação a fato do dia: 4-6 minutos
    - Entrevista analítica/podcast/exposição de tese: 5-7 minutos
