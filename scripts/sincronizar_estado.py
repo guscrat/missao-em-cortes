@@ -68,7 +68,11 @@ def arquivar_shorts(pasta: Path) -> list[str]:
     if nns:
         for nn in nns:
             registro[nn]["arquivado"] = MOTIVO_ANTIGO
-        caminho.write_text(json.dumps(registro, ensure_ascii=False, indent=2), encoding="utf-8")
+        try:
+            caminho.write_text(json.dumps(registro, ensure_ascii=False, indent=2), encoding="utf-8")
+        except OSError as e:   # arquivo travado no Windows: tenta na próxima sincronização
+            print(f"[aviso] não arquivei os Shorts de {pasta.name} ({e})", file=sys.stderr)
+            return []
     return sorted(nns)
 
 
