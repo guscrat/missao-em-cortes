@@ -4,7 +4,11 @@ Uso:
     uv run py scripts/12_metricas.py              # tabela + resumo (pro resumo semanal)
     uv run py scripts/12_metricas.py --desde=2026-05-01
 
-Lê (só leitura, token próprio em secrets/youtube_leitura_token.json):
+Projeto do Google SEPARADO do upload (missao-em-cortes-analytics), com credencial e token
+próprios em secrets/ (fora do Git): o projeto do upload (publisher) está em auditoria
+declarando só upload e NÃO pode ganhar a Analytics API. Passo a passo no CLAUDE.md.
+
+Lê (só leitura):
   - YouTube Data API (youtube.readonly): vídeos do canal com título, data e duração
   - YouTube Analytics API (yt-analytics.readonly): views, duração média assistida e % média
     assistida (averageViewPercentage = a "retenção" do Studio) de cada vídeo
@@ -34,7 +38,8 @@ from _google import credenciais
 from _paths import OUTPUTS
 
 ROOT = Path(__file__).parent.parent
-TOKEN = ROOT / "secrets" / "youtube_leitura_token.json"
+CLIENT_SECRET = ROOT / "secrets" / "analytics_client_secret.json"   # projeto missao-em-cortes-analytics
+TOKEN = ROOT / "secrets" / "analytics_token.json"
 SAIDA = ROOT / "state" / "metricas_retencao.json"
 ESCOPOS = ["https://www.googleapis.com/auth/yt-analytics.readonly",
            "https://www.googleapis.com/auth/youtube.readonly"]
@@ -132,7 +137,7 @@ def main(argv: list[str]) -> int:
     flags = dict(a[2:].split("=", 1) for a in argv if a.startswith("--") and "=" in a)
     inicio = flags.get("desde", "2026-05-01")
     from googleapiclient.discovery import build
-    creds = credenciais(ESCOPOS, TOKEN)
+    creds = credenciais(ESCOPOS, TOKEN, CLIENT_SECRET)
     yt = build("youtube", "v3", credentials=creds, cache_discovery=False)
     analytics = build("youtubeAnalytics", "v2", credentials=creds, cache_discovery=False)
 
