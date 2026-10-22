@@ -39,6 +39,10 @@ def aprovados(pasta: Path) -> list[dict]:
         (pasta / "blocos.json").read_text(encoding="utf-8"))["blocos"]}
     desc_path = pasta / "descricoes.txt"
     descricoes = ler_descricoes(desc_path.read_text(encoding="utf-8")) if desc_path.exists() else {}
+    try:
+        shorts = json.loads((pasta / "shorts" / "shorts.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        shorts = {}
     saida = []
     for chave, r in revisao.items():
         bid = int(chave)
@@ -46,12 +50,14 @@ def aprovados(pasta: Path) -> list[dict]:
         if r.get("status") != "aprovado" or bid not in blocos or video is None:
             continue
         b, d = blocos[bid], descricoes.get(bid, {})
+        short = shorts.get(f"{bid:02d}", {}).get("arquivo")
         saida.append({
             "id": bid,
             "score": b.get("score_potencial") or 0,
             "duracao": b.get("duracao_minutos"),
             "video": video,
             "thumb": pasta / "thumbs" / r["thumb"] if r.get("thumb") else None,
+            "short": pasta / "shorts" / short if short else None,
             "titulo": d.get("titulo") or r.get("titulo") or b.get("titulo_sugerido", ""),
             "descricao": d.get("descricao", ""),
             "tags": d.get("tags", []),
@@ -83,6 +89,7 @@ def gerar(pasta: Path, agora: datetime | None = None) -> tuple[Path | None, list
                    "=" * 70,
                    f"ARQUIVO: finalizados/{x['video'].name}",
                    f"THUMB:   thumbs/{x['thumb'].name}" if x["thumb"] else "THUMB:   (sem thumb)",
+                   f"SHORT:   shorts/{x['short'].name}" if x["short"] else "SHORT:   (sem Short)",
                    "", "TÍTULO:", x["titulo"], "", "DESCRIÇÃO:", x["descricao"].strip(), "",
                    "TAGS:", ", ".join(x["tags"]), ""]
     destino = pasta / "publicacao.txt"

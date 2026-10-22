@@ -255,7 +255,8 @@ def main(argv: list[str]) -> int:
             print(f"  [!] bloco {bid}: ffmpeg falhou:\n{r.stderr[-600:]}")
             continue
         feitos += 1
-        registro[nn] = {"arquivo": saida.name, "duracao_s": round(dur, 2),
+        # **registro: preserva o "postado" do registrar_publicacao.py ao regerar o Short
+        registro[nn] = {**registro.get(nn, {}), "arquivo": saida.name, "duracao_s": round(dur, 2),
                         "crop": "{}:{}:{}:{}".format(*crop), "taxa_rosto": round(taxa, 2),
                         "revisar": alerta}
         registro_path.write_text(json.dumps(registro, ensure_ascii=False, indent=2),

@@ -1,11 +1,11 @@
 """Agente CURADOR: acha lives/vídeos novos dos canais monitorados, escolhe os que valem
 virar corte e dispara o pipeline neles (agente="curador", off-pipeline, roda 1x/dia).
 
-Uso: uv run py scripts/13_curador.py [--dry-run] [--sem-pipeline] [--max=N]
+Uso: uv run py scripts/13_curador.py [--dry-run] [--sem-pipeline] [--forcar]
 
-  --dry-run       só lista e filtra (sem LLM, sem baixar): mostra o que iria pro Claude
-  --sem-pipeline  escolhe e registra, mas não baixa nem processa
-  --max=N         processa no máximo N vídeos nesta rodada (padrão: max_por_dia do config)
+  --dry-run       só lista, filtra e mostra o estoque (sem LLM, sem baixar)
+  --sem-pipeline  avalia e põe na fila, mas não baixa nem processa
+  --forcar        processa 1 vídeo da fila mesmo com estoque cheio
 
 Fluxo:
   1. Lê config/canais.json e lista as abas streams + videos de cada canal (yt-dlp, flat,
@@ -14,9 +14,12 @@ Fluxo:
      state/curadoria.json).
   2. Busca título original (pt) e data exata dos que passaram e manda pro Claude
      (claude-opus-5-5, effort low, ~US$ 0,02-0,05/rodada): vale a pena? prioridade? motivo?
-  3. Os melhores (até max_por_dia; o resto que vale fica na fila pro dia seguinte, sem
-     nova chamada de LLM) viram stem novo: 01_baixar → pipeline.py --polir → 11_revisor
-     → publicacao.txt. Cada vídeo custa ~US$ 0,65 (segmentação + polimento + revisor).
+  3. Todo vídeo que vale entra na FILA (state/curadoria.json). Só processa quando o
+     ESTOQUE pronto pra publicar cai abaixo de estoque.dias_minimos (config): dias de
+     estoque = min(longos aprovados / longos_por_dia, Shorts prontos / shorts_por_dia).
+     Aí processa 1 vídeo só, o de maior prioridade (empate: o mais recente):
+     01_baixar → pipeline.py --polir → 11_revisor → 10_shorts (aprovados) → publicacao.txt.
+     ~US$ 0,65 por vídeo. Fila com mais de DIAS_ARQUIVAR dias expira.
   4. Resumo em state/curador_resumo.md (cortes prontos pra publicar, recusados com motivo,
      avisos) e decisões em state/curadoria.json. Tudo também vira evento no painel.
 
@@ -33,6 +36,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from _eventos import evento, upsert_video, conectar
+from sincronizar_estado import DIAS_ARQUIVAR    # janela do conteúdo antigo (15 dias)
 
 ROOT = Path(__file__).parent.parent
 SCRIPTS = Path(__file__).parent
@@ -101,8 +105,10 @@ Avalie TODOS os ids recebidos, um item por id."""
 def carregar_config() -> dict:
     cfg = json.loads(CONFIG.read_text(encoding="utf-8"))
     for chave, padrao in (("dias", 3), ("duracao_min", 20), ("duracao_max", 240),
-                          ("max_por_dia", 2), ("por_canal", 8)):
+                          ("por_canal", 8)):
         cfg.setdefault(chave, padrao)
+    cfg["estoque"] = {"dias_minimos": 2, "longos_por_dia": 1, "shorts_por_dia": 2,
+                      **cfg.get("estoque", {})}
     return cfg
 
 
@@ -274,6 +280,59 @@ def avaliar(client, itens: list[dict]) -> tuple[dict[str, dict], tuple[int, int,
     return {a["id"]: a for a in json.loads(texto)["avaliacoes"] if a["id"] in ids}, custo
 
 
+# --- estoque ------------------------------------------------------------------------------
+
+def _data_pasta(nome: str) -> date | None:
+    try:
+        return date.fromisoformat(nome[:10])
+    except ValueError:
+        return None
+
+
+def ler_shorts(pasta: Path) -> dict:
+    try:
+        return json.loads((pasta / "shorts" / "shorts.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def calcular_estoque(cfg: dict, hoje: date | None = None) -> dict:
+    """O que está pronto e ainda não foi pro ar, de lives dos últimos DIAS_ARQUIVAR dias.
+    Longo = bloco 'aprovado' (coluna "Pronto para publicar"). Short = short_NN gerado de
+    bloco aprovado/agendado/publicado que ainda não foi marcado como postado
+    (registrar_publicacao.py --short)."""
+    hoje = hoje or date.today()
+    try:
+        con = conectar()
+        try:
+            linhas = [dict(r) for r in con.execute(
+                "SELECT b.stem, b.bloco_id, b.status, v.pasta FROM blocos b "
+                "LEFT JOIN videos v ON v.stem = b.stem "
+                "WHERE b.status IN ('aprovado', 'agendado', 'publicado')")]
+        finally:
+            con.close()
+    except Exception as e:  # noqa: BLE001 — banco é best-effort
+        print(f"[aviso] não li o estoque no banco ({e}): considerando vazio", file=sys.stderr)
+        linhas = []
+    longos = shorts = 0
+    cache: dict[Path, dict] = {}
+    for r in linhas:
+        pasta = OUTPUTS / r["pasta"] if r["pasta"] else             next(iter(sorted(OUTPUTS.glob(f"*_{r['stem']}"))), None)
+        data = _data_pasta(pasta.name) if pasta else None
+        if data is None or (hoje - data).days > DIAS_ARQUIVAR:
+            continue
+        if r["status"] == "aprovado":
+            longos += 1
+        if pasta not in cache:
+            cache[pasta] = ler_shorts(pasta)
+        sh = cache[pasta].get(f"{r['bloco_id']:02d}")
+        if sh and not sh.get("postado") and (pasta / "shorts" / sh["arquivo"]).exists():
+            shorts += 1
+    est = cfg["estoque"]
+    dias = min(longos / est["longos_por_dia"], shorts / est["shorts_por_dia"])
+    return {"longos": longos, "shorts": shorts, "dias": dias}
+
+
 # --- processamento ------------------------------------------------------------------------
 
 def _slug(texto: str, max_palavras: int = 5, max_chars: int = 40) -> str:
@@ -314,7 +373,7 @@ def rodar(script: str, *args: str) -> bool:
 def processar(item: dict) -> dict:
     """Baixa, roda o pipeline com polimento + legenda, revisa e gera a lista de publicação."""
     from _paths import achar_pasta
-    from _publicacao import gerar
+    from _publicacao import aprovados, gerar
 
     stem = item["stem"]
     res = {"stem": stem, "titulo": item["titulo"], "canal": item["canal"],
@@ -331,7 +390,12 @@ def processar(item: dict) -> dict:
             res["erro"] = f"{script} falhou"
             evento(stem, "curador_pipeline", "falha", agente="curador", mensagem=res["erro"])
             return res
-    caminho, lista = gerar(achar_pasta(stem))
+    pasta = achar_pasta(stem)
+    for bloco in aprovados(pasta):                 # Short só de corte aprovado ($0, ~1 min cada)
+        if not rodar("10_shorts.py", stem, f"--bloco={bloco['id']}"):
+            res["avisos"].append(f"{stem}: Short do bloco {bloco['id']} falhou "
+                                 f"(10_shorts.py {stem} --bloco={bloco['id']})")
+    caminho, lista = gerar(pasta)
     res.update(ok=True, aprovados=len(lista), publicacao=str(caminho) if caminho else None)
     evento(stem, "curador_pipeline", "ok", agente="curador",
            mensagem=f"{len(lista)} corte(s) pronto(s) pra publicar")
@@ -352,9 +416,17 @@ def processar_seguro(item: dict) -> dict:
 # --- resumo -------------------------------------------------------------------------------
 
 def escrever_resumo(rodada: dict) -> str:
+    est = rodada.get("estoque") or {"longos": 0, "shorts": 0, "dias": 0}
     linhas = [f"# Curador — {rodada['quando']}", "",
               f"Custo de curadoria: US$ {rodada['custo']:.3f} · "
-              f"{len(rodada['processados'])} vídeo(s) processado(s)", ""]
+              f"{len(rodada['processados'])} vídeo(s) processado(s)",
+              f"Estoque no início: {est['longos']} longo(s) + {est['shorts']} Short(s) = "
+              f"{est['dias']:.1f} dia(s)"]
+    if rodada.get("estoque_depois"):
+        d = rodada["estoque_depois"]
+        linhas.append(f"Estoque no fim: {d['longos']} longo(s) + {d['shorts']} Short(s) = "
+                      f"{d['dias']:.1f} dia(s)")
+    linhas.append("")
     prontos = [p for p in rodada["processados"] if p.get("aprovados")]
     if prontos:
         linhas.append("## Prontos pra publicar")
@@ -372,7 +444,7 @@ def escrever_resumo(rodada: dict) -> str:
         linhas.append("## Falhas")
         linhas += [f"- {p['stem']}: {p['erro']}" for p in falhas]
         linhas.append("")
-    for titulo, chave in (("Escolhidos", "escolhidos"), ("Na fila (vale, mas sem vaga hoje)", "fila"),
+    for titulo, chave in (("Escolhidos", "escolhidos"), ("Entraram na fila", "fila"),
                           ("Recusados", "recusados")):
         if rodada[chave]:
             linhas.append(f"## {titulo}")
@@ -394,29 +466,50 @@ def main(argv: list[str]) -> int:
     sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
     dry_run = "--dry-run" in argv
     sem_pipeline = "--sem-pipeline" in argv
+    forcar = "--forcar" in argv
     cfg = carregar_config()
-    maximo = next((int(a.split("=", 1)[1]) for a in argv if a.startswith("--max=")),
-                  cfg["max_por_dia"])
 
     if not dry_run and not pegar_trava():
         print(f"[!] Outra rodada do Curador em andamento ({TRAVA.name}). Saindo.")
         return 1
     try:
-        return _rodada(cfg, maximo, dry_run, sem_pipeline)
+        return _rodada(cfg, dry_run, sem_pipeline, forcar)
     finally:
         if not dry_run:
             soltar_trava()
 
 
-def _rodada(cfg: dict, maximo: int, dry_run: bool, sem_pipeline: bool) -> int:
+def _canal_de(cfg: dict, nome: str) -> dict:
+    return next((c for c in cfg["canais"] if c["nome"] == nome), {})
+
+
+def proximo_da_fila(estado: dict) -> str | None:
+    """Id da fila com maior prioridade; empate = o mais recente."""
+    fila = [(k, v) for k, v in estado.items() if v.get("decisao") == "fila"]
+    if not fila:
+        return None
+    return max(fila, key=lambda kv: (kv[1].get("prioridade", 0), kv[1].get("data") or ""))[0]
+
+
+def expirar_fila(estado: dict, hoje: date) -> list[str]:
+    """Fila mais velha que DIAS_ARQUIVAR vira 'expirado' (mesma regra do conteúdo antigo)."""
+    expirados = []
+    for k, v in estado.items():
+        if v.get("decisao") == "fila" and v.get("data") and \
+                (hoje - date.fromisoformat(v["data"])).days > DIAS_ARQUIVAR:
+            v["decisao"] = "expirado"
+            expirados.append(k)
+    return expirados
+
+
+def _rodada(cfg: dict, dry_run: bool, sem_pipeline: bool, forcar: bool) -> int:
     hoje = date.today()
     estado = ler_estado()
-    vistos = ids_ja_processados() | {k for k, v in estado.items()
-                                     if v.get("decisao") in ("escolhido", "recusado", "falhou")}
+    vistos = ids_ja_processados() | set(estado)     # já avaliado nunca volta pro LLM
     print(f"Curador · {len(cfg['canais'])} canais · últimos {cfg['dias']} dias · "
           f"{cfg['duracao_min']}-{cfg['duracao_max']} min")
 
-    candidatos = []
+    novos = []
     for canal in cfg["canais"]:
         itens = listar_canal(canal, cfg["por_canal"])
         print(f"\n{canal['nome']}: {len(itens)} item(ns) recente(s)")
@@ -427,18 +520,25 @@ def _rodada(cfg: dict, maximo: int, dry_run: bool, sem_pipeline: bool) -> int:
                 motivo = motivo_filtro(item, cfg, hoje, vistos)
             if motivo:
                 print(f"   - {item['titulo'][:60]} ({motivo})")
-            elif item["id"] not in {c["id"] for c in candidatos}:
-                candidatos.append(item)
+            elif item["id"] not in {c["id"] for c in novos}:
+                novos.append(item)
                 print(f"   + {item['titulo'][:60]} ({item['duracao_s'] // 60} min, {item['data']})")
 
-    da_fila = [c for c in candidatos if estado.get(c["id"], {}).get("decisao") == "fila"]
-    novos = [c for c in candidatos if c not in da_fila]
-    print(f"\n{len(novos)} novo(s) pro Claude, {len(da_fila)} da fila de ontem")
+    estoque = calcular_estoque(cfg)
+    minimo = cfg["estoque"]["dias_minimos"]
+    precisa = forcar or estoque["dias"] < minimo
+    print(f"\nEstoque: {estoque['longos']} longo(s) + {estoque['shorts']} Short(s) prontos = "
+          f"{estoque['dias']:.1f} dia(s) (mínimo {minimo}) → "
+          f"{'processa 1 vídeo' if precisa else 'não processa hoje'}")
+    na_fila = sum(1 for v in estado.values() if v.get("decisao") == "fila")
+    print(f"{len(novos)} novo(s) pro Claude, {na_fila} na fila")
     if dry_run:
         print("(dry-run: nada foi enviado nem baixado)")
         return 0
 
-    avaliacoes, custo = {}, (0, 0, 0.0)
+    agora = datetime.now().isoformat(timespec="seconds")
+    rodada = {"quando": agora, "custo": 0.0, "estoque": estoque, "escolhidos": [],
+              "fila": [], "recusados": [], "processados": []}
     if novos:
         from anthropic import Anthropic
         from dotenv import load_dotenv
@@ -451,55 +551,53 @@ def _rodada(cfg: dict, maximo: int, dry_run: bool, sem_pipeline: bool) -> int:
             evento(None, "curadoria", "falha", agente="curador", mensagem=str(e)[:300])
             print(f"[!] Curadoria falhou: {e}")
             return 1
+        rodada["custo"] = custo[2]
         evento(None, "curadoria", "llm", agente="curador", tokens_in=custo[0],
                tokens_out=custo[1], custo_usd=custo[2], mensagem=MODELO)
         print(f"Claude: {custo[0]:,} tok in · {custo[1]:,} tok out · US$ {custo[2]:.3f}")
-    for c in da_fila:
-        avaliacoes[c["id"]] = {**estado[c["id"]], "vale": True}
-
-    agora = datetime.now().isoformat(timespec="seconds")
-    rodada = {"quando": agora, "custo": custo[2], "escolhidos": [], "fila": [],
-              "recusados": [], "processados": []}
-    valem = sorted((c for c in candidatos if avaliacoes.get(c["id"], {}).get("vale")),
-                   key=lambda c: -avaliacoes[c["id"]]["prioridade"])
-    for c in candidatos:
-        a = avaliacoes.get(c["id"])
-        if a is None:                               # recusa do modelo/id faltando: tenta amanhã
-            continue
-        registro = {"titulo": c["titulo"], "canal": c["canal"], "url": c["url"],
-                    "data": c["data"], "prioridade": a["prioridade"], "motivo": a["motivo"],
-                    "avaliado_em": estado.get(c["id"], {}).get("avaliado_em", agora),
-                    "tentativas": estado.get(c["id"], {}).get("tentativas", 0)}
-        if not a["vale"]:
-            estado[c["id"]] = {**registro, "decisao": "recusado"}
-            rodada["recusados"].append(registro)
-            evento(None, "curadoria", "recusado", agente="curador",
-                   mensagem=f"{c['canal']}: {c['titulo']} — {a['motivo']}")
-        elif c in valem[:maximo]:
-            c["stem"] = montar_stem(c["prefixo"], c["titulo"],
-                                    {e["stem"] for e in rodada["escolhidos"]})
-            estado[c["id"]] = {**registro, "decisao": "escolhido", "stem": c["stem"]}
-            rodada["escolhidos"].append({**registro, "stem": c["stem"]})
-            evento(c["stem"], "curadoria", "ok", agente="curador",
-                   mensagem=f"escolhido (prioridade {a['prioridade']}): {a['motivo']}")
-        else:
-            estado[c["id"]] = {**registro, "decisao": "fila"}
-            rodada["fila"].append(registro)
+        for c in novos:
+            a = avaliacoes.get(c["id"])
+            if a is None:                           # recusa do modelo/id faltando: tenta amanhã
+                continue
+            registro = {"titulo": c["titulo"], "canal": c["canal"], "url": c["url"],
+                        "data": c["data"], "prefixo": c["prefixo"], "zoom": c.get("zoom"),
+                        "prioridade": a["prioridade"], "motivo": a["motivo"],
+                        "avaliado_em": agora, "tentativas": 0,
+                        "decisao": "fila" if a["vale"] else "recusado"}
+            estado[c["id"]] = registro
+            if a["vale"]:
+                rodada["fila"].append(registro)
+            else:
+                rodada["recusados"].append(registro)
+                evento(None, "curadoria", "recusado", agente="curador",
+                       mensagem=f"{c['canal']}: {c['titulo']} — {a['motivo']}")
+    expirar_fila(estado, hoje)
     gravar_estado(estado)
 
-    escolhidos = valem[:maximo]
-    if escolhidos and not sem_pipeline:
-        print(f"\nProcessando {len(escolhidos)} vídeo(s) (~US$ {CUSTO_POR_VIDEO * len(escolhidos):.2f})")
-        for c in escolhidos:
-            res = processar_seguro(c)
-            rodada["processados"].append(res)
-            if not res["ok"] and not (INPUTS / f"{c['stem']}.url").exists():
-                # nem baixou: volta pra fila (sem nova chamada de LLM) até MAX_TENTATIVAS
-                tentativas = estado[c["id"]].get("tentativas", 0) + 1
-                estado[c["id"]].update(
-                    tentativas=tentativas,
-                    decisao="fila" if tentativas < MAX_TENTATIVAS else "falhou")
-                gravar_estado(estado)
+    vid = proximo_da_fila(estado) if precisa and not sem_pipeline else None
+    if vid:
+        e = estado[vid]
+        canal = _canal_de(cfg, e["canal"])
+        item = {"id": vid, "url": e["url"], "titulo": e["titulo"], "canal": e["canal"],
+                "prefixo": e.get("prefixo") or canal.get("prefixo", "video"),
+                "zoom": e.get("zoom", canal.get("zoom"))}
+        item["stem"] = e.get("stem") or montar_stem(item["prefixo"], item["titulo"])
+        e.update(decisao="escolhido", stem=item["stem"])
+        gravar_estado(estado)
+        rodada["escolhidos"].append(e)
+        rodada["fila"] = [x for x in rodada["fila"] if x is not e]
+        evento(item["stem"], "curadoria", "ok", agente="curador",
+               mensagem=f"escolhido (prioridade {e['prioridade']}, estoque "
+                        f"{estoque['dias']:.1f} dia(s)): {e['motivo']}")
+        print(f"\nProcessando: {item['titulo']} (~US$ {CUSTO_POR_VIDEO:.2f})")
+        res = processar_seguro(item)
+        rodada["processados"].append(res)
+        if not res["ok"] and not (INPUTS / f"{item['stem']}.url").exists():
+            # nem baixou: volta pra fila (sem nova chamada de LLM) até MAX_TENTATIVAS
+            e["tentativas"] = e.get("tentativas", 0) + 1
+            e["decisao"] = "fila" if e["tentativas"] < MAX_TENTATIVAS else "falhou"
+            gravar_estado(estado)
+        rodada["estoque_depois"] = calcular_estoque(cfg)
 
     print("\n" + escrever_resumo(rodada))
     return 0 if all(p["ok"] for p in rodada["processados"]) else 1
