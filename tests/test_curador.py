@@ -318,3 +318,75 @@ def test_processar_para_na_primeira_falha(raiz, monkeypatch, banco):
     assert chamadas == ["01_baixar.py", "pipeline.py"]
     assert not res["ok"] and "pipeline.py" in res["erro"]
     assert banco("SELECT 1 FROM eventos WHERE agente='curador' AND status='falha'")
+
+
+# --- lacunas: resumo, fila + novos, recusa do modelo ---------------------------------------
+
+def _rodada_vazia(**kw):
+    return {"quando": "2026-10-22T09:00:00", "custo": 0.0, "escolhidos": [], "fila": [],
+            "recusados": [], "processados": [], **kw}
+
+
+def test_escrever_resumo_falhas_avisos_e_secoes(raiz):
+    reg = {"titulo": "Live Z", "canal": "Kim", "motivo": "tema fraco"}
+    texto = cu.escrever_resumo(_rodada_vazia(
+        custo=0.0123, fila=[reg], recusados=[reg],
+        processados=[
+            {"stem": "a", "titulo": "Live A", "canal": "Renan", "ok": True, "aprovados": 2,
+             "publicacao": "pub.txt", "avisos": ["a: canal sem zoom"]},
+            {"stem": "b", "titulo": "Live B", "canal": "Kim", "ok": False, "aprovados": 0,
+             "publicacao": None, "avisos": [], "erro": "pipeline.py falhou"}]))
+    assert "US$ 0.012" in texto and "2 vídeo(s)" in texto
+    assert "2 corte(s)" in texto and "`pub.txt`" in texto
+    assert "## Falhas" in texto and "- b: pipeline.py falhou" in texto
+    assert "Na fila" in texto and "Recusados" in texto and "tema fraco" in texto
+    assert "## Avisos" in texto and "a: canal sem zoom" in texto
+    assert "b: pipeline.py falhou" in texto
+    assert cu.RESUMO.read_text(encoding="utf-8") == texto
+
+
+def test_escrever_resumo_vazio_sem_secoes(raiz):
+    texto = cu.escrever_resumo(_rodada_vazia())
+    assert "0 vídeo(s)" in texto and "##" not in texto
+
+
+def test_rodada_fila_e_novo_na_mesma_rodada(raiz, rodada):
+    cu.gravar_estado({"a": {"decisao": "fila", "prioridade": 6, "motivo": "m",
+                            "titulo": "Live Alfa", "canal": "Renan Santos",
+                            "avaliado_em": "2026-10-21T09:00:00"}})
+    rodada["listar"] = {"renan": [_item("a", "Live Alfa"), _item("n", "Live Novo")]}
+    rodada["avaliacoes"] = {"n": _av(True, 9)}
+    assert cu.main([]) == 0
+    assert rodada["enviados"] == ["n"]                    # só o novo vai pro LLM
+    assert rodada["processados"] == ["renan_live_novo"]   # prioridade 9 > 6 da fila
+    estado = json.loads(cu.ESTADO.read_text(encoding="utf-8"))
+    assert estado["a"]["decisao"] == "fila" and estado["n"]["decisao"] == "escolhido"
+    assert estado["a"]["avaliado_em"] == "2026-10-21T09:00:00"   # mantém a data original
+
+
+def test_recusa_do_modelo_nao_grava_estado_do_id_sem_avaliacao(raiz, rodada):
+    rodada["listar"] = {"renan": [_item("a", "Live Alfa"), _item("b", "Live Bravo")]}
+    rodada["avaliacoes"] = {"a": _av(True, 8)}            # "b" volta sem avaliação
+    assert cu.main([]) == 0
+    estado = json.loads(cu.ESTADO.read_text(encoding="utf-8"))
+    assert "b" not in estado and estado["a"]["decisao"] == "escolhido"
+    assert rodada["processados"] == ["renan_live_alfa"]
+
+
+def test_modelo_recusa_tudo_nao_grava_nada_e_nao_processa(raiz, rodada):
+    rodada["listar"] = {"renan": [_item("a")]}
+    assert cu.main([]) == 0                               # avaliacoes vazio
+    assert rodada["processados"] == []
+    estado = json.loads(cu.ESTADO.read_text(encoding="utf-8")) if cu.ESTADO.exists() else {}
+    assert estado == {}
+
+
+def test_processamento_com_falha_sai_com_codigo_1(raiz, rodada, monkeypatch):
+    rodada["listar"] = {"renan": [_item("a")]}
+    rodada["avaliacoes"] = {"a": _av(True, 8)}
+    monkeypatch.setattr(cu, "processar", lambda item: {
+        "stem": item["stem"], "titulo": "t", "canal": "c", "ok": False, "aprovados": 0,
+        "publicacao": None, "avisos": [], "erro": "01_baixar.py falhou"})
+    assert cu.main([]) == 1
+    assert "01_baixar.py falhou" in cu.RESUMO.read_text(encoding="utf-8")
+    assert not cu.TRAVA.exists()

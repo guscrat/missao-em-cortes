@@ -69,3 +69,33 @@ def test_sem_revisao_lista_vazia(tmp_path):
     pasta = tmp_path / "p"
     pasta.mkdir()
     assert pub.aprovados(pasta) == []
+
+
+def test_final_preferencias(tmp_path):
+    f = tmp_path / "finalizados"
+    f.mkdir()
+
+    def com(*nomes):
+        for p in f.iterdir():
+            p.unlink()
+        for n in nomes:
+            (f / n).touch()
+        return pub._final(tmp_path, 1)
+
+    assert com("video_01_a.mp4", "video_01_a_polido.mp4").name == "video_01_a_polido.mp4"
+    assert com("video_01_a.mp4", "video_01_a_polido.mp4",
+               "video_01_a_legendado.mp4").name == "video_01_a_legendado.mp4"
+    assert com("video_01_a_legendado.mp4",
+               "video_01_a_polido_legendado.mp4").name == "video_01_a_polido_legendado.mp4"
+    assert com("video_01_a.mp4").name == "video_01_a.mp4"
+    assert com("video_02_b.mp4") is None                  # outro bloco não conta
+    assert com() is None
+
+
+def test_gerar_sem_thumb_e_titulo_cai_pro_sugerido(tmp_path):
+    pasta = _pasta(tmp_path, {"01": {"status": "aprovado"}}, [_bloco(1, 8)], ["video_01_a.mp4"])
+    (pasta / "descricoes.txt").unlink()
+    caminho, lista = pub.gerar(pasta, datetime(2026, 10, 22, 20))
+    texto = caminho.read_text(encoding="utf-8")
+    assert "(sem thumb)" in texto and "sug 1" in texto
+    assert "sex 23/10 18h" in texto                       # depois das 16h: começa amanhã
