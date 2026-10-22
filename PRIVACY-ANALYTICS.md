@@ -27,7 +27,7 @@ nem dados pessoais de espectadores.
 ## Quais dados são armazenados
 São armazenados localmente, no computador do responsável, somente:
 - o token de autorização OAuth, para manter o acesso de leitura à própria conta;
-- os números de retenção calculados a partir dessas métricas, guardados no banco local do
+- os números de retenção calculados a partir dessas métricas, guardados num arquivo de estado e no banco local do
   painel interno do canal.
 
 Nenhum dado é vendido, compartilhado com terceiros ou usado para publicidade.
