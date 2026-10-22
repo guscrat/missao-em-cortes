@@ -314,7 +314,7 @@ def main(argv: list[str]) -> int:
         ini = hhmmss_para_segundos(b["timestamp_inicio"])
         fim = hhmmss_para_segundos(b["timestamp_fim"])
         transcricao = " ".join(w["word"] for w in palavras_na_janela(todas, ini, fim))
-        tentativas = []
+        tentativas, custo_bloco = [], 0.0
         while True:
             r = revisar_bloco(client, anthropic, stem, pasta, b, nn, video, titulo, texto_thumb,
                               transcricao)
@@ -323,6 +323,7 @@ def main(argv: list[str]) -> int:
                 break
             checagens, status, motivo, usd = r
             total += usd
+            custo_bloco += usd
             if not (com_editor and precisa_editor(status, checagens)):
                 break
             if len(tentativas) == _editor.MAX_RODADAS:
@@ -333,6 +334,7 @@ def main(argv: list[str]) -> int:
             novo, usd_ed = editar(client, anthropic, stem, pasta, b, titulo, texto_thumb,
                                   checagens["titulo_problema"], transcricao, tentativas)
             total += usd_ed
+            custo_bloco += usd_ed
             if novo is None:
                 motivo += " (editor não conseguiu reescrever — revisar à mão)"
                 break
@@ -347,7 +349,8 @@ def main(argv: list[str]) -> int:
         revisao[nn] = {"status": status, "motivo": motivo, "checagens": checagens,
                        "titulo": titulo, "texto_thumb": texto_thumb,
                        "thumb": thumb.name if thumb else None,
-                       "reescritas": tentativas, "modelo": MODELO}
+                       "reescritas": tentativas, "modelo": MODELO,
+                       "custo_usd": round(custo_bloco, 4)}
         revisao_path.write_text(json.dumps(revisao, ensure_ascii=False, indent=2),
                                 encoding="utf-8")
         evento(stem, "11_revisor", "ok", agente="revisor", bloco_id=bid,
