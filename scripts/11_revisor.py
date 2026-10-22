@@ -8,28 +8,38 @@ Pra cada bloco montado, UMA chamada ao Claude (com visão) recebe:
   - o título que vai pro YouTube (descricoes.txt; edição manual vale) e o texto da thumb
   - a transcrição do trecho (words.json)
   - a thumb escolhida (manual > a > b > c) e 6 frames espalhados pelo corte
-e responde 3 checagens em JSON estruturado:
+e responde 4 checagens em JSON estruturado:
   1. título fiel à fala (gancho pode ser ousado, mas não pode distorcer o que foi dito)
   2. thumb ok (rosto do speaker visível, texto legível e coerente, não é tela compartilhada)
   3. tela compartilhada (a maior parte do corte mostra tela em vez de gente falando)
+  4. corte sem sentido (o trecho não se sustenta sozinho)
 
-Quem decide é o código, não o modelo: tudo ok → status "aprovado"; qualquer problema →
-"quarentena" com o motivo (aparece no painel). Nunca mexe em bloco já "agendado" ou
-"publicado". Resultado completo em outputs/<pasta>/revisao.json.
+Quem decide é o código, não o modelo (regra de produto da quarentena):
+  - problema de CONTEÚDO (3 ou 4) → "descartado" com o motivo; não sobe, não chama ninguém
+  - título reprovado → o EDITOR (_editor.py) reescreve título + texto da thumb, refaz a
+    thumb/Short e o revisor reavalia; no máx. 2 reescritas. Reprovou nas 2 → "quarentena"
+    e vira decisão do Gu (faixa amarela na tarefa do MISSAO_TAREFA, se houver)
+  - só a thumb reprovada → "quarentena" (trocar o frame é à mão: 07_thumb.py --t=)
+  - tudo ok → "aprovado"
+Nunca mexe em bloco já "agendado" ou "publicado". --sem-editor desliga as reescritas.
+Resultado completo em outputs/<pasta>/revisao.json.
 
 Custo: ~US$ 0.05 por bloco (claude-opus-5-5, ~7 imagens pequenas + transcrição),
-~US$ 0.25 por live. Logado por bloco no banco (agente="revisor").
+~US$ 0.25 por live; cada rodada do editor soma ~US$ 0.06 (reescrita + nova revisão).
+Logado por bloco no banco (agente="revisor" e agente="editor").
 """
 import base64
 import json
+import os
 import subprocess
 import sys
 sys.stdout.reconfigure(encoding='utf-8')
 import time
 from pathlib import Path
 
+import _editor
 from _descricoes import ler_descricoes
-from _eventos import evento, ler_bloco, upsert_bloco
+from _eventos import atualizar_tarefa, evento, ler_bloco, upsert_bloco
 from _legenda import hhmmss_para_segundos, palavras_na_janela
 from _paths import achar_pasta, escolher_thumb, stem_de
 
@@ -49,9 +59,11 @@ SCHEMA = {
         "thumb_problema": {"type": "string"},
         "tela_compartilhada": {"type": "boolean"},
         "tela_problema": {"type": "string"},
+        "corte_sem_sentido": {"type": "boolean"},
+        "sentido_problema": {"type": "string"},
     },
     "required": ["titulo_fiel", "titulo_problema", "thumb_ok", "thumb_problema",
-                 "tela_compartilhada", "tela_problema"],
+                 "tela_compartilhada", "tela_problema", "corte_sem_sentido", "sentido_problema"],
     "additionalProperties": False,
 }
 
@@ -71,7 +83,10 @@ legível, sem corte no meio de palavra, e coerente com o título? Reprove se o f
 compartilhada/documento, se não há rosto, ou se o texto está truncado ou sem sentido.
 3. tela_compartilhada: nos frames do corte (imagens seguintes), a MAIOR parte mostra tela \
 compartilhada (navegador, matéria, gráfico, documento) em vez de pessoas falando? Isso é \
-true. Algum frame de tela no meio é normal: aí é false."""
+true. Algum frame de tela no meio é normal: aí é false.
+4. corte_sem_sentido: pela transcrição, o trecho NÃO se sustenta sozinho? Ex.: começa ou \
+termina no meio de um raciocínio a ponto de não dar pra entender do que se fala, ou pula \
+de assunto sem fio condutor. Começo abrupto mas compreensível é false."""
 
 
 def ler_imagem_b64(path: Path, largura: int = LARGURA_IMG) -> str:
@@ -143,17 +158,27 @@ def chamar_claude(client, conteudo: list[dict]) -> tuple[dict | None, object]:
 
 
 def decidir(checagens: dict | None) -> tuple[str, str | None]:
-    """(status, motivo). O veredito é do código: qualquer checagem reprovada = quarentena."""
+    """(status, motivo). O veredito é do código: conteúdo ruim = descartado; título ou
+    thumb reprovados = quarentena (o título ainda passa pelo editor no main)."""
     if checagens is None:
         return "quarentena", "revisor automático recusou analisar — revisar à mão"
+    conteudo = []
+    if checagens["tela_compartilhada"]:
+        conteudo.append(f"tela compartilhada: {checagens['tela_problema'] or 'maior parte do corte'}")
+    if checagens.get("corte_sem_sentido"):
+        conteudo.append(f"corte sem sentido: {checagens.get('sentido_problema') or 'não se sustenta sozinho'}")
+    if conteudo:
+        return "descartado", "; ".join(conteudo)
     problemas = []
     if not checagens["titulo_fiel"]:
         problemas.append(f"título: {checagens['titulo_problema'] or 'não fiel à fala'}")
     if not checagens["thumb_ok"]:
         problemas.append(f"thumb: {checagens['thumb_problema'] or 'reprovada'}")
-    if checagens["tela_compartilhada"]:
-        problemas.append(f"tela compartilhada: {checagens['tela_problema'] or 'maior parte do corte'}")
     return ("quarentena", "; ".join(problemas)) if problemas else ("aprovado", None)
+
+
+def precisa_editor(status: str, checagens: dict | None) -> bool:
+    return status == "quarentena" and checagens is not None and not checagens["titulo_fiel"]
 
 
 def custo(resp) -> tuple[int, int, float]:
@@ -168,6 +193,69 @@ def escolher_video(pasta: Path, nn: str) -> Path | None:
     return cortes[0] if cortes else None
 
 
+def revisar_bloco(client, anthropic, stem, pasta, b, nn, video, titulo, texto_thumb,
+                  transcricao):
+    """Uma revisão (uma chamada). (checagens, status, motivo, custo) ou None se falhou."""
+    bid = b["id"]
+    thumb = escolher_thumb(pasta / "thumbs", nn)
+    t0 = time.time()
+    evento(stem, "11_revisor", "inicio", agente="revisor", bloco_id=bid)
+    try:
+        conteudo = montar_conteudo(titulo, texto_thumb, transcricao,
+                                   ler_imagem_b64(thumb) if thumb else None, frames_b64(video))
+        checagens, resp = chamar_claude(client, conteudo)
+    except (anthropic.APIError, subprocess.CalledProcessError, json.JSONDecodeError) as e:
+        print(f"  [!] {nn}: revisão falhou ({type(e).__name__}: {str(e)[:200]})")
+        evento(stem, "11_revisor", "falha", agente="revisor", bloco_id=bid,
+               mensagem=type(e).__name__, duracao_s=time.time() - t0)
+        return None
+    tin, tout, usd = custo(resp)
+    evento(stem, "11_revisor", "llm", agente="revisor", bloco_id=bid, tokens_in=tin,
+           tokens_out=tout, custo_usd=usd, mensagem=resp.model, duracao_s=time.time() - t0)
+    status, motivo = decidir(checagens)
+    print(f"  {nn}: revisor → {status}{' — ' + motivo if motivo else ''} (US$ {usd:.3f})")
+    return checagens, status, motivo, usd
+
+
+def editar(client, anthropic, stem, pasta, b, titulo, texto_thumb, problema, transcricao,
+           tentativas) -> tuple[dict | None, float]:
+    """Uma reescrita do editor, já gravada (txt, json, thumb, Short). (novo ou None, custo)."""
+    bid, nn = b["id"], f"{b['id']:02d}"
+    evento(stem, "11_editor", "inicio", agente="editor", bloco_id=bid)
+    pedido = _editor.montar_pedido(titulo, texto_thumb, problema, transcricao, tentativas)
+    try:
+        novo, resp = _editor.reescrever(client, pedido)
+    except (anthropic.APIError, json.JSONDecodeError) as e:
+        print(f"  [!] {nn}: editor falhou ({type(e).__name__}: {str(e)[:200]})")
+        evento(stem, "11_editor", "falha", agente="editor", bloco_id=bid, mensagem=type(e).__name__)
+        return None, 0.0
+    tin, tout, usd = _editor.custo(resp)
+    evento(stem, "11_editor", "llm", agente="editor", bloco_id=bid, tokens_in=tin,
+           tokens_out=tout, custo_usd=usd, mensagem=resp.model)
+    if novo is None:
+        evento(stem, "11_editor", "falha", agente="editor", bloco_id=bid, mensagem="recusou")
+        return None, usd
+    _editor.gravar_texto(pasta, bid, novo["titulo"], novo["texto_thumb"])
+    for aviso in _editor.refazer_artes(pasta, bid, escolher_thumb(pasta / "thumbs", nn)):
+        print(f"  [aviso] {nn}: {aviso}")
+    evento(stem, "11_editor", "ok", agente="editor", bloco_id=bid,
+           mensagem=f"{novo['titulo']} | {novo['mudanca']}"[:300])
+    print(f"  {nn}: editor reescreveu (US$ {usd:.3f}) → '{novo['titulo']}' · "
+          f"thumb '{novo['texto_thumb']}'")
+    return novo, usd
+
+
+def chamar_gu(stem: str, nn: str, motivo: str) -> None:
+    """Título reprovou em todas as reescritas: decisão do Gu (chat + faixa amarela)."""
+    print(f"\n  >>> DECISÃO DO GU ({stem} bloco {nn}): {motivo}\n")
+    evento(stem, "11_revisor", "aviso", agente="revisor", bloco_id=int(nn),
+           mensagem=f"decisão do Gu: {motivo}"[:300])
+    tarefa = os.environ.get("MISSAO_TAREFA", "")
+    if tarefa.isdigit():
+        atualizar_tarefa(int(tarefa), decisao_pendente=f"{stem} bloco {nn}: título reprovou "
+                         f"{_editor.MAX_RODADAS}x após reescrita. Aprovar um título à mão?")
+
+
 def main(argv: list[str]) -> int:
     pos = [a for a in argv if not a.startswith("--")]
     flags = dict(a[2:].split("=", 1) if "=" in a else (a[2:], True)
@@ -175,6 +263,7 @@ def main(argv: list[str]) -> int:
     if not pos:
         sys.exit("Uso: uv run py scripts/11_revisor.py <stem> [--bloco=N] [--dry-run]")
     dry = bool(flags.get("dry-run"))
+    com_editor = not flags.get("sem-editor")
     so_bloco = int(flags["bloco"]) if "bloco" in flags else None
 
     pasta = achar_pasta(pos[0])
@@ -203,7 +292,9 @@ def main(argv: list[str]) -> int:
         fila.append((b, nn, video))
 
     print(f"\nRevisão de '{stem}': {len(fila)} bloco(s) · {MODELO} · "
-          f"custo estimado ~US$ {CUSTO_ESTIMADO_BLOCO * len(fila):.2f}")
+          f"custo estimado ~US$ {CUSTO_ESTIMADO_BLOCO * len(fila):.2f}"
+          + (f" (até +US$ {(CUSTO_ESTIMADO_BLOCO + _editor.CUSTO_ESTIMADO) * _editor.MAX_RODADAS:.2f}"
+             f"/bloco se o editor reescrever)" if com_editor else ""))
     if dry or not fila:
         print("(dry-run: nada foi enviado)" if dry else "Nada a revisar.")
         return 0
@@ -223,36 +314,47 @@ def main(argv: list[str]) -> int:
         ini = hhmmss_para_segundos(b["timestamp_inicio"])
         fim = hhmmss_para_segundos(b["timestamp_fim"])
         transcricao = " ".join(w["word"] for w in palavras_na_janela(todas, ini, fim))
-        thumb = escolher_thumb(pasta / "thumbs", nn)
-        t0 = time.time()
-        evento(stem, "11_revisor", "inicio", agente="revisor", bloco_id=bid)
-        try:
-            conteudo = montar_conteudo(titulo, texto_thumb, transcricao,
-                                       ler_imagem_b64(thumb) if thumb else None, frames_b64(video))
-            checagens, resp = chamar_claude(client, conteudo)
-        except (anthropic.APIError, subprocess.CalledProcessError, json.JSONDecodeError) as e:
-            falhas += 1
-            print(f"  [!] {nn}: revisão falhou ({type(e).__name__}: {str(e)[:200]})")
-            evento(stem, "11_revisor", "falha", agente="revisor", bloco_id=bid,
-                   mensagem=type(e).__name__, duracao_s=time.time() - t0)
+        tentativas = []
+        while True:
+            r = revisar_bloco(client, anthropic, stem, pasta, b, nn, video, titulo, texto_thumb,
+                              transcricao)
+            if r is None:
+                falhas += 1
+                break
+            checagens, status, motivo, usd = r
+            total += usd
+            if not (com_editor and precisa_editor(status, checagens)):
+                break
+            if len(tentativas) == _editor.MAX_RODADAS:
+                motivo = (f"título reprovou nas {_editor.MAX_RODADAS} reescritas do editor — "
+                          f"decisão do Gu ({motivo})")
+                chamar_gu(stem, nn, motivo)
+                break
+            novo, usd_ed = editar(client, anthropic, stem, pasta, b, titulo, texto_thumb,
+                                  checagens["titulo_problema"], transcricao, tentativas)
+            total += usd_ed
+            if novo is None:
+                motivo += " (editor não conseguiu reescrever — revisar à mão)"
+                break
+            tentativas.append({"titulo": titulo, "texto_thumb": texto_thumb,
+                               "problema": checagens["titulo_problema"]})
+            titulo, texto_thumb = novo["titulo"], novo["texto_thumb"]
+        if r is None:
             continue
 
-        tin, tout, usd = custo(resp)
-        total += usd
-        evento(stem, "11_revisor", "llm", agente="revisor", bloco_id=bid, tokens_in=tin,
-               tokens_out=tout, custo_usd=usd, mensagem=resp.model)
-        status, motivo = decidir(checagens)
         upsert_bloco(stem, bid, status=status, forcar_status=True, motivo=motivo)
+        thumb = escolher_thumb(pasta / "thumbs", nn)
         revisao[nn] = {"status": status, "motivo": motivo, "checagens": checagens,
-                       "titulo": titulo, "thumb": thumb.name if thumb else None,
-                       "modelo": resp.model, "custo_usd": round(usd, 4)}
+                       "titulo": titulo, "texto_thumb": texto_thumb,
+                       "thumb": thumb.name if thumb else None,
+                       "reescritas": tentativas, "modelo": MODELO}
         revisao_path.write_text(json.dumps(revisao, ensure_ascii=False, indent=2),
                                 encoding="utf-8")
         evento(stem, "11_revisor", "ok", agente="revisor", bloco_id=bid,
-               mensagem=f"{status}{': ' + motivo if motivo else ''}"[:300],
-               duracao_s=time.time() - t0)
-        icone = "OK" if status == "aprovado" else "QUARENTENA"
-        print(f"  {nn}: {icone}{' — ' + motivo if motivo else ''} (US$ {usd:.3f})")
+               mensagem=f"{status}{': ' + motivo if motivo else ''}"[:300])
+        icone = {"aprovado": "OK", "descartado": "DESCARTADO"}.get(status, "QUARENTENA")
+        extra = f" após {len(tentativas)} reescrita(s)" if tentativas else ""
+        print(f"  {nn}: {icone}{extra}{' — ' + motivo if motivo else ''}")
 
     print(f"\nRevisados {len(fila) - falhas}/{len(fila)} · custo US$ {total:.3f} · "
           f"detalhes em {revisao_path.name}")

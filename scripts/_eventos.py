@@ -31,7 +31,7 @@ BUSY_TIMEOUT_S = 10   # espera por lock; o hook do Claude Code baixa pra caber e
 # outputs/ (sincronizar_estado.py pode sobrescrever). Os demais são decisões de
 # agente/humano e NUNCA são rebaixados pela sincronização.
 STATUS_AUTO = ["segmentado", "cortado", "montado"]
-STATUS_DECISAO = ["revisao", "aprovado", "quarentena", "agendado", "publicado"]
+STATUS_DECISAO = ["revisao", "aprovado", "quarentena", "descartado", "agendado", "publicado"]
 STATUS_BLOCO = STATUS_AUTO + STATUS_DECISAO
 
 STATUS_VIDEO = ["curadoria", "baixado", "transcrito", "segmentado", "descartado"]
