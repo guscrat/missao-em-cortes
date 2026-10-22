@@ -1,3 +1,5 @@
+import pytest
+
 from _eventos import upsert_bloco
 from sincronizar_estado import main, sincronizar_pasta
 
@@ -85,3 +87,12 @@ def test_main_ignora_pastas_sem_data(projeto, capsys):
     main()
     assert [r["stem"] for r in projeto.banco("SELECT stem FROM videos")] == ["v"]
     assert "1 vídeos" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("status", ["quarentena", "descartado"])
+def test_sincronizar_nao_rebaixa_quarentena_nem_descartado(projeto, status):
+    pasta = projeto.video("v", finalizados=[1])
+    sincronizar_pasta(pasta)
+    upsert_bloco("v", 1, status=status, forcar_status=True)
+    sincronizar_pasta(pasta)
+    assert _blocos(projeto.banco)[1]["status"] == status
