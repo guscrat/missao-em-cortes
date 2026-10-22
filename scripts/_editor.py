@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 import _grafias
-from _descricoes import trocar_titulo
+from _descricoes import trocar_creditos, trocar_titulo
 
 MODELO = "claude-opus-5-5"
 PRECO_IN, PRECO_OUT = 4.0, 20.0        # US$ por 1M tokens (opus 5.5)
@@ -202,6 +202,19 @@ def _colagem_aplicada(thumb: Path) -> dict | None:
     return _colagem.variante_aplicada(thumb)
 
 
+def voltar_template(pasta: Path, bid: int) -> bool:
+    """Tira a colagem do bloco: refaz a/b/c no template atual (07) e tira da descrição o crédito
+    da foto do banco (a foto saiu da thumb). True se o 07 rodou."""
+    r = subprocess.run([sys.executable, str(SCRIPTS / "07_thumb.py"), pasta.name, f"--bloco={bid}"],
+                       capture_output=True)
+    if r.returncode:
+        return False
+    desc = pasta / "descricoes.txt"
+    if desc.exists():
+        desc.write_text(trocar_creditos(desc.read_text(encoding="utf-8"), bid, []), encoding="utf-8")
+    return True
+
+
 def refazer_artes(pasta: Path, bid: int, thumb: Path | None) -> list[str]:
     """Refaz a thumb escolhida e o Short com o texto novo. Devolve avisos (não derruba)."""
     nn, avisos = f"{bid:02d}", []
@@ -217,8 +230,7 @@ def refazer_artes(pasta: Path, bid: int, thumb: Path | None) -> list[str]:
                             "--aplicar", "--sem-editor"], capture_output=True)
         if r.returncode:
             avisos.append("colagem não saiu com o texto novo: voltou pro template atual")
-            if subprocess.run([*py, str(SCRIPTS / "07_thumb.py"), pasta.name, f"--bloco={bid}"],
-                              capture_output=True).returncode:
+            if not voltar_template(pasta, bid):
                 avisos.append("falhou ao refazer a thumb")
     elif thumb:
         variante = thumb.stem.rsplit("_", 1)[-1]

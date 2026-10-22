@@ -326,3 +326,24 @@ def test_11_texto_da_thumb(tmp_path, monkeypatch):
     assert rv.texto_da_thumb(tmp_path, 1, "TXT") == "QUEM MANDA LULA? | OUTRO TEXTO"
     monkeypatch.setattr(rv._colagem, "colagem_aplicada", lambda t, b: {"variantes": {}})
     assert rv.texto_da_thumb(tmp_path, 1, "TXT") == "TXT"
+
+
+def test_voltar_template_tira_credito(tmp_path, runs):
+    cmds, _ = runs
+    p = _pasta(tmp_path)
+    cred = "Foto de Lula: X / Wikimedia Commons, CC BY 2.0 (fundo removido)"
+    (p / "descricoes.txt").write_text(_txt([1, 2], {1: [cred], 2: [cred]}), encoding="utf-8")
+    assert _editor.voltar_template(p, 1) is True
+    assert cmds[0][1].endswith("07_thumb.py") and "--bloco=1" in cmds[0]
+    texto = (p / "descricoes.txt").read_text(encoding="utf-8")
+    assert texto.count(cred) == 1          # só o bloco 2 manteve
+
+
+def test_voltar_template_falha_nao_mexe_na_descricao(tmp_path, runs):
+    _, rcs = runs
+    rcs["07_thumb"] = 1
+    p = _pasta(tmp_path)
+    cred = "Foto de Lula: X / Wikimedia Commons, CC BY 2.0 (fundo removido)"
+    (p / "descricoes.txt").write_text(_txt([1], {1: [cred]}), encoding="utf-8")
+    assert _editor.voltar_template(p, 1) is False
+    assert cred in (p / "descricoes.txt").read_text(encoding="utf-8")

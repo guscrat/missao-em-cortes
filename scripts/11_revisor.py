@@ -422,7 +422,8 @@ def main(argv: list[str]) -> int:
     for b, nn, video in fila:
         bid = b["id"]
         titulo = descricoes.get(bid, {}).get("titulo") or b.get("titulo_sugerido", "")
-        texto_thumb = texto_da_thumb(pasta, bid, b.get("texto_thumb") or b.get("tema", ""))
+        texto_base = b.get("texto_thumb") or b.get("tema", "")    # o do template (07)
+        texto_thumb = texto_da_thumb(pasta, bid, texto_base)
         ini = hhmmss_para_segundos(b["timestamp_inicio"])
         fim = hhmmss_para_segundos(b["timestamp_fim"])
         transcricao = " ".join(w["word"] for w in palavras_na_janela(todas, ini, fim))
@@ -453,9 +454,25 @@ def main(argv: list[str]) -> int:
             tentativas.append({"titulo": titulo, "texto_thumb": texto_thumb,
                                "problema": checagens["titulo_problema"]})
             # colagem refeita com o texto novo (ou voltou pro template): confere o que ficou
-            titulo, texto_thumb = novo["titulo"], texto_da_thumb(pasta, bid, novo["texto_thumb"])
+            titulo, texto_base = novo["titulo"], novo["texto_thumb"]
+            texto_thumb = texto_da_thumb(pasta, bid, texto_base)
         if r is None:
             continue
+        if status == "quarentena" and checagens and checagens["titulo_fiel"] \
+                and not checagens["thumb_ok"] and _colagem.colagem_aplicada(pasta / "thumbs", bid):
+            # colagem reprovada na arte: as 3 variantes voltam pro template (o --proximo só
+            # trocaria a 'a') e o bloco é revisado de novo, com o texto do template
+            print(f"  {nn}: colagem reprovada ({checagens['thumb_problema']}) → template atual")
+            if _editor.voltar_template(pasta, bid):
+                texto_thumb = texto_base
+                r2 = revisar_bloco(client, anthropic, stem, pasta, b, nn, video, titulo,
+                                   texto_thumb, transcricao)
+                if r2 is not None:
+                    checagens, status, motivo, usd = r2
+                    total += usd
+                    custo_bloco += usd
+            else:
+                motivo += " (falhou ao voltar pro template — revisar à mão)"
         trocas_thumb = []
         if status == "quarentena" and checagens and checagens["titulo_fiel"] \
                 and not checagens["thumb_ok"]:
