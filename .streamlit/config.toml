@@ -1,0 +1,14 @@
+# Tema do painel na identidade do canal (preto onça + amarelo 14)
+[theme]
+base = "dark"
+primaryColor = "#F5C518"
+backgroundColor = "#0A0A0A"
+secondaryBackgroundColor = "#161616"
+textColor = "#F2F2F2"
+
+[server]
+headless = true
+runOnSave = true
+
+[browser]
+gatherUsageStats = false

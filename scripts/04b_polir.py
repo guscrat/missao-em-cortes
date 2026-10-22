@@ -33,6 +33,7 @@ from anthropic import Anthropic
 from dotenv import load_dotenv
 from _ffmpeg import VENC, AENC
 from _paths import achar_pasta, stem_de
+from _eventos import evento
 
 load_dotenv()
 
@@ -428,3 +429,5 @@ else:
     else:
         custo_usd = (total_in_tokens / 1_000_000) * 3 + (total_out_tokens / 1_000_000) * 15
         print(f"Custo total: input {total_in_tokens:,} tok · output {total_out_tokens:,} tok (~${custo_usd:.2f})")
+        evento(stem, "04b_polir", "llm", agente="editor",
+               tokens_in=total_in_tokens, tokens_out=total_out_tokens, custo_usd=custo_usd)

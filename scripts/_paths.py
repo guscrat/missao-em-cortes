@@ -63,3 +63,26 @@ def criar_pasta(stem: str) -> Path:
     pasta = OUTPUTS / f"{date.today().isoformat()}_{stem}"
     pasta.mkdir(parents=True, exist_ok=True)
     return pasta
+
+
+def escolher_arquivo(pasta: Path, padrao: str, preferir_polido: bool = True) -> Path | None:
+    """Primeiro arquivo que casa com o glob, preferindo a versão mais trabalhada:
+    _polido_legendado > _legendado > _polido > original."""
+    achados = sorted(pasta.glob(padrao)) if pasta.is_dir() else []
+    if not achados:
+        return None
+    if preferir_polido:
+        return min(achados, key=lambda a: (not a.stem.endswith("_legendado"),
+                                           "_polido" not in a.stem))
+    return achados[0]
+
+
+def escolher_thumb(pasta_thumbs: Path, nn: str) -> Path | None:
+    """Thumb escolhida do bloco: manual > a > b > c > sem sufixo.
+    Na prática você apaga as variantes descartadas, então sobra só a escolhida."""
+    for padrao in (f"thumb_{nn}_manual.png", f"thumb_{nn}_a.png", f"thumb_{nn}_b.png",
+                   f"thumb_{nn}_c.png", f"thumb_{nn}.png"):
+        p = pasta_thumbs / padrao
+        if p.exists():
+            return p
+    return None

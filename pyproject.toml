@@ -7,9 +7,31 @@ requires-python = ">=3.11"
 dependencies = [
     "anthropic>=0.103.1",
     "faster-whisper>=1.2.1",
+    "google-api-python-client>=2.201.0",
+    "google-auth-oauthlib>=1.5.0",
     "nvidia-cublas-cu12>=12.9.2.10",
     "nvidia-cudnn-cu12>=9.22.0.52",
+    "opencv-python-headless>=4.10,<5",
     "pillow>=12.2.0",
     "python-dotenv>=1.2.2",
+    "tzdata>=2026.5",
     "yt-dlp>=2026.3.17",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+painel = [
+    "pandas>=3.0.6",
+    "streamlit>=1.50",
+]
+
+[tool.uv]
+# `uv sync` já instala o painel (streamlit/pandas) e o pytest junto. Pra máquina
+# só de pipeline: uv sync --no-group painel --no-group dev
+default-groups = ["painel", "dev"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["scripts", "painel"]   # os módulos se importam pelo nome (_eventos, _paths, time_dev)

@@ -2,10 +2,21 @@ inputs/
 outputs/
 .env
 .venv
-.claude/
+.claude/settings.local.json
 __pycache__/
 assets/*_norm.mp4
 assets/intro_trim.mp4
 
 # Exemplos/referencias de thumb (scratch, nao versionar)
 assets/temp/
+
+# Estado do pipeline (SQLite local, gerado pelo _eventos.py)
+state/
+
+# Credenciais OAuth do YouTube (09_upload.py) — NUNCA versionar (repo é público)
+secrets/
+client_secret*.json
+*token*.json
+
+# Prints da auditoria da YouTube API (evidencias_pdf.py) — podem mostrar dados da conta
+evidencias/

@@ -1,0 +1,13 @@
+{
+  "auditoria_aprovada": false,
+  "horario": "18:00",
+  "intervalo_dias": 1,
+  "fuso": "America/Sao_Paulo",
+  "antecedencia_min_horas": 2,
+  "categoria_id": "25",
+  "idioma": "pt-BR",
+  "feito_para_criancas": false,
+  "cota_limite_dia": 10000,
+  "cota_upload": 1600,
+  "cota_thumbnail": 50
+}
