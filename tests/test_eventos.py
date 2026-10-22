@@ -128,3 +128,11 @@ def test_sincronizacao_nao_desarquiva(banco):
     upsert_bloco("v", 1, status="arquivado", forcar_status=True)
     upsert_bloco("v", 1, status="montado")
     assert _status(banco) == "arquivado"
+
+
+def test_arquivar_blocos_banco_fora_do_ar_devolve_lista_vazia(tmp_path, monkeypatch, capsys):
+    from _eventos import arquivar_blocos
+    bloqueio = tmp_path / "arquivo"
+    bloqueio.write_text("x")
+    monkeypatch.setattr(_eventos, "DB_PATH", bloqueio / "pipeline.db")
+    assert arquivar_blocos("v", "conteúdo antigo") == []

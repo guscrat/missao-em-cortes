@@ -140,3 +140,10 @@ def test_main_arquiva_antigo_e_poupa_recente(projeto, arquivamento, capsys):
     assert "arquivados por conteúdo antigo" in capsys.readouterr().out
     main()   # re-sincronizar não desarquiva
     assert projeto.banco("SELECT status FROM blocos WHERE stem='velho'")[0]["status"] == "arquivado"
+
+
+def test_arquivar_se_antigo_pasta_sem_data_valida(projeto, arquivamento):
+    upsert_bloco("v", 1, status="montado")
+    pasta = projeto.outputs / "9999-99-99_v"
+    assert sincronizar_estado.arquivar_se_antigo(pasta, "v", hoje=date(2030, 1, 1)) == []
+    assert _blocos(projeto.banco)[1]["status"] == "montado"
