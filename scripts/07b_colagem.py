@@ -18,7 +18,9 @@ Modo (config/thumb.json → "colagem"):
 Nunca mexe em bloco agendado/publicado/arquivado (nem em teste), a não ser com --saida=<pasta>
 (prévia fora do outputs/).
 
-Uso: uv run py scripts/07b_colagem.py <stem> [--bloco=N] [--sem-llm] [--aplicar] [--saida=DIR]
+Uso: uv run py scripts/07b_colagem.py <stem> [--bloco=N] [--sem-llm] [--sem-editor] [--aplicar] [--saida=DIR]
+  --sem-editor: texto = texto_thumb do bloco (o 11 usa pra refazer a colagem depois de reescrever)
+  Com --bloco=N, sai com 2 se a colagem do bloco não saiu (ou não foi aplicada).
 Custo: ~US$ 0.03 por bloco (~US$ 0.15 por live, medido em 22/10/2026). Logado com agente="editor".
 """
 import json
@@ -31,8 +33,9 @@ sys.stdout.reconfigure(encoding="utf-8")
 
 import _colagem as col
 import _editor
+import _grafias
 import _thumb_rosto as tr
-from _descricoes import adicionar_credito, ler_descricoes
+from _descricoes import ler_descricoes, trocar_creditos
 from _eventos import evento, ler_bloco
 from _legenda import hhmmss_para_segundos, palavras_na_janela
 from _paths import achar_pasta, stem_de
@@ -80,10 +83,12 @@ def corte_do_bloco(pasta: Path, bid: int) -> Path | None:
     return sorted(ms)[0] if ms else None
 
 
-def textos(client, stem, b, titulo, transcricao, finais, sem_llm) -> tuple[list[list[str]], float]:
-    """3 textos de 2 linhas. Editor; na falta (sem LLM, recusa, erro), o texto_thumb quebrado."""
-    reserva = col.quebrar_em_2(b.get("texto_thumb") or b.get("tema", ""))
-    if sem_llm:
+def textos(client, stem, b, titulo, transcricao, finais, sem_llm,
+           sem_editor=False) -> tuple[list[list[str]], float]:
+    """3 textos de 2 linhas. Editor; na falta (sem LLM, --sem-editor, recusa, erro), o
+    texto_thumb quebrado (o 11 usa --sem-editor pra refazer com o texto que ele vai reavaliar)."""
+    reserva = col.quebrar_em_2(_grafias.corrigir(b.get("texto_thumb") or b.get("tema", "")))
+    if sem_llm or sem_editor:
         return [reserva] * 3, 0.0
     try:
         opcoes, resp = _editor.texto_colagem(client, _editor.montar_pedido_colagem(
@@ -100,11 +105,12 @@ def textos(client, stem, b, titulo, transcricao, finais, sem_llm) -> tuple[list[
     return [opcoes[k % len(opcoes)] for k in range(3)], usd
 
 
-def escolher_imagens(client, stem, bid, rostos, cenas, tema, sem_llm) -> tuple[dict, float]:
+def escolher_imagens(client, stem, bid, rostos, cenas, tema, sem_llm,
+                     pessoas=()) -> tuple[dict, float]:
     if sem_llm or not client:
         return col.escolha_sem_llm(len(rostos), len(cenas)), 0.0
     try:
-        escolha, resp = col.escolher(client, rostos, [c["imagem"] for c in cenas], tema)
+        escolha, resp = col.escolher(client, rostos, [c["imagem"] for c in cenas], tema, pessoas)
     except Exception as e:  # noqa: BLE001
         print(f"  [aviso] escolha por visão falhou ({type(e).__name__}): ordem da nota")
         return col.escolha_sem_llm(len(rostos), len(cenas)), 0.0
@@ -143,7 +149,8 @@ def destacada(finais: list[dict]) -> tuple[str, str]:
     return b["descricao"], a["descricao"]
 
 
-def processar_bloco(client, pasta, stem, b, titulo, transcricao, saida_dir, sem_llm, excluir) -> dict:
+def processar_bloco(client, pasta, stem, b, titulo, transcricao, saida_dir, sem_llm, excluir,
+                    sem_editor=False) -> dict:
     bid, nn = b["id"], f"{b['id']:02d}"
     reg = {"status": "fallback", "custo_usd": 0.0}
     corte = corte_do_bloco(pasta, bid)
@@ -160,14 +167,17 @@ def processar_bloco(client, pasta, stem, b, titulo, transcricao, saida_dir, sem_
     cenas = col.cenas_do_video(corte, fila, [f for _, f in exps])
     print(f"  {len(exps)} expressão(ões), {len(cenas)} cena(s) da live")
     rostos = [col.rosto_ampliado(f, tuple(c["rosto"])) for c, f in exps]
-    escolha, usd = escolher_imagens(client, stem, bid, rostos, cenas, b.get("tema", ""), sem_llm)
+    # pessoas citadas (grafia oficial): quem não tem foto no banco ainda pode aparecer numa cena
+    # da live com o nome escrito, e o Haiku prefere essa cena
+    pessoas = _grafias.citados(col.campos_de_nomes(b), excluir)
+    escolha, usd = escolher_imagens(client, stem, bid, rostos, cenas, b.get("tema", ""), sem_llm, pessoas)
     reg["custo_usd"] += usd
     reg["escolha"] = escolha
     finais = montar_cenas(escolha, cenas, col.personagens_do_bloco(b, excluir))
     if len(finais) < 2:
         reg["motivo"] = f"só {len(finais)} cena (sem tela compartilhada útil nem personagem no banco)"
         return reg
-    linhas, usd = textos(client, stem, b, titulo, transcricao, finais, sem_llm)
+    linhas, usd = textos(client, stem, b, titulo, transcricao, finais, sem_llm, sem_editor)
     reg["custo_usd"] += usd
 
     recortes = {}
@@ -206,11 +216,9 @@ def aplicar(pasta: Path, saida_dir: Path, bid: int, reg: dict) -> None:
     for letra, v in reg["variantes"].items():
         shutil.copyfile(saida_dir / v["arquivo"], pasta / "thumbs" / f"thumb_{bid:02d}_{letra}.png")
     desc = pasta / "descricoes.txt"
-    if reg.get("creditos") and desc.exists():
+    if desc.exists():               # troca (não só acrescenta): colagem refeita com outra foto
         texto = desc.read_text(encoding="utf-8")
-        for linha in reg["creditos"]:
-            texto = adicionar_credito(texto, bid, linha)
-        desc.write_text(texto, encoding="utf-8")
+        desc.write_text(trocar_creditos(texto, bid, reg.get("creditos", [])), encoding="utf-8")
 
 
 def main(argv: list[str]) -> int:
@@ -220,6 +228,7 @@ def main(argv: list[str]) -> int:
         print(__doc__)
         return 1
     sem_llm, aplicar_padrao = bool(flags.get("sem-llm")), bool(flags.get("aplicar"))
+    sem_editor = bool(flags.get("sem-editor"))
     so_bloco = int(flags["bloco"]) if "bloco" in flags else None
     pasta = achar_pasta(pos[0])
     stem = stem_de(pasta)
@@ -248,7 +257,7 @@ def main(argv: list[str]) -> int:
         registro = json.loads(registro_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         registro = {}
-    total, ok = 0.0, 0
+    total, ok, aplicados = 0.0, 0, 0
     print(f"Thumb colagem de '{stem}' → {saida_dir}" + (" (aplicando como padrão)" if aplicar_padrao else ""))
     for b in blocos:
         bid = b["id"]
@@ -265,7 +274,8 @@ def main(argv: list[str]) -> int:
         transcricao = " ".join(w["word"] for w in palavras_na_janela(
             todas, hhmmss_para_segundos(b["timestamp_inicio"]), hhmmss_para_segundos(b["timestamp_fim"])))
         try:
-            reg = processar_bloco(client, pasta, stem, b, titulo, transcricao, saida_dir, sem_llm, excluir)
+            reg = processar_bloco(client, pasta, stem, b, titulo, transcricao, saida_dir, sem_llm, excluir,
+                                  sem_editor)
         except Exception as e:  # noqa: BLE001 — um bloco não derruba os outros; fica o template atual
             reg = {"status": "fallback", "motivo": f"erro: {type(e).__name__}: {e}"[:300], "custo_usd": 0.0}
         total += reg["custo_usd"]
@@ -275,6 +285,7 @@ def main(argv: list[str]) -> int:
             if aplicar_padrao:
                 try:
                     aplicar(pasta, saida_dir, bid, reg)
+                    aplicados += 1
                 except OSError as e:
                     print(f"  [aviso] não aplicou a colagem ({e}): fica a thumb atual")
                     evento(stem, "07b_colagem", "aviso", agente="editor", bloco_id=bid,
@@ -287,6 +298,9 @@ def main(argv: list[str]) -> int:
                    mensagem=f"colagem não saiu: {reg['motivo']}"[:300])
     registro_path.write_text(json.dumps(registro, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"\n{ok} bloco(s) com colagem · US$ {total:.4f} · {registro_path}")
+    # --bloco=N que não saiu (ou não foi aplicado) → 2: o editor (11) volta pro template atual
+    if so_bloco is not None and (not ok or (aplicar_padrao and not aplicados)):
+        return 2
     return 0
 
 

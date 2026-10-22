@@ -45,6 +45,7 @@ from pathlib import Path
 
 import _colagem
 import _editor
+import _grafias
 from _descricoes import ler_descricoes
 from _eventos import atualizar_tarefa, evento, ler_bloco, upsert_bloco
 from _legenda import hhmmss_para_segundos, palavras_na_janela
@@ -102,7 +103,11 @@ uma frase curta e concreta (vazio "" quando não há problema).
 1. titulo_fiel: o título e o texto da thumb são sustentados pela transcrição? Reprove se \
 atribuem ao speaker algo que ele não disse, invertem o sentido, exageram um fato a ponto de \
 ficar falso, ou prometem um assunto que o trecho não entrega. Gancho forte, paráfrase e \
-simplificação são OK. Reprove TAMBÉM se o título ou o texto da thumb destacam palavrão ou \
+simplificação são OK. Números, datas, fatos e nomes têm que bater EXATAMENTE com a \
+transcrição (ex.: "3 INQUÉRITOS" quando a fala diz 2 reprova). Nome de pessoa fora da \
+grafia oficial (lista no pedido) também reprova. Se vierem várias variantes de texto da \
+thumb separadas por " | " (teste A/B da thumb colagem), TODAS precisam passar: aponte qual \
+falhou. Reprove TAMBÉM se o título ou o texto da thumb destacam palavrão ou \
 termo que possa soar como ofensa a um grupo (raça, etnia, gênero, orientação sexual, \
 religião, origem, deficiência etc.), MESMO que esteja na fala: diga isso em titulo_problema.
 2. thumb_ok: """ + CRITERIO_THUMB + """
@@ -158,8 +163,19 @@ def montar_conteudo(titulo: str, texto_thumb: str, transcricao: str,
     sem_thumb = "" if thumb_b64 else "SEM THUMB ESCOLHIDA: marque thumb_ok=false.\n"
     conteudo.append({"type": "text", "text": (
         f"TÍTULO DO YOUTUBE: {titulo}\nTEXTO DA THUMB: {texto_thumb}\n{sem_thumb}"
+        f"\nGRAFIAS OFICIAIS:\n{_grafias.para_prompt()}\n"
         f"\nTRANSCRIÇÃO DO TRECHO:\n{transcricao}")})
     return conteudo
+
+
+def texto_da_thumb(pasta: Path, bid: int, texto_thumb: str) -> str:
+    """O texto que está NA thumb que sobe: com a colagem aplicada (modo padrão), os textos das
+    variantes a/b/c (vão todas pro "Testar e comparar"), separados por ' | '."""
+    reg = _colagem.colagem_aplicada(pasta / "thumbs", bid)
+    if not reg:
+        return texto_thumb
+    textos = [_colagem.sem_marcas(" ".join(v["texto"])) for v in reg.get("variantes", {}).values()]
+    return " | ".join(dict.fromkeys(textos)) or texto_thumb
 
 
 def chamar_claude(client, conteudo: list[dict], sistema: str = SISTEMA, schema: dict = SCHEMA,
@@ -406,10 +422,7 @@ def main(argv: list[str]) -> int:
     for b, nn, video in fila:
         bid = b["id"]
         titulo = descricoes.get(bid, {}).get("titulo") or b.get("titulo_sugerido", "")
-        texto_thumb = b.get("texto_thumb") or b.get("tema", "")
-        colagem = _colagem.variante_aplicada(escolher_thumb(pasta / "thumbs", nn))
-        if colagem:                     # a thumb que sobe é a colagem: confere o texto dela
-            texto_thumb = _colagem.sem_marcas(" ".join(colagem["texto"]))
+        texto_thumb = texto_da_thumb(pasta, bid, b.get("texto_thumb") or b.get("tema", ""))
         ini = hhmmss_para_segundos(b["timestamp_inicio"])
         fim = hhmmss_para_segundos(b["timestamp_fim"])
         transcricao = " ".join(w["word"] for w in palavras_na_janela(todas, ini, fim))
@@ -439,7 +452,8 @@ def main(argv: list[str]) -> int:
                 break
             tentativas.append({"titulo": titulo, "texto_thumb": texto_thumb,
                                "problema": checagens["titulo_problema"]})
-            titulo, texto_thumb = novo["titulo"], novo["texto_thumb"]
+            # colagem refeita com o texto novo (ou voltou pro template): confere o que ficou
+            titulo, texto_thumb = novo["titulo"], texto_da_thumb(pasta, bid, novo["texto_thumb"])
         if r is None:
             continue
         trocas_thumb = []

@@ -70,6 +70,27 @@
       "baixado_em": "2026-10-22"
     },
     {
+      "slug": "guto_zacarias",
+      "nome": "Guto Zacarias",
+      "apelidos": [],
+      "wikidata": "Q116520588",
+      "arquivo": "guto_zacarias.webp",
+      "rosto": [
+        190,
+        151,
+        358,
+        358
+      ],
+      "fonte": "https://commons.wikimedia.org/wiki/File:Guto-zacarias.jpg",
+      "arquivo_commons": "File:Guto-zacarias.jpg",
+      "licenca": "CC BY 4.0",
+      "licenca_url": "https://creativecommons.org/licenses/by/4.0",
+      "autor": "alesp",
+      "credito_fonte": "https://www.al.sp.gov.br/alesp/banco-imagens/?inicio=36&fim=54&textoCodificado=&tipoBusca=deputados&texto=&dtInicial=&dtFinal=&__ncforminfo=Q_pqkZqMQUVqbn8IzrO2c1xn4kasxQ9Pcddf2wlTF9JaTtpvJdfnXHdcqM8w_XHrRN2pRYG6Hv58-WN_FMKqj0Ex0vbjeBZHcSvOPSW0M2PGGxmAsXS0Vj03HGcVSvt1",
+      "credito": "Foto de Guto Zacarias: alesp / Wikimedia Commons, CC BY 4.0 (fundo removido)",
+      "baixado_em": "2026-10-22"
+    },
+    {
       "slug": "kim_kataguiri",
       "nome": "Kim Kataguiri",
       "apelidos": [
@@ -114,6 +135,30 @@
       "autor": "Palácio do Planalto from Brasilia, Brasil",
       "credito_fonte": "Foto Oficial do Presidente da República, Luiz Inácio Lula da Silva",
       "credito": "Foto de Luiz Inácio Lula da Silva: Palácio do Planalto from Brasilia, Brasil / Wikimedia Commons, CC BY 2.0 (fundo removido)",
+      "baixado_em": "2026-10-22"
+    },
+    {
+      "slug": "nikolas_ferreira",
+      "nome": "Nikolas Ferreira",
+      "apelidos": [
+        "nicolas ferreira",
+        "nikolas"
+      ],
+      "wikidata": "Q109937634",
+      "arquivo": "nikolas_ferreira.webp",
+      "rosto": [
+        215,
+        48,
+        192,
+        192
+      ],
+      "fonte": "https://commons.wikimedia.org/wiki/File:02.08.2023_-_Nikolas_Ferreira.jpg",
+      "arquivo_commons": "File:02.08.2023 - Nikolas Ferreira.jpg",
+      "licenca": "CC BY 3.0",
+      "licenca_url": "https://creativecommons.org/licenses/by/3.0",
+      "autor": "Zeca Ribeiro/Câmara dos Deputados",
+      "credito_fonte": "https://www.camara.leg.br/internet/bancoimagem/banco/2023/08/img20230802201721862.jpg",
+      "credito": "Foto de Nikolas Ferreira: Zeca Ribeiro/Câmara dos Deputados / Wikimedia Commons, CC BY 3.0 (fundo removido)",
       "baixado_em": "2026-10-22"
     },
     {

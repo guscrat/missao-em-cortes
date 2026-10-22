@@ -14,6 +14,8 @@ from pathlib import Path
 import json
 import re
 from _canal import CANAL_URL, eh_nosso_canal
+from _descricoes import trocar_creditos
+from _grafias import corrigir as corrigir_grafia
 from _paths import achar_pasta, stem_de
 
 ROOT = Path(__file__).parent.parent
@@ -47,7 +49,7 @@ def ler_url_fonte(stem, inputs=None):
     return url
 
 def bloco_para_texto(b, url_fonte=""):
-    titulo = b.get("titulo_sugerido", b["tema"])
+    titulo = corrigir_grafia(b.get("titulo_sugerido", b["tema"]))
     resumo = b.get("resumo", "").strip()
     ganchos = b.get("ganchos", [])
     tags_bloco = b.get("tags", [])
@@ -101,6 +103,16 @@ def bloco_para_texto(b, url_fonte=""):
     linhas.append("")
     return "\n".join(linhas)
 
+def repor_creditos(texto, pasta, blocos):
+    """Bloco com thumb colagem aplicada (modo padrão) usa foto do banco com licença aberta: o
+    crédito dela é obrigatório. Regerar o txt não pode apagar, então volta do colagem.json."""
+    from _colagem import colagem_aplicada
+    for b in blocos:
+        reg = colagem_aplicada(pasta / "thumbs", b["id"])
+        if reg and reg.get("creditos"):
+            texto = trocar_creditos(texto, b["id"], reg["creditos"])
+    return texto
+
 def main(argv):
     pasta = achar_pasta(argv[0] if argv else "live_teste")
     stem = stem_de(pasta)
@@ -124,7 +136,8 @@ def main(argv):
     for b in data["blocos"]:
         partes.append(bloco_para_texto(b, url_fonte))
 
-    out.write_text("\n".join(partes), encoding="utf-8")
+    texto = repor_creditos("\n".join(partes), pasta, data["blocos"])
+    out.write_text(texto, encoding="utf-8")
     print(f"OK {len(data['blocos'])} descrições salvas em {out}")
     if url_fonte:
         print(f"   URL da fonte preenchida: {url_fonte}")
