@@ -72,6 +72,8 @@ missao-em-cortes/
 │   ├── 07_thumb.py                   # thumbs semi-automáticas (off-pipeline)
 │   ├── 08_descricao.py               # gera txt com titulo+descricao+tags pro YouTube
 │   ├── 12_metricas.py                # retenção COM legenda x SEM (YouTube Analytics, só leitura) pro resumo semanal (off-pipeline)
+│   ├── 13_curador.py                 # agente Curador: acha vídeos novos dos canais, escolhe (LLM) e dispara o pipeline (1x/dia, off-pipeline)
+│   ├── _publicacao.py                # lista de publicação manual (publicacao.txt: aprovados por score + dia sugerido)
 │   ├── 11_revisor.py                 # agente revisor (Claude com visão) + loop do editor: aprovado / quarentena / descartado (off-pipeline)
 │   ├── _editor.py                    # agente editor: reescreve título + texto_thumb reprovados (chamado pelo 11)
 │   ├── 10_shorts.py                  # Shorts 9:16 dos cold opens: crop no rosto + manchete + legenda karaokê (off-pipeline)
@@ -100,6 +102,7 @@ missao-em-cortes/
 │   └── segmentacao.md                # Prompt do LLM pra topic segmentation
 ├── config/
 │   ├── zoom.json                     # crop anti-overlay por stem (lido pelo 04_cortar.py)
+│   ├── canais.json                   # canais que o Curador monitora + zoom padrão por canal + limites (dias, duração, max_por_dia)
 │   └── upload.json                   # trava da auditoria (auditoria_aprovada), agendamento do 09 e custos de cota
 ├── secrets/                          # youtube_client_secret.json + youtube_token.json (upload, projeto publisher) + analytics_client_secret.json + analytics_token.json (métricas, projeto analytics) — gitignored
 ├── .env                              # ANTHROPIC_API_KEY
@@ -152,6 +155,22 @@ O step 12 (`uv run py scripts/12_metricas.py [--desde=AAAA-MM-DD]`) é o **anali
 5. Rodar `uv run py scripts/12_metricas.py`: abre o navegador, login com a conta do **canal** (escolher o canal Missão em Cortes se pedir), aceitar os 2 escopos de leitura → grava `secrets/analytics_token.json`. Erro 403 `accessNotConfigured` = faltou o passo 2 (ativar as APIs no projeto analytics; leva alguns minutos pra valer).
 
 > **Os dois apps OAuth ficam "Em produção"** (status em Google Auth Platform → Público-alvo): o `missao-em-cortes-publisher` (upload, 09) e o `missao-em-cortes-analytics` (métricas, 12). Nenhum volta pra "Em teste", senão os tokens passam a expirar em 7 dias.
+
+O step 13 (`uv run py scripts/13_curador.py [--dry-run] [--sem-pipeline] [--max=N]`) é o **agente Curador** (`agente="curador"`, off-pipeline, roda **1x por dia**). Ele monitora os canais de `config/canais.json` (abas streams + videos) e acha vídeos dos últimos `dias` (padrão 3) que ainda não foram processados. "Já processado" = id em `inputs/*.url`, no banco ou já decidido em `state/curadoria.json`. Antes de gastar, aplica um filtro grátis: duração entre `duracao_min` e `duracao_max` (20-240 min) e nada de live em andamento/agendada (volta no dia seguinte). Os que passam vão numa **única** chamada pro Claude (`claude-opus-5-5`, effort low, ~US$ 0,02-0,05/rodada), que decide `vale`, `prioridade` (1-10) e `motivo` (a frase que aparece no painel). Os melhores, até `max_por_dia` (padrão 2), viram stem novo (`<prefixo>_<slug do título>`) e seguem `01_baixar` → `pipeline.py --polir` → `11_revisor` → `publicacao.txt` (~US$ 0,65 por vídeo). Os outros que valem ficam na **fila** e entram no dia seguinte sem nova chamada de LLM. Os recusados nunca são reavaliados.
+
+- **Zoom:** o `zoom` do canal é copiado pro `config/zoom.json` do stem novo (como o `calibrar_zoom --salvar`). Canal com `zoom: null` (Kim) é processado sem zoom, e o resumo avisa pra calibrar e re-cortar com `--desde=4`. Estúdio diferente do padrão do canal também pede conferência.
+- **Saída:** `state/curador_resumo.md` (prontos pra publicar com o caminho do `publicacao.txt`, falhas, escolhidos, fila e recusados com motivo, avisos) e eventos no painel (escolhido/recusado com motivo, custo `llm`, falha por etapa). O resumo semanal de sexta lê o `curador_resumo.md`.
+- **Trava:** `state/curador.lock` impede duas rodadas ao mesmo tempo. Trava com mais de 12h é considerada morta e é liberada.
+- **`publicacao.txt`** (`scripts/_publicacao.py`, dá pra rodar à mão: `uv run py scripts/_publicacao.py <stem>`): só blocos `aprovado` no `revisao.json`, em ordem de score, com arquivo final (prefere `_polido_legendado`), thumb escolhida pelo revisor, título/descrição/tags do `descricoes.txt` e dia sugerido às 18h. É 1 por dia, ou 2 por dia com 3+ aprovados. Começa hoje se rodou antes das 16h.
+- **yt-dlp:** precisa da versão com solver JS (`yt-dlp[default]`, Node no PATH). Sem isso o YouTube devolve 403 no download.
+
+**Agendamento (Agendador de Tarefas do Windows, PC ligado com GPU):** registrar uma vez, rodando da **pasta principal**:
+
+```
+schtasks /Create /SC DAILY /ST 07:00 /TN "MissaoEmCortes-Curador" /TR "cmd /c cd /d C:\Users\gusta\Downloads\projetos\missao-em-cortes && uv run py scripts/13_curador.py >> state\curador.log 2>&1"
+```
+
+Conferir: `schtasks /Query /TN "MissaoEmCortes-Curador"`. Remover: `schtasks /Delete /TN "MissaoEmCortes-Curador" /F`.
 
 O step 7 é opcional e não afeta a montagem — gera 3 variantes de thumb por bloco (`thumb_NN_a/b/c.png`) com frames extraídos a 25/50/75% do cold open. Você escolhe a melhor variante e finaliza no Canva (colar collage de figuras na metade direita). Layout: frame do speaker deslocado pra direita (`FRAME_X=150`), título adaptativo (fonte 96→64 dependendo do comprimento), gradient escuro embaixo pra contraste.
 
