@@ -524,7 +524,8 @@ def _pasta_com_blocos(raiz, nome, stem, status_por_bloco, shorts=None):
     return pasta
 
 
-def test_calcular_estoque_conta_longos_aprovados_e_shorts_nao_postados(raiz):
+def test_calcular_estoque_conta_longos_aprovados_e_shorts_nao_postados(raiz, monkeypatch):
+    monkeypatch.setattr(cu, "auditoria_aprovada", lambda: True)
     hoje = date(2026, 10, 22)
     _pasta_com_blocos(raiz, "2026-10-21_renan_a", "renan_a",
                       {1: "aprovado", 2: "agendado", 3: "descartado", 4: "aprovado"},
@@ -533,10 +534,11 @@ def test_calcular_estoque_conta_longos_aprovados_e_shorts_nao_postados(raiz):
                       {1: "aprovado"}, shorts={1: False})
     est = cu.calcular_estoque({"estoque": {"longos_por_dia": 1, "shorts_por_dia": 2}}, hoje)
     # longos: blocos 1 e 4; shorts: 1 e 2 (3 descartado, 4 já postado)
-    assert est == {"longos": 2, "shorts": 2, "dias": 1.0}
+    assert est == {"longos": 2, "shorts": 2, "dias": 1.0, "so_longos": False}
 
 
-def test_calcular_estoque_shorts_limitam_os_dias(raiz):
+def test_calcular_estoque_shorts_limitam_os_dias(raiz, monkeypatch):
+    monkeypatch.setattr(cu, "auditoria_aprovada", lambda: True)
     hoje = date(2026, 10, 22)
     _pasta_com_blocos(raiz, "2026-10-22_kim_b", "kim_b",
                       {1: "aprovado", 2: "aprovado", 3: "aprovado", 4: "aprovado"})
@@ -596,12 +598,13 @@ def test_short_que_falha_vira_aviso(raiz, monkeypatch):
 
 # --- lacunas extras do estoque/fila ---------------------------------------------------------
 
-def test_estoque_pasta_none_no_banco_cai_no_glob(raiz):
+def test_estoque_pasta_none_no_banco_cai_no_glob(raiz, monkeypatch):
+    monkeypatch.setattr(cu, "auditoria_aprovada", lambda: True)
     import _eventos
     pasta = _pasta_com_blocos(raiz, "2026-10-21_kim_c", "kim_c", {1: "aprovado"}, shorts={1: False})
     _eventos.upsert_video("kim_c", pasta=None)
     est = cu.calcular_estoque({"estoque": {"longos_por_dia": 1, "shorts_por_dia": 1}}, date(2026, 10, 22))
-    assert pasta.exists() and est == {"longos": 1, "shorts": 1, "dias": 1.0}
+    assert pasta.exists() and est == {"longos": 1, "shorts": 1, "dias": 1.0, "so_longos": False}
 
 
 def test_estoque_sem_pasta_nenhuma_nao_conta(raiz):
@@ -611,7 +614,8 @@ def test_estoque_sem_pasta_nenhuma_nao_conta(raiz):
     assert est["longos"] == 0 and est["shorts"] == 0
 
 
-def test_estoque_short_postado_nao_conta_e_arquivo_sumido_nao_conta(raiz):
+def test_estoque_short_postado_nao_conta_e_arquivo_sumido_nao_conta(raiz, monkeypatch):
+    monkeypatch.setattr(cu, "auditoria_aprovada", lambda: True)
     pasta = _pasta_com_blocos(raiz, "2026-10-22_kim_d", "kim_d", {1: "aprovado", 2: "aprovado"},
                               shorts={1: True, 2: False})
     (pasta / "shorts" / "short_02_x.mp4").unlink()
@@ -686,3 +690,39 @@ def test_sincronizar_canal_nao_interativo_e_lista_sem_match(monkeypatch):
     aviso = cu.sincronizar_canal(True)
     assert pedidos == [{"interativo": False, "dry": True}]
     assert "1 vídeo(s)" in aviso and "Vídeo editado" in aviso
+
+
+# --- auditoria: estoque só de longos --------------------------------------------------------
+
+CFG_EST = {"estoque": {"longos_por_dia": 1, "shorts_por_dia": 2}}
+
+
+def test_estoque_so_longos_ignora_shorts_nos_dias(raiz, monkeypatch):
+    monkeypatch.setattr(cu, "auditoria_aprovada", lambda: False)
+    _pasta_com_blocos(raiz, "2026-10-22_kim_e", "kim_e", {1: "aprovado", 2: "aprovado"})
+    est = cu.calcular_estoque(CFG_EST, date(2026, 10, 22))
+    assert est == {"longos": 2, "shorts": 0, "dias": 2.0, "so_longos": True}
+
+
+def test_estoque_com_auditoria_shorts_limitam(raiz, monkeypatch):
+    monkeypatch.setattr(cu, "auditoria_aprovada", lambda: True)
+    _pasta_com_blocos(raiz, "2026-10-22_kim_e", "kim_e", {1: "aprovado", 2: "aprovado"})
+    est = cu.calcular_estoque(CFG_EST, date(2026, 10, 22))
+    assert est["dias"] == 0.0 and est["so_longos"] is False
+
+
+def test_estoque_short_arquivado_nao_conta(raiz, monkeypatch):
+    monkeypatch.setattr(cu, "auditoria_aprovada", lambda: True)
+    pasta = _pasta_com_blocos(raiz, "2026-10-22_kim_f", "kim_f", {1: "aprovado", 2: "aprovado"},
+                              shorts={1: False, 2: False})
+    reg = json.loads((pasta / "shorts" / "shorts.json").read_text(encoding="utf-8"))
+    reg["01"]["arquivado"] = "conteúdo antigo"
+    (pasta / "shorts" / "shorts.json").write_text(json.dumps(reg), encoding="utf-8")
+    assert cu.calcular_estoque(CFG_EST, date(2026, 10, 22))["shorts"] == 1
+
+
+def test_texto_estoque_nos_dois_modos():
+    so = cu._texto_estoque({"longos": 3, "shorts": 2, "dias": 3.0, "so_longos": True})
+    assert "3 longo(s) = 3.0 dia(s)" in so and "2 Short(s) fora da conta" in so
+    com = cu._texto_estoque({"longos": 3, "shorts": 2, "dias": 1.0, "so_longos": False})
+    assert com == "3 longo(s) + 2 Short(s) = 1.0 dia(s)"

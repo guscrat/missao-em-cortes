@@ -17,6 +17,8 @@ Fluxo:
   3. Todo vídeo que vale entra na FILA (state/curadoria.json). Só processa quando o
      ESTOQUE pronto pra publicar cai abaixo de estoque.dias_minimos (config): dias de
      estoque = min(longos aprovados / longos_por_dia, Shorts prontos / shorts_por_dia).
+     Enquanto config/upload.json → auditoria_aprovada for false, os Shorts não sobem e
+     o estoque conta só os longos (longos / longos_por_dia). Virou true: volta sozinho.
      Aí processa 1 vídeo só, o de maior prioridade (empate: o mais recente):
      01_baixar → pipeline.py --polir → 11_revisor → 10_shorts (aprovados) → publicacao.txt.
      ~US$ 0,65 por vídeo. Fila com mais de DIAS_ARQUIVAR dias expira.
@@ -38,6 +40,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from _eventos import evento, upsert_video, conectar
+from _paths import auditoria_aprovada
 from sincronizar_estado import DIAS_ARQUIVAR    # janela do conteúdo antigo (15 dias)
 
 ROOT = Path(__file__).parent.parent
@@ -303,7 +306,9 @@ def calcular_estoque(cfg: dict, hoje: date | None = None) -> dict:
     """O que está pronto e ainda não foi pro ar, de lives dos últimos DIAS_ARQUIVAR dias.
     Longo = bloco 'aprovado' (coluna "Pronto para publicar"). Short = short_NN gerado de
     bloco aprovado/agendado/publicado que ainda não foi marcado como postado
-    (pelo 14_canal, que lê o canal)."""
+    (pelo 14_canal, que lê o canal) nem arquivado (live velha, pelo sincronizar_estado).
+    Sem auditoria aprovada os Shorts não sobem: aparecem na conta, mas os dias de estoque
+    saem só dos longos (so_longos=True)."""
     hoje = hoje or date.today()
     try:
         con = conectar()
@@ -330,12 +335,22 @@ def calcular_estoque(cfg: dict, hoje: date | None = None) -> dict:
         if pasta not in cache:
             cache[pasta] = ler_shorts(pasta)
         sh = cache[pasta].get(f"{r['bloco_id']:02d}")
-        if sh and sh.get("arquivo") and not sh.get("postado") and \
+        if sh and sh.get("arquivo") and not sh.get("postado") and not sh.get("arquivado") and \
                 (pasta / "shorts" / sh["arquivo"]).exists():
             shorts += 1
     est = cfg["estoque"]
-    dias = min(longos / est["longos_por_dia"], shorts / est["shorts_por_dia"])
-    return {"longos": longos, "shorts": shorts, "dias": dias}
+    so_longos = not auditoria_aprovada()
+    dias = longos / est["longos_por_dia"]
+    if not so_longos:
+        dias = min(dias, shorts / est["shorts_por_dia"])
+    return {"longos": longos, "shorts": shorts, "dias": dias, "so_longos": so_longos}
+
+
+def _texto_estoque(est: dict) -> str:
+    if est.get("so_longos"):
+        return (f"{est['longos']} longo(s) = {est['dias']:.1f} dia(s) "
+                f"(+ {est['shorts']} Short(s) fora da conta até a auditoria)")
+    return f"{est['longos']} longo(s) + {est['shorts']} Short(s) = {est['dias']:.1f} dia(s)"
 
 
 # --- processamento ------------------------------------------------------------------------
@@ -443,12 +458,10 @@ def escrever_resumo(rodada: dict) -> str:
     linhas = [f"# Curador — {rodada['quando']}", "",
               f"Custo de curadoria: US$ {rodada['custo']:.3f} · "
               f"{len(rodada['processados'])} vídeo(s) processado(s)",
-              f"Estoque no início: {est['longos']} longo(s) + {est['shorts']} Short(s) = "
-              f"{est['dias']:.1f} dia(s)"]
+              f"Estoque no início: {_texto_estoque(est)}"]
     if rodada.get("estoque_depois"):
         d = rodada["estoque_depois"]
-        linhas.append(f"Estoque no fim: {d['longos']} longo(s) + {d['shorts']} Short(s) = "
-                      f"{d['dias']:.1f} dia(s)")
+        linhas.append(f"Estoque no fim: {_texto_estoque(d)}")
     linhas.append("")
     prontos = [p for p in rodada["processados"] if p.get("aprovados")]
     if prontos:
@@ -580,8 +593,7 @@ def _rodada(cfg: dict, dry_run: bool, sem_pipeline: bool, forcar: bool) -> int:
     estoque = calcular_estoque(cfg)
     minimo = cfg["estoque"]["dias_minimos"]
     precisa = forcar or estoque["dias"] < minimo
-    print(f"\nEstoque: {estoque['longos']} longo(s) + {estoque['shorts']} Short(s) prontos = "
-          f"{estoque['dias']:.1f} dia(s) (mínimo {minimo}) → "
+    print(f"\nEstoque pronto: {_texto_estoque(estoque)} (mínimo {minimo}) → "
           f"{'processa 1 vídeo' if precisa else 'não processa hoje'}")
     na_fila = sum(1 for v in estado.values() if v.get("decisao") == "fila")
     print(f"{len(novos)} novo(s) pro Claude, {na_fila} na fila")
