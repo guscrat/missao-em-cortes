@@ -118,3 +118,45 @@ def test_escopo_a_mais_no_token_nao_pede_login(g):
     g["token"].write_text(json.dumps({"scopes": ESC + ["https://x/extra"]}))
     g["carregadas"] = ok = FakeCreds()
     assert _google.credenciais(ESC, g["token"]) is ok and g["logins"] == 0
+
+
+# ── projeto certo: token de um client não serve pra outro ──────────────────
+
+def _secret(path, cid):
+    path.write_text(json.dumps({"installed": {"client_id": cid}}), encoding="utf-8")
+    return path
+
+
+def _token(g, cid):
+    g["token"].parent.mkdir(parents=True, exist_ok=True)
+    g["token"].write_text(json.dumps({"client_id": cid, "scopes": ESC}), encoding="utf-8")
+
+
+def test_token_de_outro_projeto_refaz_login(g, tmp_path, capsys):
+    secret = _secret(tmp_path / "analytics_client_secret.json", "analytics-id")
+    _token(g, "publisher-id")
+    g["carregadas"] = FakeCreds()
+    assert _google.credenciais(ESC, g["token"], secret) is g["flow_cred"] and g["logins"] == 1
+    assert "outro projeto" in capsys.readouterr().out
+
+
+def test_token_do_mesmo_projeto_reusa(g, tmp_path):
+    secret = _secret(tmp_path / "analytics_client_secret.json", "analytics-id")
+    _token(g, "analytics-id")
+    g["carregadas"] = FakeCreds()
+    assert _google.credenciais(ESC, g["token"], secret) is g["carregadas"] and g["logins"] == 0
+
+
+def test_login_usa_o_client_secret_pedido(g, tmp_path, monkeypatch):
+    secret = _secret(tmp_path / "analytics_client_secret.json", "analytics-id")
+    usados = []
+    original = InstalledAppFlow.from_client_secrets_file
+    monkeypatch.setattr(InstalledAppFlow, "from_client_secrets_file",
+                        classmethod(lambda cls, arq, esc: usados.append(arq) or original(arq, esc)))
+    _google.credenciais(ESC, g["token"], secret)
+    assert usados == [str(secret)]
+
+
+def test_falta_client_secret_do_projeto_sai_com_nome(g, tmp_path):
+    with pytest.raises(SystemExit, match="analytics_client_secret.json"):
+        _google.credenciais(ESC, g["token"], tmp_path / "analytics_client_secret.json")
