@@ -68,6 +68,20 @@ def test_tem_mancha_e_rebaixar():
     assert [x["t"] for x in r] == [9.0, 1.0] and r[1]["mancha"] and r[1]["nota"] == 0.025
 
 
+def test_alpha_degrade_solido_depois_suave_ate_zero():
+    a = [tr.alpha_degrade(x, 600, 880, 255) for x in range(0, 900)]
+    assert a[0] == a[599] == 255 and a[880] == a[899] == 0
+    assert all(p >= q for p, q in zip(a, a[1:]))              # nunca volta a escurecer
+    assert max(p - q for p, q in zip(a, a[1:])) <= 3          # sem degrau (era a "linha reta")
+    assert a[600] == 255 and a[610] >= 250                    # sai do sólido sem despencar
+
+
+def test_alpha_degrade_sem_overlay_comeca_na_borda():
+    assert tr.alpha_degrade(0, 0, 700, 190) == 190
+    assert tr.alpha_degrade(350, 0, 700, 190) == 95
+    assert tr.alpha_degrade(700, 0, 700, 190) == 0
+
+
 # ── overlays: segmentos de borda → caixas ──────────────────────────────────
 
 def test_caixas_canto_vira_caixa_e_encosta_na_borda():

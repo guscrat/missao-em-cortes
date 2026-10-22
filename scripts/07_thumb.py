@@ -106,7 +106,8 @@ BRANCO = (255, 255, 255)
 LARGURA, ALTURA = tr.LARGURA, tr.ALTURA
 ESCURO_MAX = 255    # opacidade (0-255) do degrade do texto onde ele e "solido" (em cima de overlay)
 ESCURO_TEXTO = 190  # opacidade na borda esquerda quando nao ha overlay (so contraste do texto)
-FADE_PX = 200       # largura da transicao do degrade ate ficar transparente
+FADE_PX = 280       # largura da transicao do degrade ate ficar transparente (para antes do rosto)...
+FADE_MIN = 140      # ...mas nunca menor que isso: transicao curta vira "corte reto"
 GAP_SUB = 0.35      # espaco entre a manchete e o subtitulo, em fracao da fonte da manchete
 LOGO_04 = ROOT / "assets" / "logoCanal.png"   # se existe, o 04 queimou ele no canto sup.-dir.
 
@@ -174,12 +175,11 @@ def colar_frame(canvas, frame_path, rosto=None, overlays=()):
     edraw = ImageDraw.Draw(escuro)
     # degrade do texto: solido ate o fim do overlay (se houver), some antes do rosto
     if solido:
-        fim, alpha0 = max(solido + 40, min(rosto_x0 - 10, solido + FADE_PX)), ESCURO_MAX
+        fim, alpha0 = max(solido + FADE_MIN, min(rosto_x0 - 10, solido + FADE_PX)), ESCURO_MAX
     else:
-        fim, alpha0 = max(40, rosto_x0 - 10), ESCURO_TEXTO
+        fim, alpha0 = max(FADE_MIN, rosto_x0 - 10), ESCURO_TEXTO
     for x in range(min(fim, LARGURA)):
-        a = alpha0 if x < solido else int(alpha0 * (1 - (x - solido) / (fim - solido)) ** 1.4)
-        edraw.line([(x, 0), (x, ALTURA)], fill=a)
+        edraw.line([(x, 0), (x, ALTURA)], fill=tr.alpha_degrade(x, solido, fim, alpha0))
     if outras:
         manchas = Image.new("L", (LARGURA, ALTURA), 0)
         mdraw = ImageDraw.Draw(manchas)
