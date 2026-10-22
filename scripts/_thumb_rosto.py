@@ -145,6 +145,18 @@ def posicionar(largura: int, altura: int, rosto: tuple | None, overlays=()) -> d
             "rosto_x0": max(0, int(ex * escala - esq))}
 
 
+def alpha_degrade(x: int, solido: int, fim: int, alpha0: int) -> int:
+    """Opacidade do degradê do texto na coluna x: alpha0 até `solido`, depois cai em
+    smoothstep até 0 em `fim`. O smoothstep começa e termina sem inclinação, então a passagem
+    da área escura pra imagem não forma linha (a curva antiga despencava logo no início)."""
+    if x < solido:
+        return alpha0
+    if x >= fim:
+        return 0
+    t = (x - solido) / (fim - solido)
+    return int(round(alpha0 * (1 - t * t * (3 - 2 * t))))
+
+
 # ── overlays ────────────────────────────────────────────────────────────────
 
 def _fronteiras(ativ):
