@@ -88,6 +88,85 @@ def reescrever(client, pedido: str) -> tuple[dict | None, object]:
     return novo, resp
 
 
+MAX_LINHA_COLAGEM = 16
+
+SCHEMA_COLAGEM = {
+    "type": "object",
+    "properties": {
+        "opcoes": {"type": "array", "items": {
+            "type": "object",
+            "properties": {"linha1": {"type": "string"}, "linha2": {"type": "string"}},
+            "required": ["linha1", "linha2"], "additionalProperties": False}},
+    },
+    "required": ["opcoes"],
+    "additionalProperties": False,
+}
+
+SISTEMA_COLAGEM = f"""Você é o editor do canal "Missão em Cortes", que publica cortes de lives \
+e entrevistas do Partido Missão. Escreva 3 opções DIFERENTES de texto para a thumbnail estilo \
+canal de react: 2 linhas curtas e grandes, em MAIÚSCULAS.
+
+Regras:
+- De preferência em forma de pergunta (gera curiosidade), mas só se a transcrição sustentar. \
+Só afirme o que a fala sustenta: nada de atribuir ao speaker frase, alvo ou promessa que ele \
+não disse.
+- Cada linha com no máximo {MAX_LINHA_COLAGEM} caracteres (contando espaços e pontuação).
+- Marque com *asteriscos* 1 ou 2 palavras de impacto (vão em amarelo). Se citar o nome da \
+pessoa comentada, marque com [colchetes] (vai em vermelho), ex.: "[LULA] VAI *CAIR*?". \
+No máximo um nome por opção.
+- O nome em [colchetes] fica ao lado da CENA DESTACADA (a que leva círculo/seta vermelha). \
+Só use [nome] se a descrição dessa cena diz que é essa pessoa; se não diz quem é, escreva \
+sem nome em vermelho. Nunca ponha o nome de uma pessoa ao lado da foto de outra.
+- NUNCA destaque palavrão nem termo que possa soar como ofensa a um grupo (raça, etnia, \
+gênero, orientação sexual, religião, origem, deficiência etc.), MESMO que esteja na fala.
+- Diferente do título do YouTube (não repita a frase)."""
+
+
+def montar_pedido_colagem(titulo: str, texto_thumb: str, destacada: str, outra: str,
+                          transcricao: str) -> str:
+    linhas = [f"TÍTULO DO YOUTUBE: {titulo}", f"TEXTO DA THUMB ATUAL: {texto_thumb}",
+              f"CENA DESTACADA (círculo/seta): {destacada or 'sem descrição (não use nome)'}",
+              f"OUTRA CENA: {outra or 'sem descrição'}",
+              "", "TRANSCRIÇÃO DO TRECHO:", transcricao]
+    return "\n".join(linhas)
+
+
+def opcao_valida(linhas: list[str]) -> bool:
+    """2 linhas, cada uma cabendo em MAX_LINHA_COLAGEM sem as marcas, 1-2 amarelas, até 1 nome."""
+    import _colagem as col
+    if len(linhas) != 2 or not all(l.strip() for l in linhas):
+        return False
+    junto = " ".join(linhas)
+    amarelas = sum(1 for _, c in (p for l in linhas for p in col.pedacos(l)) if c == col.AMARELO)
+    nomes = junto.count("[")
+    return (all(len(col.sem_marcas(l)) <= MAX_LINHA_COLAGEM + 2 for l in linhas)
+            and 1 <= amarelas <= 2 and nomes <= 1 and junto.count("*") % 2 == 0)
+
+
+def texto_colagem(client, pedido: str) -> tuple[list[list[str]] | None, object]:
+    """([[linha1, linha2], ...] só as opções válidas, ou None se recusou, resposta)."""
+    resp = client.beta.messages.create(
+        model=MODELO,
+        max_tokens=8000,
+        system=SISTEMA_COLAGEM,
+        messages=[{"role": "user", "content": pedido}],
+        output_config={"effort": "medium",
+                       "format": {"type": "json_schema", "schema": SCHEMA_COLAGEM}},
+        betas=["server-side-fallback-2026-07-01"],
+        extra_body={"fallbacks": "default"},
+    )
+    if resp.stop_reason == "refusal":
+        return None, resp
+    # Resposta paga mas ilegível volta [] (não exceção) pra o custo ainda ser logado
+    texto = next((b.text for b in resp.content if b.type == "text"), None)
+    try:
+        opcoes = [[o["linha1"].strip().upper(), o["linha2"].strip().upper()]
+                  for o in json.loads(texto)["opcoes"]]
+    except (TypeError, ValueError, KeyError, AttributeError):
+        return [], resp
+    return [o for o in opcoes if opcao_valida(o)][:3], resp
+
+
 def custo(resp) -> tuple[int, int, float]:
     tin, tout = resp.usage.input_tokens, resp.usage.output_tokens
     return tin, tout, tin / 1e6 * PRECO_IN + tout / 1e6 * PRECO_OUT

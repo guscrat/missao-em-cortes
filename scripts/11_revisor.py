@@ -43,6 +43,7 @@ sys.stdout.reconfigure(encoding='utf-8')
 import time
 from pathlib import Path
 
+import _colagem
 import _editor
 from _descricoes import ler_descricoes
 from _eventos import atualizar_tarefa, evento, ler_bloco, upsert_bloco
@@ -87,7 +88,9 @@ o rosto de quem fala INTEIRO (sem cortar testa, queixo ou metade do rosto), vis�
 iluminado, sem sombra, degradê ou escurecimento em cima dele? O texto está legível, sem corte \
 no meio de palavra, e coerente com o título? Reprove se o fundo é tela compartilhada ou \
 documento, se não há rosto, se o rosto está escuro, cortado ou coberto, ou se o texto está \
-truncado ou sem sentido."""
+truncado ou sem sentido. EXCEÇÃO, thumb colagem (apresentador recortado com contorno branco na \
+frente + 2 cenas do assunto ao fundo, círculo ou seta vermelha): as cenas ao fundo podem ser \
+tela, vídeo ou foto; o que vale é o rosto do APRESENTADOR inteiro e o texto legível."""
 
 SISTEMA = """Você é o revisor de conteúdo do canal "Missão em Cortes", que publica cortes de \
 lives e entrevistas do Partido Missão. Linha editorial: simpática ao partido, com independência \
@@ -404,6 +407,9 @@ def main(argv: list[str]) -> int:
         bid = b["id"]
         titulo = descricoes.get(bid, {}).get("titulo") or b.get("titulo_sugerido", "")
         texto_thumb = b.get("texto_thumb") or b.get("tema", "")
+        colagem = _colagem.variante_aplicada(escolher_thumb(pasta / "thumbs", nn))
+        if colagem:                     # a thumb que sobe é a colagem: confere o texto dela
+            texto_thumb = _colagem.sem_marcas(" ".join(colagem["texto"]))
         ini = hhmmss_para_segundos(b["timestamp_inicio"])
         fim = hhmmss_para_segundos(b["timestamp_fim"])
         transcricao = " ".join(w["word"] for w in palavras_na_janela(todas, ini, fim))

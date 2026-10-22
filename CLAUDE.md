@@ -26,6 +26,7 @@ Canal de YouTube de cortes de lives, entrevistas, debates e eventos do **Partido
 - **Pillow (PIL)** — geração programática de cards de contexto
 - **yt-dlp** — download das lives do YouTube
 - **OpenCV (headless, 4.x)** — detecção de rosto pro crop dos Shorts (Haar, local, sem modelo pra baixar)
+- **rembg** (onnxruntime CPU) — recorte do apresentador sem fundo na thumb colagem (modelo `u2net_human_seg`, ~170 MB, baixa sozinho na 1ª vez em `~/.u2net`)
 - **Canva** — intro, outro e template de thumbnail (externos ao pipeline)
 
 ## Estrutura do projeto
@@ -48,6 +49,7 @@ missao-em-cortes/
 │   │   │   └── legendados/           # cortes com legenda karaokê (mesmo nome) + legenda_NN.ass (step 4c)
 │   │   ├── cards/                    # card_NN.png e card_NN.mp4
 │   │   ├── thumbs/                   # thumb_NN_a/b/c.png (3 variantes pra escolher)
+│   │   │   └── colagem/              # thumb colagem (07b): thumb_NN_a/b/c.png + colagem.json (cenas, textos, créditos, custo)
 │   │   ├── shorts/                   # short_NN_<slug>.mp4 (9:16) + short_NN.ass + shorts.json (step 10)
 │   │   └── finalizados/              # video_NN_<slug>.mp4 (cold+intro+card+corte+outro)
 │   ├── _calibracao/                  # scratch da calibração de zoom (dev)
@@ -58,7 +60,8 @@ missao-em-cortes/
 │   ├── intro_norm.mp4                # normalizado com áudio silencioso
 │   ├── outro.mp4                     # do Canva, com voz IA ("inscreva-se")
 │   ├── outro_norm.mp4
-│   └── fonts/Anton-Regular.ttf
+│   ├── fonts/Anton-Regular.ttf
+│   └── personagens/                  # banco da thumb colagem: <slug>.webp sem fundo + licencas.json (licença e crédito de cada foto)
 ├── scripts/                          # Pipeline numerado
 │   ├── pipeline.py                   # orquestrador: roda (02)→03→04→(4b)→05→06→07→08 em sequência
 │   ├── 01_baixar.py                  # yt-dlp + salva inputs/<stem>.url
@@ -70,6 +73,9 @@ missao-em-cortes/
 │   ├── 05_cards.py
 │   ├── 06_montar.py
 │   ├── 07_thumb.py                   # thumbs semi-automáticas (off-pipeline)
+│   ├── 07b_colagem.py                # thumb "colagem" estilo react: recorte rembg + 2 cenas + círculo/seta + texto 2 linhas (Curador; modo em config/thumb.json)
+│   ├── _colagem.py                   # núcleo da colagem: candidatos de expressão/cena, escolha por visão (Haiku), layout
+│   ├── personagens.py                # banco de fotos com licença aberta (Wikidata/Commons → assets/personagens/)
 │   ├── 08_descricao.py               # gera txt com titulo+descricao+tags pro YouTube
 │   ├── 12_metricas.py                # retenção COM legenda x SEM (YouTube Analytics, só leitura) pro resumo semanal (off-pipeline)
 │   ├── 13_curador.py                 # agente Curador: acha vídeos novos dos canais, escolhe (LLM) e dispara o pipeline (1x/dia, off-pipeline)
@@ -105,7 +111,8 @@ missao-em-cortes/
 ├── config/
 │   ├── zoom.json                     # crop anti-overlay por stem (lido pelo 04_cortar.py)
 │   ├── canais.json                   # canais que o Curador monitora + zoom padrão por canal + limites (dias, duração) + estoque mínimo
-│   └── upload.json                   # trava da auditoria (auditoria_aprovada), agendamento do 09 e custos de cota
+│   ├── upload.json                   # trava da auditoria (auditoria_aprovada), agendamento do 09 e custos de cota
+│   └── thumb.json                    # modo da thumb colagem: desligado | teste | padrao
 ├── secrets/                          # youtube_client_secret.json + youtube_token.json (upload, projeto publisher) + analytics_client_secret.json + analytics_token.json (métricas, projeto analytics) — gitignored
 ├── .env                              # ANTHROPIC_API_KEY
 └── pyproject.toml
@@ -163,7 +170,7 @@ O step 13 (`uv run py scripts/13_curador.py [--dry-run] [--sem-pipeline] [--forc
 1. **Achar vídeos novos:** só os dos últimos `dias` (padrão 3) que nunca foram vistos. "Visto" = id em `inputs/*.url`, no banco ou já avaliado em `state/curadoria.json`. Antes de gastar, aplica um filtro grátis: duração entre `duracao_min` e `duracao_max` (20-240 min) e nada de live em andamento/agendada (volta no dia seguinte).
 2. **Avaliar:** os novos vão numa **única** chamada pro Claude (`claude-opus-5-5`, effort low, ~US$ 0,02-0,05/rodada), que decide `vale`, `prioridade` (1-10) e `motivo` (a frase que aparece no painel). O que vale entra na **fila**. Os recusados nunca são reavaliados.
 3. **Estoque:** dias de estoque = min(longos prontos ÷ `longos_por_dia`, Shorts prontos ÷ `shorts_por_dia`). Longo pronto = bloco `aprovado` (coluna "Pronto para publicar"). Short pronto = Short gerado de bloco aprovado/agendado/publicado e ainda não marcado como postado nem arquivado. Só conta live dos últimos 15 dias (`DIAS_ARQUIVAR`). Os limites ficam em `config/canais.json` → `estoque` (padrão: mínimo 2 dias, 1 longo + 2 Shorts por dia). **Até a auditoria (`auditoria_aprovada: false` no `config/upload.json`) o estoque conta só os longos** (dias = longos ÷ `longos_por_dia`; os Shorts seguem sendo gerados e aparecem no resumo como "fora da conta"). Quando a flag virar `true`, volta sozinho pra conta com Shorts. A flag é lida por `_paths.auditoria_aprovada()`.
-4. **Processar:** só se o estoque estiver **abaixo do mínimo** (ou com `--forcar`). Aí processa **1 vídeo**, o de maior prioridade da fila (empate: o mais recente): `01_baixar` → `pipeline.py --polir` → `11_revisor` → `10_shorts` (só dos aprovados, $0) → `publicacao.txt`. Custa ~US$ 0,65 por vídeo. O resto continua na fila, e item da fila com mais de 15 dias vira `expirado`.
+4. **Processar:** só se o estoque estiver **abaixo do mínimo** (ou com `--forcar`). Aí processa **1 vídeo**, o de maior prioridade da fila (empate: o mais recente): `01_baixar` → `pipeline.py --polir` → `11_revisor` → `10_shorts` (só dos aprovados, $0) → `publicacao.txt` → `07b_colagem` (modo `teste`, ~US$ 0,15, em `thumbs/colagem/`; no modo `padrao` roda com `--aplicar` antes do revisor). Custa ~US$ 0,65 por vídeo (+0,15 da colagem). O resto continua na fila, e item da fila com mais de 15 dias vira `expirado`.
 
 - **O que já subiu sai do estoque sozinho:** no começo de cada rodada (antes da conta do estoque), o Curador roda o `14_canal` (ver abaixo), que lê o canal e marca o que o Gu publicou ou agendou no Studio. Nada de registro manual. Se a leitura falhar (sem login, sem rede), a rodada segue com o estoque como estava e o resumo avisa.
 - **Zoom:** o `zoom` do canal é copiado pro `config/zoom.json` do stem novo (como o `calibrar_zoom --salvar`). Canal com `zoom: null` (Kim) é processado sem zoom, e o resumo avisa pra calibrar e re-cortar com `--desde=4`. Estúdio diferente do padrão do canal também pede conferência.
@@ -196,6 +203,10 @@ O step 7 é opcional e não afeta a montagem — gera 3 variantes de thumb por b
 **Texto da thumb:** usa o campo curto `texto_thumb` do `blocos.json` (2-5 palavras de impacto, gerado pelo LLM no step 3); na falta dele (vídeos segmentados antes desse campo), cai pro `tema` (3-6 palavras). **Nunca** usa o `titulo_sugerido` — esse é o título do YouTube (frase longa de até 70 chars), que estourava a thumb e era truncado no meio da frase (gerava incoerência tipo "...ZEMA E É"). Se o texto ainda assim não couber em 4 linhas, o script **avisa** (não corta em silêncio). Override manual: `--titulo="TEXTO CURTO"` (exige `--bloco=N`) força o texto de um bloco — útil pra punchar a thumb de vídeos sem `texto_thumb`.
 
 **Modo manual (`--bloco=N --t=MM:SS`):** quando os frames automáticos caem em **tela compartilhada** (lives onde o speaker mostra matéria/pesquisa, ex: `renan_2turn_x_lula`), as 3 variantes saem ruins. Aí você abre o corte, acha um segundo com o speaker na câmera e gera uma thumb daquele frame: `uv run py scripts/07_thumb.py <stem> --bloco=N --t=MM:SS` (aceita `MM:SS`, `HH:MM:SS` ou segundos puros) → salva `thumb_NN_manual.png`. Puxa do **corte completo** por padrão (mais momentos na câmera que o cold open curto; usa o `corte_NN_*.mp4`, não o `_polido`); `--fonte=cold` puxa do cold open. `--bloco=N` sozinho (sem `--t`) regenera só as variantes a/b/c daquele bloco. É a alternativa ao face_recognition, que segue adiado.
+
+O step 7b (`uv run py scripts/07b_colagem.py <stem> [--bloco=N] [--sem-llm] [--aplicar] [--saida=DIR]`, `agente="editor"`, ~US$ 0,03/bloco, ~US$ 0,15/live) gera a **thumb colagem** estilo canal de react, 3 variantes a/b/c pro "Testar e comparar" do Studio. **Layout:** 2 cenas lado a lado no fundo (à esquerda o assunto, preenchendo; à direita o contexto como **cartão** inteiro com borda branca, legível, sobre ele mesmo desfocado), círculo (a/c) ou seta (b) vermelha no rosto-chave da cena (Haar), o apresentador **recortado sem fundo** (rembg, local) à direita com contorno branco, e texto grande em 2 linhas com contorno preto grosso (`*palavra*` em amarelo 14, `[Nome]` em vermelho). **Cenas:** primeiro a **tela compartilhada** da própria live (a caixa de react que o `detectar_overlays` acha, ou frame inteiro sem rosto que **não** seja o estúdio: frame parecido com os do apresentador é ele virado de lado); faltou, completa com o **banco de personagens** citados nas tags/tema/título do bloco (o apresentador da live nunca vira cena dele mesmo). **Escolha:** uma chamada de visão `claude-haiku-5-5` (~US$ 0,0005) ordena ~6 expressões do apresentador (da fila do 07) e escolhe a cena do assunto e a de contexto, descrevendo cada uma **só pelo que está escrito nela** (legenda, púlpito, @ do post; nunca reconhece rosto). **Texto:** o editor (`_editor.texto_colagem`, opus, ~US$ 0,03) escreve 3 opções, de preferência em pergunta, com as mesmas regras de título (fiel à fala, sem palavrão/ofensa), e só põe `[Nome]` se a cena destacada é dessa pessoa. **Fallback:** sem rosto bom, sem recorte ou sem 2 cenas, o bloco fica com a thumb do template atual (07). Live sem fila do 07 (antiga) tem a fila calculada em memória. Registro em `thumbs/colagem/colagem.json` (cenas, textos, créditos, custo). **Nunca** mexe em bloco agendado/publicado/arquivado; `--saida=DIR` é prévia fora do `outputs/` e ignora essa trava.
+- **Modo** (`config/thumb.json` → `colagem`): `teste` (atual) = o Curador roda o 07b no fim de cada vídeo novo em `thumbs/colagem/`, **sem mexer** nas thumbs que sobem, e o resumo aponta a pasta pra comparar; `padrao` = o Curador roda com `--aplicar` **antes** do revisor: a colagem vira `thumb_NN_a/b/c.png` e o crédito da foto do banco entra no fim da descrição do bloco (`_descricoes.adicionar_credito`). Re-rodar o `08_descricao` regera o txt e **apaga** esse crédito: rode o `07b --aplicar` de novo depois. O revisor reconhece a colagem aplicada (cópia idêntica em `thumbs/colagem/`), confere o texto **dela** contra a fala e aceita cena de tela ao fundo nesse formato. `desligado` (ou sem o arquivo) = nada.
+- **Banco de personagens** (`uv run py scripts/personagens.py lista|baixar`, US$ 0): só licença aberta do **Wikimedia Commons**, conferida pela API: CC0, domínio público, CC BY e "Attribution" (Agência Senado). CC BY-SA fica de fora (a thumb inteira teria que sair em BY-SA; `--aceitar-sa` libera). Nunca baixa de buscador, jornal ou rede social. Automático **só a foto oficial do item no Wikidata** (P18, pessoa = ser humano). A categoria do Commons não entra sozinha, porque no 1º teste o "Lula" virou o diagrama do PowerPoint da Lava Jato; ela só aparece como sugestão pra escolher à mão com `--arquivo="File:..."` (conferir que é a pessoa). Foto com ≥400 px e um rosto dominante; recorte rembg salvo em WebP (≤900 px de altura). `licencas.json` guarda fonte, arquivo do Commons, licença, autor e a linha `credito` que vai na descrição. Apelidos curtos (Flávio, Lula, Kim...) ficam no `APELIDOS` do script. `lista` mostra os nomes que mais aparecem nas tags dos blocos (`--outputs=` pra apontar outra pasta).
 
 O step 8 gera `descricoes.txt` (na pasta do vídeo) com, pra cada bloco: título sugerido (com contagem de chars), descrição (resumo + ganchos como bullets), créditos do canal, hashtags e lista de tags pronta pra colar no YouTube Studio. **Sem chamada de API** — reaproveita o que o LLM já produziu no `blocos.json`. A URL da fonte ("Conteúdo original") é preenchida automaticamente a partir de `inputs/<stem>.url` (salva pelo `01_baixar.py`); sem o arquivo, deixa o placeholder `[COLAR URL DA LIVE AQUI]` e avisa no log. O link do **nosso** canal (`scripts/_canal.py`) só entra na linha "Inscreva-se" — se o `.url` apontar pro nosso canal, o 08 ignora e o 09 se recusa a subir (crédito da fonte é obrigatório).
 
