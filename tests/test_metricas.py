@@ -126,7 +126,9 @@ def canal(tmp_path, monkeypatch, banco):
     builds = {"youtube": FakeYT(videos), "youtubeAnalytics": analytics}
     fake_discovery = types.SimpleNamespace(build=lambda api, v, **k: builds[api])
     monkeypatch.setitem(sys.modules, "googleapiclient.discovery", fake_discovery)
-    monkeypatch.setattr(mt, "credenciais", lambda escopos, token: "creds")
+    pedidos = []
+    monkeypatch.setattr(mt, "credenciais", lambda *a: pedidos.append(a) or "creds")
+    analytics.pedidos = pedidos
     monkeypatch.setattr(mt, "OUTPUTS", tmp_path / "outputs")
     monkeypatch.setattr(mt, "SAIDA", tmp_path / "state" / "metricas_retencao.json")
     return analytics
@@ -150,6 +152,15 @@ def test_main_consulta_analytics_so_dos_publicos(canal):
     assert set(q["filters"].removeprefix("video==").split(",")) == {"a", "b", "c", "d"}
 
 
-def test_escopos_sao_so_leitura_e_token_separado():
+def test_escopos_sao_so_leitura_e_projeto_separado_do_upload():
     assert all(e.endswith(".readonly") for e in mt.ESCOPOS)
-    assert mt.TOKEN.name == "youtube_leitura_token.json"
+    assert mt.TOKEN.name == "analytics_token.json"
+    assert mt.CLIENT_SECRET.name == "analytics_client_secret.json"
+    import _google
+    assert mt.CLIENT_SECRET != _google.CLIENT_SECRET   # nunca o client do publisher
+    assert mt.TOKEN.parent.name == mt.CLIENT_SECRET.parent.name == "secrets"   # gitignored
+
+
+def test_main_pede_credencial_do_projeto_analytics(canal):
+    mt.main([])
+    assert canal.pedidos == [(mt.ESCOPOS, mt.TOKEN, mt.CLIENT_SECRET)]

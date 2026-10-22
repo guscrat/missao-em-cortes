@@ -29,6 +29,7 @@ COLUNAS = [
     ("Quarentena", "você", {"quarentena"}),
     ("Agendado", "publicador", {"aprovado", "agendado"}),
     ("Publicado", "analista", {"publicado"}),
+    ("Descartado", "revisor", {"descartado"}),          # conteúdo ruim: não sobe
 ]
 
 st.set_page_config(page_title="Missão em Cortes · painel", page_icon="✂️", layout="wide")

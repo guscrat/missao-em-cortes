@@ -11,6 +11,7 @@ Uso: uv run py scripts/07_thumb.py <stem>
      uv run py scripts/07_thumb.py <stem> --bloco=N --t=MM:SS  # frame manual de um timestamp
      uv run py scripts/07_thumb.py <stem> --bloco=N --t=4:12 --fonte=cold
      uv run py scripts/07_thumb.py <stem> --bloco=N --titulo="TEXTO CURTO"  # texto da thumb na mao
+     uv run py scripts/07_thumb.py <stem> --bloco=N --variante=b  # so a variante b (usado pelo editor)
 
 Texto da thumb: usa o campo curto texto_thumb do blocos.json (2-5 palavras, gerado
 pelo LLM); na falta dele, cai pro tema. NUNCA usa o titulo_sugerido (titulo de
@@ -47,6 +48,7 @@ bloco_manual = None
 t_manual = None
 fonte_manual = "corte"
 TITULO_OVERRIDE = None
+variante = None
 for f in flags:
     if f.startswith("--bloco="):
         bloco_manual = int(f.split("=", 1)[1])
@@ -56,7 +58,11 @@ for f in flags:
         fonte_manual = f.split("=", 1)[1].strip()
     elif f.startswith("--titulo="):
         TITULO_OVERRIDE = f.split("=", 1)[1]
+    elif f.startswith("--variante="):
+        variante = f.split("=", 1)[1].strip()
 
+if variante is not None and (bloco_manual is None or variante not in ("a", "b", "c")):
+    sys.exit("[!] --variante=a|b|c exige --bloco=N (refaz só a thumb escolhida, ex: pelo editor)")
 if TITULO_OVERRIDE is not None and bloco_manual is None:
     sys.exit("[!] --titulo exige --bloco=N (o texto se aplica a um bloco so)")
 
@@ -288,6 +294,8 @@ for b in blocos_iter:
 
     dur = duracao_segundos(cold)
     for letra, pct in VARIANTES:
+        if variante and letra != variante:
+            continue
         tmp = OUT_DIR / f"_frame_{b['id']:02d}_{letra}.png"
         extrair_frame(cold, dur * pct, tmp)
         gerar_thumb(b, OUT_DIR / f"thumb_{b['id']:02d}_{letra}.png", tmp)
