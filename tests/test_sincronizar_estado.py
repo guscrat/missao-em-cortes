@@ -147,3 +147,59 @@ def test_arquivar_se_antigo_pasta_sem_data_valida(projeto, arquivamento):
     pasta = projeto.outputs / "9999-99-99_v"
     assert sincronizar_estado.arquivar_se_antigo(pasta, "v", hoje=date(2030, 1, 1)) == []
     assert _blocos(projeto.banco)[1]["status"] == "montado"
+
+
+# ── arquivar_shorts ────────────────────────────────────────────────────────
+
+import json as _json  # noqa: E402
+
+
+def _shorts_json(pasta, registro):
+    (pasta / "shorts").mkdir(exist_ok=True)
+    f = pasta / "shorts" / "shorts.json"
+    f.write_text(_json.dumps(registro), encoding="utf-8")
+    return f
+
+
+def _le(f):
+    return _json.loads(f.read_text(encoding="utf-8"))
+
+
+def test_arquivar_shorts_marca_nao_postados_e_preserva_postados(tmp_path):
+    f = _shorts_json(tmp_path, {"01": {"arquivo": "a.mp4"},
+                                "02": {"arquivo": "b.mp4", "postado": "2026-10-01"},
+                                "03": {"arquivo": "c.mp4", "arquivado": "outro motivo"}})
+    assert sincronizar_estado.arquivar_shorts(tmp_path) == ["01"]
+    r = _le(f)
+    assert r["01"]["arquivado"] == "conteúdo antigo"
+    assert "arquivado" not in r["02"] and r["02"]["postado"] == "2026-10-01"
+    assert r["03"]["arquivado"] == "outro motivo"
+
+
+def test_arquivar_shorts_idempotente(tmp_path):
+    f = _shorts_json(tmp_path, {"01": {"arquivo": "a.mp4"}})
+    sincronizar_estado.arquivar_shorts(tmp_path)
+    antes = f.read_text(encoding="utf-8")
+    assert sincronizar_estado.arquivar_shorts(tmp_path) == []
+    assert f.read_text(encoding="utf-8") == antes
+
+
+def test_arquivar_shorts_sem_json_ou_json_ruim(tmp_path):
+    assert sincronizar_estado.arquivar_shorts(tmp_path) == []
+    (tmp_path / "shorts").mkdir()
+    (tmp_path / "shorts" / "shorts.json").write_text("lixo", encoding="utf-8")
+    assert sincronizar_estado.arquivar_shorts(tmp_path) == []
+
+
+def test_arquivar_se_antigo_arquiva_shorts_so_de_live_velha(projeto, arquivamento):
+    velha = projeto.video("velha", blocos=[1], finalizados=[1], data="2026-06-25")
+    nova = projeto.video("nova", blocos=[1], finalizados=[1], data="2026-10-21")
+    fv = _shorts_json(velha, {"01": {"arquivo": "a.mp4"}})
+    fn = _shorts_json(nova, {"01": {"arquivo": "a.mp4"}})
+    hoje = date(2026, 10, 22)
+    sincronizar_estado.arquivar_se_antigo(velha, "velha", hoje=hoje)
+    sincronizar_estado.arquivar_se_antigo(nova, "nova", hoje=hoje)
+    assert _le(fv)["01"]["arquivado"] == "conteúdo antigo"
+    assert "arquivado" not in _le(fn)["01"]
+    ev = projeto.banco("SELECT mensagem FROM eventos WHERE etapa='arquivar'")
+    assert any("Shorts ['01']" in e["mensagem"] for e in ev)

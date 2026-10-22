@@ -5,7 +5,9 @@ thumb escolhida pelo revisor, título/descrição/tags do descricoes.txt (ediç�
 e uma sugestão de dia: 1 por dia, ou 2 por dia quando há 3+ aprovados (conteúdo de live
 envelhece rápido). As datas continuam DEPOIS do último longo agendado/publicado no canal
 (state/canal.json do 14_canal + publish_at do banco), pra não brigar com o que já está na
-fila do YouTube. Usado pelo Curador (13) no fim de cada vídeo; dá pra rodar à mão:
+fila do YouTube. Enquanto config/upload.json → auditoria_aprovada for false, a lista
+mostra só os longos (os Shorts esperam a auditoria pra subir pela API). Usado pelo
+Curador (13) no fim de cada vídeo; dá pra rodar à mão:
 
   uv run py scripts/_publicacao.py <stem>
 """
@@ -15,6 +17,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from _descricoes import ler_descricoes
+from _paths import auditoria_aprovada
 
 CANAL_JSON = Path(__file__).parent.parent / "state" / "canal.json"
 DIAS_SEMANA = ["seg", "ter", "qua", "qui", "sex", "sáb", "dom"]
@@ -116,19 +119,27 @@ def gerar(pasta: Path, agora: datetime | None = None) -> tuple[Path | None, list
     if not lista:
         return None, []
     dias = agenda(len(lista), agora, ultimo_agendado())
+    com_shorts = auditoria_aprovada()
     linhas = [f"# Publicação manual — {pasta.name}",
               f"# {len(lista)} corte(s) aprovado(s) pelo revisor, em ordem de score.",
-              "# Thumb: a metade direita preta é o espaço do collage no Canva.",
-              "# Short: suba com o MESMO título do vídeo (pode pôr #shorts). É pelo título",
-              "# que o 14_canal reconhece sozinho o que já foi publicado/agendado.", ""]
+              "# Thumb: a metade direita preta é o espaço do collage no Canva."]
+    if com_shorts:
+        linhas += ["# Short: suba com o MESMO título do vídeo (pode pôr #shorts). É pelo título",
+                   "# que o 14_canal reconhece sozinho o que já foi publicado/agendado.", ""]
+    else:
+        linhas += ["# Só os vídeos LONGOS: os Shorts ficam prontos e sobem pela API quando a",
+                   "# auditoria for aprovada (config/upload.json → auditoria_aprovada).", ""]
     for x, dia in zip(lista, dias):
+        short = []
+        if com_shorts:
+            short = [f"SHORT:   shorts/{x['short'].name}" if x["short"] else "SHORT:   (sem Short)"]
         linhas +=["=" * 70,
                    f"{DIAS_SEMANA[dia.weekday()]} {dia:%d/%m} {HORA} · VÍDEO {x['id']:02d} · "
                    f"score {x['score']} · {x['duracao']} min",
                    "=" * 70,
                    f"ARQUIVO: finalizados/{x['video'].name}",
                    f"THUMB:   thumbs/{x['thumb'].name}" if x["thumb"] else "THUMB:   (sem thumb)",
-                   f"SHORT:   shorts/{x['short'].name}" if x["short"] else "SHORT:   (sem Short)",
+                   *short,
                    "", "TÍTULO:", x["titulo"], "", "DESCRIÇÃO:", x["descricao"].strip(), "",
                    "TAGS:", ", ".join(x["tags"]), ""]
     destino = pasta / "publicacao.txt"
