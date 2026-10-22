@@ -1,7 +1,7 @@
 """Gera thumb base (PNG 1280x720) pra cada bloco.
 
 Layout semi-automatico:
-  - Frame do speaker extraido do cold open (meio) ocupando a metade esquerda
+  - Frame do speaker (o de melhor rosto) ocupando a metade esquerda
   - Logo 'MISSAO EM CORTES' no topo esquerdo
   - Titulo grande no canto inferior esquerdo (amarelo + branco)
   - Metade direita preta, reservada pra collage manual no Canva
@@ -12,6 +12,13 @@ Uso: uv run py scripts/07_thumb.py <stem>
      uv run py scripts/07_thumb.py <stem> --bloco=N --t=4:12 --fonte=cold
      uv run py scripts/07_thumb.py <stem> --bloco=N --titulo="TEXTO CURTO"  # texto da thumb na mao
      uv run py scripts/07_thumb.py <stem> --bloco=N --variante=b  # so a variante b (usado pelo editor)
+     uv run py scripts/07_thumb.py <stem> --bloco=N --proximo     # proximo frame da fila em thumb_NN_a (usado pelo revisor)
+
+Frames pelo rosto (_thumb_rosto.py, OpenCV, gratis): amostra o cold open e o corte, da nota
+pelo rosto (tamanho, luz, nitidez) e as variantes a/b/c sao os 3 melhores. O recorte poe o
+rosto inteiro na area visivel, e o degrade lateral encolhe (ou some) quando cairia em cima
+dele. A fila de frames fica em thumbs/candidatos_NN.json: o --proximo pega o seguinte
+(sai com codigo 2 quando nao sobra frame com rosto).
 
 Texto da thumb: usa o campo curto texto_thumb do blocos.json (2-5 palavras, gerado
 pelo LLM); na falta dele, cai pro tema. NUNCA usa o titulo_sugerido (titulo de
@@ -29,6 +36,7 @@ import json
 import subprocess
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 from _paths import achar_pasta, stem_de
+import _thumb_rosto as tr
 
 ROOT = Path(__file__).parent.parent
 
@@ -49,6 +57,7 @@ t_manual = None
 fonte_manual = "corte"
 TITULO_OVERRIDE = None
 variante = None
+proximo = "--proximo" in flags
 for f in flags:
     if f.startswith("--bloco="):
         bloco_manual = int(f.split("=", 1)[1])
@@ -63,6 +72,8 @@ for f in flags:
 
 if variante is not None and (bloco_manual is None or variante not in ("a", "b", "c")):
     sys.exit("[!] --variante=a|b|c exige --bloco=N (refaz só a thumb escolhida, ex: pelo editor)")
+if proximo and bloco_manual is None:
+    sys.exit("[!] --proximo exige --bloco=N (troca o frame da thumb escolhida de um bloco)")
 if TITULO_OVERRIDE is not None and bloco_manual is None:
     sys.exit("[!] --titulo exige --bloco=N (o texto se aplica a um bloco so)")
 
@@ -92,14 +103,6 @@ BRANCO = (255, 255, 255)
 LARGURA, ALTURA = 1280, 720
 FRAME_W = 760  # frame ocupa a metade esquerda + um pouco
 FRAME_X = 150  # desloca o frame pra direita pra "centralizar" mais o speaker
-
-def duracao_segundos(video):
-    probe = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-         "-of", "default=noprint_wrappers=1:nokey=1", str(video)],
-        capture_output=True, text=True, check=True
-    )
-    return float(probe.stdout.strip())
 
 def extrair_frame(video, segundo, output_png):
     subprocess.run(
@@ -146,24 +149,20 @@ def titulo_curto(bloco):
     t = bloco.get("texto_thumb") or bloco.get("tema", "")
     return t.split("|")[0].strip().upper()
 
-def colar_frame(canvas, frame_path):
-    """Cola o frame na metade esquerda com fade pra preto na borda direita."""
+def colar_frame(canvas, frame_path, rosto=None):
+    """Cola o frame na faixa da esquerda com o rosto inteiro na area visivel e fade pra
+    preto nas bordas. O fade encolhe (ou some) do lado em que cairia sobre o rosto."""
     frame = Image.open(frame_path).convert("RGB")
-    # Escala mantendo aspect ratio, cobre FRAME_W x ALTURA
-    fw, fh = frame.size
-    scale = max(FRAME_W / fw, ALTURA / fh)
-    new_w, new_h = int(fw * scale), int(fh * scale)
+    pos = tr.posicionar(frame.width, frame.height, rosto)
+    new_w, new_h = round(frame.width * pos["escala"]), round(frame.height * pos["escala"])
     frame = frame.resize((new_w, new_h), Image.LANCZOS)
-    # Crop centralizado
-    left = (new_w - FRAME_W) // 2
-    top = (new_h - ALTURA) // 2
+    left, top = pos["esq"], pos["topo"]
     frame = frame.crop((left, top, left + FRAME_W, top + ALTURA))
 
     # Mascara com fade nas duas bordas laterais (gradiente preto)
     mask = Image.new("L", (FRAME_W, ALTURA), 255)
     mdraw = ImageDraw.Draw(mask)
-    fade_dir = 180
-    fade_esq = 140
+    fade_dir, fade_esq = pos["fade_dir"], pos["fade_esq"]
     for i in range(fade_dir):
         alpha = int(255 * (1 - i / fade_dir))
         mdraw.line([(FRAME_W - fade_dir + i, 0), (FRAME_W - fade_dir + i, ALTURA)], fill=alpha)
@@ -213,11 +212,11 @@ def aplicar_gradiente_inferior(canvas, altura_fade=420, alpha_max=235):
     base.alpha_composite(overlay)
     return base.convert("RGB")
 
-def gerar_thumb(bloco, output_png, frame_png=None):
+def gerar_thumb(bloco, output_png, frame_png=None, rosto=None):
     canvas = Image.new("RGB", (LARGURA, ALTURA), PRETO)
 
     if frame_png and frame_png.exists():
-        colar_frame(canvas, frame_png)
+        colar_frame(canvas, frame_png, rosto)
 
     # Gradiente escuro embaixo pra contraste do texto sem cobrir o rosto
     canvas = aplicar_gradiente_inferior(canvas)
@@ -271,35 +270,87 @@ if t_manual is not None:
     tmp = OUT_DIR / f"_frame_{bloco_manual:02d}_manual.png"
     extrair_frame(video, t_manual, tmp)
     out = OUT_DIR / f"thumb_{bloco_manual:02d}_manual.png"
-    gerar_thumb(b, out, tmp)
+    import cv2
+    gerar_thumb(b, out, tmp, tr.analisar(cv2.imread(str(tmp)))["rosto"])
     tmp.unlink(missing_ok=True)
     print(f"\nOK thumb manual salva: {out.name}")
     sys.exit(0)
 
-VARIANTES = [("a", 0.25), ("b", 0.50), ("c", 0.75)]
+LETRAS = ("a", "b", "c")
+
+
+def caminho_fila(bid):
+    return OUT_DIR / f"candidatos_{bid:02d}.json"
+
+
+def ler_fila(bid):
+    try:
+        return json.loads(caminho_fila(bid).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def gravar_fila(bid, fila):
+    caminho_fila(bid).write_text(json.dumps(fila, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def nova_fila(bid):
+    """Ranqueia os frames do bloco pelo rosto (cold open + corte) e grava a fila."""
+    cands = tr.ranquear(encontrar_cold_open(bid), encontrar_corte(bid))
+    fila = {"candidatos": cands, "variantes": {}, "proximo": min(len(LETRAS), len(cands))}
+    com_rosto = sum(1 for c in cands if c["nota"] > 0)
+    print(f"  {len(cands)} frame(s) analisado(s), {com_rosto} com rosto")
+    return fila
+
+
+def thumb_do_candidato(b, letra, cand):
+    tmp = OUT_DIR / f"_frame_{b['id']:02d}_{letra}.png"
+    extrair_frame(CORTES_DIR / cand["video"], cand["t"], tmp)
+    gerar_thumb(b, OUT_DIR / f"thumb_{b['id']:02d}_{letra}.png", tmp, cand.get("rosto"))
+    tmp.unlink(missing_ok=True)
+    print(f"    {letra}: {cand['fonte']} @ {cand['t']:.1f}s · nota {cand['nota']:.4f}"
+          + ("" if cand.get("rosto") else " (sem rosto)"))
+
 
 blocos_iter = [x for x in data["blocos"] if x["id"] == bloco_manual] if bloco_manual is not None else data["blocos"]
 if bloco_manual is not None and not blocos_iter:
     sys.exit(f"[!] bloco {bloco_manual} nao existe no blocos.json")
 
-print(f"Gerando {len(blocos_iter) * len(VARIANTES)} thumbs em {OUT_DIR}\n")
+# ── --proximo: troca o frame da thumb escolhida (a) pelo seguinte da fila ────
+if proximo:
+    b = blocos_iter[0]
+    fila = ler_fila(b["id"]) or {**nova_fila(b["id"]), "proximo": 0}
+    i = fila["proximo"]
+    if i >= len(fila["candidatos"]) or fila["candidatos"][i]["nota"] <= 0:
+        print(f"[!] bloco {b['id']}: nao sobrou frame com rosto na fila ({i} usado(s))")
+        sys.exit(2)
+    print(f"[Bloco {b['id']}] frame {i + 1} da fila")
+    thumb_do_candidato(b, "a", fila["candidatos"][i])
+    fila["variantes"]["a"] = i
+    fila["proximo"] = i + 1
+    gravar_fila(b["id"], fila)
+    sys.exit(0)
+
+print(f"Gerando thumbs ({'variante ' + variante if variante else 'a/b/c'}) em {OUT_DIR}\n")
 for b in blocos_iter:
     print(f"[Bloco {b['id']}] {b['tema']}")
-    cold = encontrar_cold_open(b["id"])
-    if not cold:
-        print(f"  AVISO: cold open nao encontrado, gerando sem frame")
+    fila = ler_fila(b["id"]) if variante else None   # editor: mesmo frame, texto novo
+    if fila is None:
+        fila = nova_fila(b["id"])
+    if not fila["candidatos"]:
+        print(f"  AVISO: cold open/corte nao encontrado, gerando sem frame")
         gerar_thumb(b, OUT_DIR / f"thumb_{b['id']:02d}.png")
         print()
         continue
-
-    dur = duracao_segundos(cold)
-    for letra, pct in VARIANTES:
+    for k, letra in enumerate(LETRAS):
         if variante and letra != variante:
             continue
-        tmp = OUT_DIR / f"_frame_{b['id']:02d}_{letra}.png"
-        extrair_frame(cold, dur * pct, tmp)
-        gerar_thumb(b, OUT_DIR / f"thumb_{b['id']:02d}_{letra}.png", tmp)
-        tmp.unlink(missing_ok=True)
+        i = fila["variantes"].get(letra, k)
+        if i >= len(fila["candidatos"]):
+            continue
+        thumb_do_candidato(b, letra, fila["candidatos"][i])
+        fila["variantes"][letra] = i
+    gravar_fila(b["id"], fila)
     print()
 
 print(f"OK Thumbs salvas em {OUT_DIR}")

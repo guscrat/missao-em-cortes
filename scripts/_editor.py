@@ -38,13 +38,16 @@ SCHEMA = {
 }
 
 SISTEMA = f"""Você é o editor do canal "Missão em Cortes", que publica cortes de lives e \
-entrevistas do Partido Missão. O revisor reprovou o título deste corte por não ser fiel à \
-fala. Reescreva o título do YouTube e o texto da thumb.
+entrevistas do Partido Missão. O revisor reprovou o título deste corte (infiel à fala, ou \
+destacando palavrão/termo ofensivo). Reescreva o título do YouTube e o texto da thumb.
 
 Regras:
 - Só afirme o que a transcrição sustenta. Nada de atribuir ao speaker frase, alvo ou \
 promessa que ele não disse. Corrija exatamente o problema apontado pelo revisor.
 - Continue com gancho: título ousado e curioso é bem-vindo, desde que fiel.
+- Título e texto da thumb NUNCA destacam palavrão nem termo que possa soar como ofensa a um \
+grupo (raça, etnia, gênero, orientação sexual, religião, origem, deficiência etc.), MESMO que \
+esteja na fala. Descreva o tom ("desabafo sem filtro", "detona") em vez de citar o termo.
 - titulo: no máximo {MAX_TITULO} caracteres, no formato do canal ("Nome: 'gancho'" funciona bem).
 - texto_thumb: 2 a 5 palavras de impacto, no máximo 28 caracteres, diferente do título.
 - Não repita tentativas que o revisor já reprovou.
