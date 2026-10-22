@@ -291,9 +291,10 @@ def _data_pasta(nome: str) -> date | None:
 
 def ler_shorts(pasta: Path) -> dict:
     try:
-        return json.loads((pasta / "shorts" / "shorts.json").read_text(encoding="utf-8"))
+        dados = json.loads((pasta / "shorts" / "shorts.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
+    return {k: v for k, v in dados.items() if isinstance(v, dict)} if isinstance(dados, dict) else {}
 
 
 def calcular_estoque(cfg: dict, hoje: date | None = None) -> dict:
@@ -317,7 +318,8 @@ def calcular_estoque(cfg: dict, hoje: date | None = None) -> dict:
     longos = shorts = 0
     cache: dict[Path, dict] = {}
     for r in linhas:
-        pasta = OUTPUTS / r["pasta"] if r["pasta"] else             next(iter(sorted(OUTPUTS.glob(f"*_{r['stem']}"))), None)
+        pasta = OUTPUTS / r["pasta"] if r["pasta"] else \
+            next(iter(sorted(OUTPUTS.glob(f"*_{r['stem']}"))), None)
         data = _data_pasta(pasta.name) if pasta else None
         if data is None or (hoje - data).days > DIAS_ARQUIVAR:
             continue
@@ -326,7 +328,8 @@ def calcular_estoque(cfg: dict, hoje: date | None = None) -> dict:
         if pasta not in cache:
             cache[pasta] = ler_shorts(pasta)
         sh = cache[pasta].get(f"{r['bloco_id']:02d}")
-        if sh and not sh.get("postado") and (pasta / "shorts" / sh["arquivo"]).exists():
+        if sh and sh.get("arquivo") and not sh.get("postado") and \
+                (pasta / "shorts" / sh["arquivo"]).exists():
             shorts += 1
     est = cfg["estoque"]
     dias = min(longos / est["longos_por_dia"], shorts / est["shorts_por_dia"])
@@ -451,6 +454,9 @@ def escrever_resumo(rodada: dict) -> str:
             linhas += [f"- {x['canal']}: {x['titulo']} — {x['motivo']}" for x in rodada[chave]]
             linhas.append("")
     avisos = [a for p in rodada["processados"] for a in p["avisos"]]
+    if rodada.get("falha_llm"):
+        avisos.insert(0, f"avaliação dos vídeos novos falhou ({rodada['falha_llm']}); "
+                         "eles voltam amanhã")
     if avisos:
         linhas.append("## Avisos")
         linhas += [f"- {a}" for a in avisos]
@@ -495,8 +501,8 @@ def expirar_fila(estado: dict, hoje: date) -> list[str]:
     """Fila mais velha que DIAS_ARQUIVAR vira 'expirado' (mesma regra do conteúdo antigo)."""
     expirados = []
     for k, v in estado.items():
-        if v.get("decisao") == "fila" and v.get("data") and \
-                (hoje - date.fromisoformat(v["data"])).days > DIAS_ARQUIVAR:
+        data = _data_pasta(v.get("data") or "")        # data malformada: não expira (nem quebra)
+        if v.get("decisao") == "fila" and data and (hoje - data).days > DIAS_ARQUIVAR:
             v["decisao"] = "expirado"
             expirados.append(k)
     return expirados
@@ -547,14 +553,16 @@ def _rodada(cfg: dict, dry_run: bool, sem_pipeline: bool, forcar: bool) -> int:
                mensagem=f"{len(novos)} vídeo(s) novo(s)")
         try:
             avaliacoes, custo = avaliar(Anthropic(), novos)
-        except Exception as e:  # noqa: BLE001 — curadoria falhou: registra e sai
+        except Exception as e:  # noqa: BLE001 — avaliação falhou: a fila de antes ainda roda
             evento(None, "curadoria", "falha", agente="curador", mensagem=str(e)[:300])
-            print(f"[!] Curadoria falhou: {e}")
-            return 1
-        rodada["custo"] = custo[2]
-        evento(None, "curadoria", "llm", agente="curador", tokens_in=custo[0],
-               tokens_out=custo[1], custo_usd=custo[2], mensagem=MODELO)
-        print(f"Claude: {custo[0]:,} tok in · {custo[1]:,} tok out · US$ {custo[2]:.3f}")
+            print(f"[!] Avaliação dos novos falhou ({e}); sigo só com a fila")
+            rodada["falha_llm"] = str(e)[:300]
+            avaliacoes = {}
+        else:
+            rodada["custo"] = custo[2]
+            evento(None, "curadoria", "llm", agente="curador", tokens_in=custo[0],
+                   tokens_out=custo[1], custo_usd=custo[2], mensagem=MODELO)
+            print(f"Claude: {custo[0]:,} tok in · {custo[1]:,} tok out · US$ {custo[2]:.3f}")
         for c in novos:
             a = avaliacoes.get(c["id"])
             if a is None:                           # recusa do modelo/id faltando: tenta amanhã
@@ -600,7 +608,8 @@ def _rodada(cfg: dict, dry_run: bool, sem_pipeline: bool, forcar: bool) -> int:
         rodada["estoque_depois"] = calcular_estoque(cfg)
 
     print("\n" + escrever_resumo(rodada))
-    return 0 if all(p["ok"] for p in rodada["processados"]) else 1
+    ok = all(p["ok"] for p in rodada["processados"]) and not rodada.get("falha_llm")
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":
