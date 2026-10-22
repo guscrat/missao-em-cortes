@@ -12,7 +12,7 @@ import _eventos
 PIPELINE = Path(__file__).parent.parent / "scripts" / "pipeline.py"
 
 
-def _rodar(monkeypatch, argv, falha_em=None):
+def _rodar(monkeypatch, argv, falha_em=None, desde="--desde=3"):
     """Roda pipeline.py como módulo. Retorna (comandos [(script, args)], SystemExit|None)."""
     cmds = []
 
@@ -23,7 +23,7 @@ def _rodar(monkeypatch, argv, falha_em=None):
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     monkeypatch.setattr(_eventos, "evento", lambda *a, **k: None)
-    monkeypatch.setattr(sys, "argv", ["pipeline.py", "stem_x", "--desde=3", *argv])
+    monkeypatch.setattr(sys, "argv", ["pipeline.py", "stem_x", *([desde] if desde else []), *argv])
     saida = None
     try:
         runpy.run_path(str(PIPELINE), run_name="__main__")
@@ -82,3 +82,11 @@ def test_desde_depois_do_04c_sem_legendados_falha_alto(monkeypatch):
 def test_desde_depois_do_04c_com_sem_legendas_segue(monkeypatch):
     cmds, _ = _rodar(monkeypatch, ["--desde=5", "--sem-legendas"])
     assert [s for s, _ in cmds][0] == "05_cards.py"
+
+
+def test_sem_desde_nao_quebra(monkeypatch):
+    # sem --desde: antes dava TypeError (None > 4.7) antes de qualquer step. stem_x não
+    # tem transcrição nem vídeo, então agora chega na checagem do step 2 e pede o download
+    cmds, saida = _rodar(monkeypatch, ["--polir"], desde=None)
+    assert saida is not None and "01_baixar.py" in str(saida.code)
+    assert cmds == []

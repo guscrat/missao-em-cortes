@@ -21,7 +21,7 @@ Quem decide é o código, não o modelo (regra de produto da quarentena):
     e vira decisão do Gu (faixa amarela na tarefa do MISSAO_TAREFA, se houver)
   - só a thumb reprovada → "quarentena" (trocar o frame é à mão: 07_thumb.py --t=)
   - tudo ok → "aprovado"
-Nunca mexe em bloco já "agendado" ou "publicado". --sem-editor desliga as reescritas.
+Nunca mexe em bloco já "agendado", "publicado" ou "arquivado". --sem-editor desliga as reescritas.
 Resultado completo em outputs/<pasta>/revisao.json.
 
 Custo: ~US$ 0.05 por bloco (claude-opus-5-5, ~7 imagens pequenas + transcrição),
@@ -48,7 +48,7 @@ PRECO_IN, PRECO_OUT = 4.0, 20.0        # US$ por 1M tokens (opus 5.5)
 CUSTO_ESTIMADO_BLOCO = 0.05            # só pro --dry-run
 N_FRAMES = 6
 LARGURA_IMG = 512                      # imagem pequena = menos token; dá pra ler a tela
-NAO_MEXER = {"agendado", "publicado"}  # decisão já tomada adiante: revisor não rebaixa
+NAO_MEXER = {"agendado", "publicado", "arquivado"}  # decisão já tomada: revisor não mexe
 
 SCHEMA = {
     "type": "object",

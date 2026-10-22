@@ -38,6 +38,7 @@ result = subprocess.run([
     sys.executable, "-m", "yt_dlp",
     "-f", FORMATO,
     "--merge-output-format", "mp4",
+    "--js-runtimes", "node",   # sem runtime JS o YouTube devolve 403 nos formatos bons
     "-o", str(destino),
     url,
 ])

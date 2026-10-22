@@ -45,6 +45,9 @@ def projeto(tmp_path, monkeypatch, banco):
     monkeypatch.setattr(sincronizar_estado, "DB_PATH", _eventos.DB_PATH)
     monkeypatch.setattr(sincronizar_estado, "OUTPUTS", outputs)
     monkeypatch.setattr(sincronizar_estado, "INPUTS", inputs)
+    # as pastas falsas são de 2026-06-25: sem isso a regra de conteúdo antigo arquivaria
+    # tudo. Os testes do arquivamento religam com monkeypatch.
+    monkeypatch.setattr(sincronizar_estado, "DIAS_ARQUIVAR", 10**6)
 
     class Projeto:
         pass

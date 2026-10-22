@@ -31,8 +31,11 @@ BUSY_TIMEOUT_S = 10   # espera por lock; o hook do Claude Code baixa pra caber e
 # outputs/ (sincronizar_estado.py pode sobrescrever). Os demais são decisões de
 # agente/humano e NUNCA são rebaixados pela sincronização.
 STATUS_AUTO = ["segmentado", "cortado", "montado"]
-STATUS_DECISAO = ["revisao", "aprovado", "quarentena", "descartado", "agendado", "publicado"]
+STATUS_DECISAO = ["revisao", "aprovado", "quarentena", "descartado", "agendado", "publicado",
+                  "arquivado"]
 STATUS_BLOCO = STATUS_AUTO + STATUS_DECISAO
+# Ainda não foi pro YouTube nem foi descartado: é o que a regra de conteúdo antigo arquiva.
+STATUS_ARQUIVAVEL = ["segmentado", "cortado", "montado", "revisao", "aprovado", "quarentena"]
 
 STATUS_VIDEO = ["curadoria", "baixado", "transcrito", "segmentado", "descartado"]
 
@@ -211,6 +214,21 @@ def upsert_bloco(stem: str, bloco_id: int, *, forcar_status: bool = False, **cam
                 con.execute(f"UPDATE blocos SET status = ?, atualizado_em = ? "
                             f"WHERE stem = ? AND bloco_id = ? AND status IN ({marcadores})",
                             (status, _agora(), stem, bloco_id, *STATUS_AUTO))
+
+
+def arquivar_blocos(stem: str, motivo: str) -> list[int]:
+    """Arquiva os blocos do stem que ainda não foram pro YouTube (STATUS_ARQUIVAVEL).
+    Agendado, publicado e descartado ficam como estão. Retorna os ids arquivados."""
+    marcadores = ",".join("?" * len(STATUS_ARQUIVAVEL))
+    def arquivar(con):
+        ids = [r["bloco_id"] for r in con.execute(
+            f"SELECT bloco_id FROM blocos WHERE stem = ? AND status IN ({marcadores}) "
+            f"ORDER BY bloco_id", (stem, *STATUS_ARQUIVAVEL))]
+        con.execute(f"UPDATE blocos SET status = 'arquivado', motivo = ?, atualizado_em = ? "
+                    f"WHERE stem = ? AND status IN ({marcadores})",
+                    (motivo, _agora(), stem, *STATUS_ARQUIVAVEL))
+        return ids
+    return _executar(f"arquivar blocos de {stem}", arquivar, padrao=[])
 
 
 def ler_bloco(stem: str, bloco_id: int) -> dict | None:

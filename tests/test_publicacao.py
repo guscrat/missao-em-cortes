@@ -1,0 +1,113 @@
+"""_publicacao: lista de publicação manual (só aprovados, por score, com agenda)."""
+import json
+from datetime import date, datetime
+
+import _publicacao as pub
+
+
+def _pasta(tmp_path, revisao, blocos, finais):
+    pasta = tmp_path / "2026-10-22_renan_x"
+    (pasta / "finalizados").mkdir(parents=True)
+    (pasta / "thumbs").mkdir()
+    (pasta / "revisao.json").write_text(json.dumps(revisao), encoding="utf-8")
+    (pasta / "blocos.json").write_text(json.dumps({"blocos": blocos}), encoding="utf-8")
+    for nome in finais:
+        (pasta / "finalizados" / nome).touch()
+    partes = []
+    for b in blocos:
+        partes += ["=" * 70, f"VÍDEO {b['id']:02d} — x", "=" * 70,
+                   f"TÍTULO (5 chars):", f"Título {b['id']}", "", "-" * 70, "DESCRIÇÃO:", "-" * 70,
+                   f"Desc {b['id']}", "-" * 70, "TAGS (x):", "-" * 70, "a, b", ""]
+    (pasta / "descricoes.txt").write_text("\n".join(partes), encoding="utf-8")
+    return pasta
+
+
+def _bloco(bid, score):
+    return {"id": bid, "score_potencial": score, "duracao_minutos": 7.0,
+            "titulo_sugerido": f"sug {bid}"}
+
+
+def test_aprovados_ordem_de_score_e_so_aprovados(tmp_path):
+    pasta = _pasta(tmp_path,
+                   {"01": {"status": "aprovado", "thumb": "thumb_01_a.png"},
+                    "02": {"status": "descartado"},
+                    "03": {"status": "aprovado", "thumb": "thumb_03_b.png"},
+                    "04": {"status": "aprovado"}},                 # sem vídeo final: fica fora
+                   [_bloco(1, 7), _bloco(2, 9), _bloco(3, 9), _bloco(4, 10)],
+                   ["video_01_a_polido.mp4", "video_01_a_polido_legendado.mp4",
+                    "video_02_b.mp4", "video_03_c.mp4"])
+    lista = pub.aprovados(pasta)
+    assert [x["id"] for x in lista] == [3, 1]
+    assert lista[1]["video"].name == "video_01_a_polido_legendado.mp4"
+    assert lista[0]["titulo"] == "Título 3" and lista[0]["tags"] == ["a", "b"]
+
+
+def test_agenda_1_ou_2_por_dia():
+    manha = datetime(2026, 10, 22, 9)
+    noite = datetime(2026, 10, 22, 20)
+    assert pub.agenda(2, manha) == [date(2026, 10, 22), date(2026, 10, 23)]
+    assert pub.agenda(3, noite) == [date(2026, 10, 23), date(2026, 10, 23), date(2026, 10, 24)]
+
+
+def test_gerar_sem_aprovados_nao_grava(tmp_path):
+    pasta = _pasta(tmp_path, {"01": {"status": "descartado"}}, [_bloco(1, 5)], ["video_01_a.mp4"])
+    assert pub.gerar(pasta) == (None, [])
+    assert not (pasta / "publicacao.txt").exists()
+
+
+def test_gerar_escreve_lista(tmp_path):
+    pasta = _pasta(tmp_path, {"01": {"status": "aprovado", "thumb": "thumb_01_a.png"}},
+                   [_bloco(1, 8)], ["video_01_a_polido_legendado.mp4"])
+    caminho, lista = pub.gerar(pasta, datetime(2026, 10, 22, 9))
+    texto = caminho.read_text(encoding="utf-8")
+    assert "qui 22/10 18h · VÍDEO 01 · score 8" in texto
+    assert "finalizados/video_01_a_polido_legendado.mp4" in texto
+    assert "thumbs/thumb_01_a.png" in texto and "Título 1" in texto and "a, b" in texto
+
+
+def test_sem_revisao_lista_vazia(tmp_path):
+    pasta = tmp_path / "p"
+    pasta.mkdir()
+    assert pub.aprovados(pasta) == []
+
+
+def test_final_preferencias(tmp_path):
+    f = tmp_path / "finalizados"
+    f.mkdir()
+
+    def com(*nomes):
+        for p in f.iterdir():
+            p.unlink()
+        for n in nomes:
+            (f / n).touch()
+        return pub._final(tmp_path, 1)
+
+    assert com("video_01_a.mp4", "video_01_a_polido.mp4").name == "video_01_a_polido.mp4"
+    assert com("video_01_a.mp4", "video_01_a_polido.mp4",
+               "video_01_a_legendado.mp4").name == "video_01_a_legendado.mp4"
+    assert com("video_01_a_legendado.mp4",
+               "video_01_a_polido_legendado.mp4").name == "video_01_a_polido_legendado.mp4"
+    assert com("video_01_a.mp4").name == "video_01_a.mp4"
+    assert com("video_02_b.mp4") is None                  # outro bloco não conta
+    assert com() is None
+
+
+def test_gerar_sem_thumb_e_titulo_cai_pro_sugerido(tmp_path):
+    pasta = _pasta(tmp_path, {"01": {"status": "aprovado"}}, [_bloco(1, 8)], ["video_01_a.mp4"])
+    (pasta / "descricoes.txt").unlink()
+    caminho, lista = pub.gerar(pasta, datetime(2026, 10, 22, 20))
+    texto = caminho.read_text(encoding="utf-8")
+    assert "(sem thumb)" in texto and "sug 1" in texto
+    assert "sex 23/10 18h" in texto                       # depois das 16h: começa amanhã
+
+
+def test_gerar_lista_short_quando_existe(tmp_path):
+    pasta = _pasta(tmp_path, {"01": {"status": "aprovado", "thumb": "thumb_01_a.png"},
+                              "02": {"status": "aprovado"}},
+                   [_bloco(1, 8), _bloco(2, 7)], ["video_01_a.mp4", "video_02_b.mp4"])
+    (pasta / "shorts").mkdir()
+    (pasta / "shorts" / "shorts.json").write_text(
+        json.dumps({"01": {"arquivo": "short_01_x.mp4"}}), encoding="utf-8")
+    caminho, _ = pub.gerar(pasta, datetime(2026, 10, 22, 9))
+    texto = caminho.read_text(encoding="utf-8")
+    assert "SHORT:   shorts/short_01_x.mp4" in texto and "SHORT:   (sem Short)" in texto
