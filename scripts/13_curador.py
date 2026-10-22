@@ -20,6 +20,8 @@ Fluxo:
      Aí processa 1 vídeo só, o de maior prioridade (empate: o mais recente):
      01_baixar → pipeline.py --polir → 11_revisor → 10_shorts (aprovados) → publicacao.txt.
      ~US$ 0,65 por vídeo. Fila com mais de DIAS_ARQUIVAR dias expira.
+     Thumb colagem (config/thumb.json): "teste" roda o 07b_colagem no fim, em thumbs/colagem/
+     (~US$ 0,15/vídeo, não mexe nas thumbs que sobem); "padrao" roda com --aplicar antes do revisor.
   4. Resumo em state/curador_resumo.md (cortes prontos pra publicar, recusados com motivo,
      avisos) e decisões em state/curadoria.json. Tudo também vira evento no painel.
 
@@ -367,6 +369,15 @@ def cadastrar_zoom(stem: str, zoom: str | None) -> bool:
     return True
 
 
+def modo_colagem() -> str:
+    """config/thumb.json → 'desligado' | 'teste' | 'padrao' (sem arquivo: desligado)."""
+    try:
+        modo = json.loads((ROOT / "config" / "thumb.json").read_text(encoding="utf-8")).get("colagem")
+    except (OSError, ValueError):
+        return "desligado"
+    return modo if modo in ("teste", "padrao") else "desligado"
+
+
 def rodar(script: str, *args: str) -> bool:
     print(f"\n>> {script} {' '.join(args)}", flush=True)
     return subprocess.run([sys.executable, str(SCRIPTS / script), *args],
@@ -385,10 +396,14 @@ def processar(item: dict) -> dict:
         res["avisos"].append(f"{stem}: canal sem zoom calibrado — confira os overlays "
                              f"(calibrar_zoom.py, depois pipeline.py {stem} --desde=4)")
     upsert_video(stem, fonte_url=item["url"], status="curadoria")
+    colagem = modo_colagem()
     etapas = [("01_baixar.py", item["url"], stem),
               ("pipeline.py", stem, "--polir"),
               ("11_revisor.py", stem)]
     for script, *args in etapas:
+        if script == "11_revisor.py" and colagem == "padrao":   # revisor já avalia a colagem
+            if not rodar("07b_colagem.py", stem, "--aplicar"):
+                res["avisos"].append(f"{stem}: thumb colagem falhou, ficou o template atual")
         if not rodar(script, *args):
             res["erro"] = f"{script} falhou"
             evento(stem, "curador_pipeline", "falha", agente="curador", mensagem=res["erro"])
@@ -398,6 +413,11 @@ def processar(item: dict) -> dict:
         if not rodar("10_shorts.py", stem, f"--bloco={bloco['id']}"):
             res["avisos"].append(f"{stem}: Short do bloco {bloco['id']} falhou "
                                  f"(10_shorts.py {stem} --bloco={bloco['id']})")
+    if colagem == "teste":                         # ~US$ 0.03/bloco; não mexe nas thumbs que sobem
+        if rodar("07b_colagem.py", stem):
+            res["colagem"] = str(pasta / "thumbs" / "colagem")
+        else:
+            res["avisos"].append(f"{stem}: thumb colagem (teste) falhou (07b_colagem.py {stem})")
     caminho, lista = gerar(pasta)
     res.update(ok=True, aprovados=len(lista), publicacao=str(caminho) if caminho else None)
     evento(stem, "curador_pipeline", "ok", agente="curador",
@@ -435,6 +455,12 @@ def escrever_resumo(rodada: dict) -> str:
         linhas.append("## Prontos pra publicar")
         linhas += [f"- **{p['aprovados']} corte(s)** de {p['canal']}: {p['titulo']} → "
                    f"`{p['publicacao']}`" for p in prontos]
+        linhas.append("")
+    colagens = [p for p in rodada["processados"] if p.get("colagem")]
+    if colagens:
+        linhas.append("## Thumb colagem (teste)")
+        linhas += [f"- {p['canal']}: {p['titulo']} → `{p['colagem']}` (3 variantes por bloco; "
+                   "compare com as thumbs atuais antes de virar padrão)" for p in colagens]
         linhas.append("")
     zerados = [p for p in rodada["processados"] if p["ok"] and not p.get("aprovados")]
     if zerados:
