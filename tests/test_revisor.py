@@ -165,12 +165,13 @@ def test_main_usa_titulo_editado_no_descricoes(video):
     assert "TÍTULO DO YOUTUBE: Editado!" in cli.chamadas[0]["messages"][0]["content"][-1]["text"]
 
 
-def test_main_nao_mexe_em_agendado(video):
+@pytest.mark.parametrize("status", ["agendado", "arquivado"])
+def test_main_nao_mexe_em_agendado(video, status):
     pasta, cli, banco = video
-    rv.upsert_bloco("v", 1, status="agendado", forcar_status=True)
+    rv.upsert_bloco("v", 1, status=status, forcar_status=True)
     rv.main([str(pasta)])
     assert len(cli.chamadas) == 1
-    assert banco("SELECT status FROM blocos WHERE bloco_id=1")[0]["status"] == "agendado"
+    assert banco("SELECT status FROM blocos WHERE bloco_id=1")[0]["status"] == status
 
 
 def test_main_erro_da_api_conta_falha_e_segue(video):

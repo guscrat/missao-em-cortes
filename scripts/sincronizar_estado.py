@@ -11,21 +11,43 @@ revisor/publicador como 'agendado' ou 'quarentena' nunca são rebaixadas):
   blocos.json com o bloco      -> segmentado
   cortes/corte_NN_*.mp4        -> cortado
   finalizados/video_NN_*.mp4   -> montado
+
+Conteúdo antigo: live com mais de DIAS_ARQUIVAR dias (pela data da pasta) cujos blocos
+ainda não foram pro YouTube vira 'arquivado' (motivo "conteúdo antigo"). Somem do
+kanban e das métricas. Agendado, publicado e descartado não são tocados.
 """
 import json
 import re
 import sys
 sys.stdout.reconfigure(encoding='utf-8')
+from datetime import date
 from pathlib import Path
 
-from _eventos import upsert_bloco, upsert_video, DB_PATH
+from _eventos import arquivar_blocos, evento, upsert_bloco, upsert_video, DB_PATH
 from _paths import OUTPUTS, ROOT, escolher_arquivo, escolher_thumb, stem_de
 
 INPUTS = ROOT / "inputs"
 _PASTA_VIDEO = re.compile(r"^\d{4}-\d{2}-\d{2}_.+")
+DIAS_ARQUIVAR = 15
+MOTIVO_ANTIGO = "conteúdo antigo"
 
 
-def sincronizar_pasta(pasta: Path) -> tuple[str, int]:
+def arquivar_se_antigo(pasta: Path, stem: str, hoje: date | None = None) -> list[int]:
+    """Arquiva os blocos não publicados se a live tem mais de DIAS_ARQUIVAR dias."""
+    try:
+        data = date.fromisoformat(pasta.name[:10])
+    except ValueError:
+        return []
+    if ((hoje or date.today()) - data).days <= DIAS_ARQUIVAR:
+        return []
+    ids = arquivar_blocos(stem, MOTIVO_ANTIGO)
+    if ids:
+        evento(stem, "arquivar", "ok", mensagem=f"{MOTIVO_ANTIGO}: blocos {ids} "
+               f"(live de {data:%d/%m/%Y}, >{DIAS_ARQUIVAR} dias sem publicar)")
+    return ids
+
+
+def sincronizar_pasta(pasta: Path, hoje: date | None = None) -> tuple[str, int]:
     stem = stem_de(pasta)
     url_file = INPUTS / f"{stem}.url"
     fonte_url = url_file.read_text(encoding="utf-8").strip() if url_file.exists() else None
@@ -64,6 +86,9 @@ def sincronizar_pasta(pasta: Path) -> tuple[str, int]:
             video_path=final.relative_to(ROOT).as_posix() if final else None,
             thumb_path=thumb.relative_to(ROOT).as_posix() if thumb else None,
         )
+    arquivados = arquivar_se_antigo(pasta, stem, hoje)
+    if arquivados:
+        print(f"  {pasta.name}: arquivados por {MOTIVO_ANTIGO} → blocos {arquivados}")
     return stem, len(blocos)
 
 

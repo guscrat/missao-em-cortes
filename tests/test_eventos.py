@@ -105,3 +105,26 @@ def test_conectar_aceita_caminho_explicito(tmp_path):
     explicito = tmp_path / "x.db"
     _eventos.conectar(explicito).close()
     assert explicito.exists()
+
+
+# ── arquivamento (conteúdo antigo) ─────────────────────────────────────────
+
+def test_arquivar_blocos_so_os_nao_publicados(banco):
+    from _eventos import arquivar_blocos
+    for i, st in enumerate(["montado", "aprovado", "quarentena", "agendado", "publicado",
+                            "descartado"], start=1):
+        upsert_bloco("v", i, status=st, forcar_status=True)
+    upsert_bloco("outro", 1, status="aprovado", forcar_status=True)
+    assert arquivar_blocos("v", "conteúdo antigo") == [1, 2, 3]
+    linhas = {r["bloco_id"]: r for r in banco("SELECT * FROM blocos WHERE stem='v'")}
+    assert [linhas[i]["status"] for i in range(1, 7)] == [
+        "arquivado", "arquivado", "arquivado", "agendado", "publicado", "descartado"]
+    assert linhas[1]["motivo"] == "conteúdo antigo" and linhas[4]["motivo"] is None
+    assert _status(banco, "outro") == "aprovado"
+    assert arquivar_blocos("v", "conteúdo antigo") == []   # idempotente
+
+
+def test_sincronizacao_nao_desarquiva(banco):
+    upsert_bloco("v", 1, status="arquivado", forcar_status=True)
+    upsert_bloco("v", 1, status="montado")
+    assert _status(banco) == "arquivado"
