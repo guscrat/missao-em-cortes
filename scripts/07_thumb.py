@@ -1,10 +1,13 @@
-"""Gera thumb base (PNG 1280x720) pra cada bloco.
+"""Gera thumb (PNG 1280x720) pra cada bloco.
 
-Layout semi-automatico:
-  - Frame do speaker (o de melhor rosto) ocupando a metade esquerda
+Layout:
+  - Frame do speaker (o de melhor rosto) preenchendo a thumb inteira (cover), com o rosto
+    grande (~40% da altura) no terco direito
   - Logo 'MISSAO EM CORTES' no topo esquerdo
-  - Titulo grande no canto inferior esquerdo (amarelo + branco)
-  - Metade direita preta, reservada pra collage manual no Canva
+  - Titulo grande no canto inferior esquerdo (amarelo + branco), sobre um degrade escuro
+    que vem da esquerda e para antes do rosto
+  - Overlays da fonte (quadro de transmissao, nosso logo do 04) ficam fora do recorte; o
+    que nao der pra tirar some no degrade escuro (overlays em thumbs/candidatos_NN.json)
 
 Uso: uv run py scripts/07_thumb.py <stem>
      uv run py scripts/07_thumb.py <stem> --bloco=N            # so o bloco N (a/b/c)
@@ -16,9 +19,9 @@ Uso: uv run py scripts/07_thumb.py <stem>
 
 Frames pelo rosto (_thumb_rosto.py, OpenCV, gratis): amostra o cold open e o corte, da nota
 pelo rosto (tamanho, luz, nitidez) e as variantes a/b/c sao os 3 melhores. O recorte poe o
-rosto inteiro na area visivel, e o degrade lateral encolhe (ou some) quando cairia em cima
-dele. A fila de frames fica em thumbs/candidatos_NN.json: o --proximo pega o seguinte
-(sai com codigo 2 quando nao sobra frame com rosto).
+rosto inteiro no terco direito e foge dos overlays. A fila de frames fica em
+thumbs/candidatos_NN.json: o --proximo pega o seguinte (sai com codigo 2 quando nao sobra
+frame com rosto).
 
 Texto da thumb: usa o campo curto texto_thumb do blocos.json (2-5 palavras, gerado
 pelo LLM); na falta dele, cai pro tema. NUNCA usa o titulo_sugerido (titulo de
@@ -34,7 +37,7 @@ sys.stdout.reconfigure(encoding='utf-8')
 from pathlib import Path
 import json
 import subprocess
-from PIL import Image, ImageDraw, ImageFont, ImageFilter
+from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageFilter
 from _paths import achar_pasta, stem_de
 import _thumb_rosto as tr
 
@@ -100,9 +103,12 @@ PRETO = (10, 10, 10)
 AMARELO = (245, 197, 24)
 BRANCO = (255, 255, 255)
 
-LARGURA, ALTURA = 1280, 720
-FRAME_W = 760  # frame ocupa a metade esquerda + um pouco
-FRAME_X = 150  # desloca o frame pra direita pra "centralizar" mais o speaker
+LARGURA, ALTURA = tr.LARGURA, tr.ALTURA
+ESCURO_MAX = 255    # opacidade (0-255) do degrade do texto onde ele e "solido" (em cima de overlay)
+ESCURO_TEXTO = 190  # opacidade na borda esquerda quando nao ha overlay (so contraste do texto)
+FADE_PX = 200       # largura da transicao do degrade ate ficar transparente
+GAP_SUB = 0.35      # espaco entre a manchete e o subtitulo, em fracao da fonte da manchete
+LOGO_04 = ROOT / "assets" / "logoCanal.png"   # se existe, o 04 queimou ele no canto sup.-dir.
 
 def extrair_frame(video, segundo, output_png):
     subprocess.run(
@@ -149,27 +155,38 @@ def titulo_curto(bloco):
     t = bloco.get("texto_thumb") or bloco.get("tema", "")
     return t.split("|")[0].strip().upper()
 
-def colar_frame(canvas, frame_path, rosto=None):
-    """Cola o frame na faixa da esquerda com o rosto inteiro na area visivel e fade pra
-    preto nas bordas. O fade encolhe (ou some) do lado em que cairia sobre o rosto."""
+def colar_frame(canvas, frame_path, rosto=None, overlays=()):
+    """Cola o frame cobrindo a thumb inteira, rosto no terco direito. Overlay que sobrou no
+    recorte: se esta a esquerda do rosto, o degrade do texto fica solido ate depois dele;
+    senao, vira uma mancha escura de borda suave."""
     frame = Image.open(frame_path).convert("RGB")
-    pos = tr.posicionar(frame.width, frame.height, rosto)
+    pos = tr.posicionar(frame.width, frame.height, rosto, overlays)
     new_w, new_h = round(frame.width * pos["escala"]), round(frame.height * pos["escala"])
     frame = frame.resize((new_w, new_h), Image.LANCZOS)
     left, top = pos["esq"], pos["topo"]
-    frame = frame.crop((left, top, left + FRAME_W, top + ALTURA))
+    canvas.paste(frame.crop((left, top, left + LARGURA, top + ALTURA)), (0, 0))
 
-    # Mascara com fade nas duas bordas laterais (gradiente preto)
-    mask = Image.new("L", (FRAME_W, ALTURA), 255)
-    mdraw = ImageDraw.Draw(mask)
-    fade_dir, fade_esq = pos["fade_dir"], pos["fade_esq"]
-    for i in range(fade_dir):
-        alpha = int(255 * (1 - i / fade_dir))
-        mdraw.line([(FRAME_W - fade_dir + i, 0), (FRAME_W - fade_dir + i, ALTURA)], fill=alpha)
-    for i in range(fade_esq):
-        alpha = int(255 * (i / fade_esq))
-        mdraw.line([(i, 0), (i, ALTURA)], fill=alpha)
-    canvas.paste(frame, (FRAME_X, 0), mask)
+    rosto_x0 = pos["rosto_x0"]
+    a_esquerda = [m for m in pos["mascaras"] if m[2] <= rosto_x0]
+    outras = [m for m in pos["mascaras"] if m[2] > rosto_x0]
+    solido = max((m[2] for m in a_esquerda), default=0)
+    escuro = Image.new("L", (LARGURA, ALTURA), 0)
+    edraw = ImageDraw.Draw(escuro)
+    # degrade do texto: solido ate o fim do overlay (se houver), some antes do rosto
+    if solido:
+        fim, alpha0 = max(solido + 40, min(rosto_x0 - 10, solido + FADE_PX)), ESCURO_MAX
+    else:
+        fim, alpha0 = max(40, rosto_x0 - 10), ESCURO_TEXTO
+    for x in range(min(fim, LARGURA)):
+        a = alpha0 if x < solido else int(alpha0 * (1 - (x - solido) / (fim - solido)) ** 1.4)
+        edraw.line([(x, 0), (x, ALTURA)], fill=a)
+    if outras:
+        manchas = Image.new("L", (LARGURA, ALTURA), 0)
+        mdraw = ImageDraw.Draw(manchas)
+        for x0, y0, x1, y1 in outras:
+            mdraw.rectangle([x0 - 12, y0 - 12, x1 + 12, y1 + 12], fill=ESCURO_MAX)
+        escuro = ImageChops.lighter(escuro, manchas.filter(ImageFilter.GaussianBlur(14)))
+    canvas.paste(Image.new("RGB", (LARGURA, ALTURA), PRETO), (0, 0), escuro)
 
 def desenhar_texto_com_sombra(draw, pos, texto, fonte, cor, sombra=PRETO, offset=4):
     x, y = pos
@@ -212,11 +229,11 @@ def aplicar_gradiente_inferior(canvas, altura_fade=420, alpha_max=235):
     base.alpha_composite(overlay)
     return base.convert("RGB")
 
-def gerar_thumb(bloco, output_png, frame_png=None, rosto=None):
+def gerar_thumb(bloco, output_png, frame_png=None, rosto=None, overlays=()):
     canvas = Image.new("RGB", (LARGURA, ALTURA), PRETO)
 
     if frame_png and frame_png.exists():
-        colar_frame(canvas, frame_png, rosto)
+        colar_frame(canvas, frame_png, rosto, overlays)
 
     # Gradiente escuro embaixo pra contraste do texto sem cobrir o rosto
     canvas = aplicar_gradiente_inferior(canvas)
@@ -237,7 +254,8 @@ def gerar_thumb(bloco, output_png, frame_png=None, rosto=None):
 
     sub = bloco["tema"].split(":")[-1].strip().upper() if ":" in bloco["tema"] else ""
     mostrar_sub = bool(sub) and len(sub) <= 40
-    sub_h = int(fonte_size * 0.42) + 10 if mostrar_sub else 0
+    gap = int(fonte_size * GAP_SUB)
+    sub_h = gap + int(fonte_size * 0.42) + 10 if mostrar_sub else 0
 
     total_h = len(linhas) * line_h + sub_h
     y0 = ALTURA - total_h - 50
@@ -246,10 +264,20 @@ def gerar_thumb(bloco, output_png, frame_png=None, rosto=None):
         desenhar_texto_com_sombra(draw, (40, y0 + i * line_h), linha, fonte_titulo, AMARELO, offset=5)
 
     if mostrar_sub:
-        desenhar_texto_com_sombra(draw, (40, y0 + len(linhas) * line_h + 5), sub, fonte_sub, BRANCO, offset=3)
+        desenhar_texto_com_sombra(draw, (40, y0 + len(linhas) * line_h + gap), sub, fonte_sub, BRANCO, offset=3)
 
     canvas.save(output_png)
     print(f"  OK thumb: {output_png.name}")
+
+
+def overlays_do_bloco(bid, rostos):
+    """Overlays a evitar no bloco: os da fonte (detectados no corte) + nosso logo do 04."""
+    achados = tr.detectar_overlays(encontrar_corte(bid) or encontrar_cold_open(bid), rostos)
+    if LOGO_04.exists():
+        achados.append(list(tr.LOGO_CANAL))
+    if achados:
+        print(f"  {len(achados)} overlay(s) a evitar: {achados}")
+    return achados
 
 
 with BLOCOS_JSON.open(encoding="utf-8") as f:
@@ -271,7 +299,8 @@ if t_manual is not None:
     extrair_frame(video, t_manual, tmp)
     out = OUT_DIR / f"thumb_{bloco_manual:02d}_manual.png"
     import cv2
-    gerar_thumb(b, out, tmp, tr.analisar(cv2.imread(str(tmp)))["rosto"])
+    rosto = tr.analisar(cv2.imread(str(tmp)))["rosto"]
+    gerar_thumb(b, out, tmp, rosto, overlays_do_bloco(bloco_manual, [rosto] if rosto else []))
     tmp.unlink(missing_ok=True)
     print(f"\nOK thumb manual salva: {out.name}")
     sys.exit(0)
@@ -297,16 +326,29 @@ def gravar_fila(bid, fila):
 def nova_fila(bid):
     """Ranqueia os frames do bloco pelo rosto (cold open + corte) e grava a fila."""
     cands = tr.ranquear(encontrar_cold_open(bid), encontrar_corte(bid))
-    fila = {"candidatos": cands, "variantes": {}, "proximo": min(len(LETRAS), len(cands))}
     com_rosto = sum(1 for c in cands if c["nota"] > 0)
     print(f"  {len(cands)} frame(s) analisado(s), {com_rosto} com rosto")
+    overlays = overlays_do_bloco(bid, rostos_da_fila(cands))
+    cands = tr.rebaixar_manchas(cands, overlays)
+    return {"candidatos": cands, "variantes": {}, "proximo": min(len(LETRAS), len(cands)),
+            "overlays": overlays}
+
+
+def rostos_da_fila(cands):
+    return [c["rosto"] for c in cands if c.get("rosto")]
+
+
+def garantir_overlays(bid, fila):
+    """Fila de antes dos overlays (thumb antiga): detecta agora e guarda junto."""
+    if "overlays" not in fila:
+        fila["overlays"] = overlays_do_bloco(bid, rostos_da_fila(fila["candidatos"]))
     return fila
 
 
-def thumb_do_candidato(b, letra, cand):
+def thumb_do_candidato(b, letra, cand, overlays):
     tmp = OUT_DIR / f"_frame_{b['id']:02d}_{letra}.png"
     extrair_frame(CORTES_DIR / cand["video"], cand["t"], tmp)
-    gerar_thumb(b, OUT_DIR / f"thumb_{b['id']:02d}_{letra}.png", tmp, cand.get("rosto"))
+    gerar_thumb(b, OUT_DIR / f"thumb_{b['id']:02d}_{letra}.png", tmp, cand.get("rosto"), overlays)
     tmp.unlink(missing_ok=True)
     print(f"    {letra}: {cand['fonte']} @ {cand['t']:.1f}s · nota {cand['nota']:.4f}"
           + ("" if cand.get("rosto") else " (sem rosto)"))
@@ -325,7 +367,8 @@ if proximo:
         print(f"[!] bloco {b['id']}: nao sobrou frame com rosto na fila ({i} usado(s))")
         sys.exit(2)
     print(f"[Bloco {b['id']}] frame {i + 1} da fila")
-    thumb_do_candidato(b, "a", fila["candidatos"][i])
+    garantir_overlays(b["id"], fila)
+    thumb_do_candidato(b, "a", fila["candidatos"][i], fila["overlays"])
     fila["variantes"]["a"] = i
     fila["proximo"] = i + 1
     gravar_fila(b["id"], fila)
@@ -342,16 +385,17 @@ for b in blocos_iter:
         gerar_thumb(b, OUT_DIR / f"thumb_{b['id']:02d}.png")
         print()
         continue
+    garantir_overlays(b["id"], fila)
     for k, letra in enumerate(LETRAS):
         if variante and letra != variante:
             continue
         i = fila["variantes"].get(letra, k)
         if i >= len(fila["candidatos"]):
             continue
-        thumb_do_candidato(b, letra, fila["candidatos"][i])
+        thumb_do_candidato(b, letra, fila["candidatos"][i], fila["overlays"])
         fila["variantes"][letra] = i
     gravar_fila(b["id"], fila)
     print()
 
 print(f"OK Thumbs salvas em {OUT_DIR}")
-print("Escolha a melhor variante (a/b/c) e abra no Canva pra colar o collage na metade direita.")
+print("Escolha a melhor variante (a/b/c).")

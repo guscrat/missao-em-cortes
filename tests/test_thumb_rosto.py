@@ -2,34 +2,120 @@
 import _thumb_rosto as tr
 
 
-def test_sem_rosto_mantem_layout_antigo():
+def _na_thumb(p, caixa):
+    """Caixa (x, y, w, h) do frame em coordenadas da thumb (x0, y0, x1, y1)."""
+    x, y, w, h = caixa
+    e = p["escala"]
+    return x * e - p["esq"], y * e - p["topo"], (x + w) * e - p["esq"], (y + h) * e - p["topo"]
+
+
+def test_sem_rosto_cobre_a_thumb_centralizado():
     p = tr.posicionar(1280, 720, None)
-    assert p == {"escala": 1.0, "esq": 260, "topo": 0,
-                 "fade_esq": tr.FADE_ESQ, "fade_dir": tr.FADE_DIR}
+    assert (p["escala"], p["esq"], p["topo"], p["mascaras"]) == (1.0, 0, 0, [])
+    p = tr.posicionar(1920, 1080, None)                       # 1080p: reduz pra cobrir 1280x720
+    assert p["escala"] == 1280 / 1920 and p["esq"] == 0
 
 
-def test_rosto_na_direita_entra_inteiro_e_sem_degrade_em_cima():
-    rosto = (1000, 200, 160, 160)       # perto da borda direita do frame
+def test_rosto_grande_no_terco_direito_e_inteiro():
+    rosto = (600, 250, 180, 180)                              # no meio do frame
     p = tr.posicionar(1280, 720, rosto)
-    x, y, w, h = tr.expandir(rosto, 1280, 720)
-    x0, x1 = x * p["escala"] - p["esq"], (x + w) * p["escala"] - p["esq"]
-    assert 0 <= x0 and x1 <= tr.FRAME_W                       # rosto inteiro na faixa
-    assert x1 <= tr.FRAME_W - p["fade_dir"]                   # degradê não cai no rosto
-    assert x0 >= p["fade_esq"]
+    x0, y0, x1, y1 = _na_thumb(p, rosto)
+    assert (y1 - y0) / 720 == pytest.approx(tr.ROSTO_ALVO, abs=0.06)       # ~40% da altura
+    assert tr.FAIXA_X[0] * 1280 <= (x0 + x1) / 2 <= tr.FAIXA_X[1] * 1280   # terço direito
+    ex0, ey0, ex1, ey1 = _na_thumb(p, tr.expandir(rosto, 1280, 720))
+    assert 0 <= ex0 and ex1 <= 1280 and 0 <= ey0 and ey1 <= 720            # com cabelo/queixo
+    assert p["rosto_x0"] == int(ex0)
 
 
 def test_rosto_pequeno_aproxima_com_limite():
-    p = tr.posicionar(1280, 720, (600, 300, 40, 40))
-    assert p["escala"] == tr.ZOOM_MAX                         # sem zoom borrado
-    p = tr.posicionar(1280, 720, (600, 200, 140, 140))
-    assert p["escala"] == 1.0                                 # já é grande
+    p = tr.posicionar(1280, 720, (900, 300, 40, 40))
+    assert p["escala"] == pytest.approx(tr.ZOOM_MAX)          # sem zoom borrado
+    p = tr.posicionar(1280, 720, (700, 150, 400, 400))
+    assert p["escala"] <= max(tr.ZOOM_EXTRA)                  # já é grande: no máximo o ajuste fino
 
 
 def test_recorte_nunca_sai_do_frame():
-    for rosto in [(0, 0, 100, 100), (1180, 620, 100, 100), (600, 300, 120, 120)]:
+    for rosto in [(0, 0, 100, 100), (1180, 620, 100, 100), (600, 300, 120, 120), (40, 300, 200, 200)]:
         p = tr.posicionar(1280, 720, rosto)
-        assert 0 <= p["esq"] <= 1280 * p["escala"] - tr.FRAME_W
-        assert 0 <= p["topo"] <= 720 * p["escala"] - tr.ALTURA
+        assert 0 <= p["esq"] <= 1280 * p["escala"] - 1280
+        assert 0 <= p["topo"] <= 720 * p["escala"] - 720
+
+
+def test_recorte_foge_do_logo_quando_da():
+    rosto, logo = (852, 202, 216, 216), list(tr.LOGO_CANAL)
+    p = tr.posicionar(1280, 720, rosto, [logo])
+    assert p["mascaras"] == []                                # logo ficou fora do recorte
+    x0, _, x1, _ = _na_thumb(p, rosto)
+    assert tr.FAIXA_X[0] * 1280 <= (x0 + x1) / 2 <= tr.FAIXA_X[1] * 1280
+
+
+def test_overlay_a_esquerda_vira_mascara_no_degrade():
+    rosto, pip = (852, 202, 216, 216), [0, 0, 624, 720]       # quadro de transmissão à esquerda
+    p = tr.posicionar(1280, 720, rosto, [pip])
+    assert len(p["mascaras"]) == 1
+    assert p["mascaras"][0][2] <= p["rosto_x0"]               # não encosta no rosto
+    assert not tr.tem_mancha(rosto, [pip])
+
+
+def test_tem_mancha_e_rebaixar():
+    logo = list(tr.LOGO_CANAL)
+    preso = (1060, 20, 200, 200)                              # rosto colado no logo: não dá pra fugir
+    assert tr.tem_mancha(preso, [logo])
+    assert not tr.tem_mancha(None, [logo]) and not tr.tem_mancha(preso, [])
+    c = [{"fonte": "cold", "t": 1.0, "nota": 0.05, "rosto": preso},
+         {"fonte": "cold", "t": 9.0, "nota": 0.04, "rosto": (600, 250, 180, 180)}]
+    r = tr.rebaixar_manchas(c, [logo])
+    assert [x["t"] for x in r] == [9.0, 1.0] and r[1]["mancha"] and r[1]["nota"] == 0.025
+
+
+# ── overlays: segmentos de borda → caixas ──────────────────────────────────
+
+def test_caixas_canto_vira_caixa_e_encosta_na_borda():
+    # quadro de transmissão à esquerda: borda direita (dentro à esquerda) + topo (dentro abaixo)
+    segs = [(619, 300, 620, 560, -1), (330, 140, 619, 141, 1), (90, 136, 215, 137, 1)]
+    assert tr.caixas_de_segmentos(segs, 1280, 720) == [[0, 0, 620, 720]]
+
+
+def test_caixas_linha_solta_e_lado_errado_nao_valem():
+    assert tr.caixas_de_segmentos([(619, 300, 620, 560, -1)], 1280, 720) == []    # sem canto
+    # prateleira à direita da borda do quadro, com "dentro" pra baixo: não fecha caixa
+    segs = [(620, 303, 621, 409, -1), (620, 411, 741, 412, 1)]
+    assert tr.caixas_de_segmentos(segs, 1280, 720) == []
+
+
+def test_caixa_gigante_e_cenario():
+    segs = [(1200, 50, 1201, 700, -1), (0, 40, 1200, 41, 1)]
+    assert tr.caixas_de_segmentos(segs, 1280, 720) == []
+
+
+def test_rostos_do_falante_ignora_rosto_no_quadro():
+    falante = [(850, 200, 210, 210), (860, 210, 200, 200), (840, 190, 220, 220)]
+    assert tr.rostos_do_falante(falante + [(200, 300, 90, 90)]) == falante
+    assert tr.rostos_do_falante([]) == []
+
+
+def _frames_com_quadro(n=12, rosto_mexe=True):
+    """Cenário parado + quadro de transmissão (0..620 x 140..620) com conteúdo que troca."""
+    rng = np.random.RandomState(1)
+    frames = []
+    for i in range(n):
+        f = np.full((720, 1280, 3), 90, np.uint8)
+        f[140:620, 0:620] = rng.randint(0, 255, 3)            # "corte de câmera" no quadro
+        if rosto_mexe:
+            f[200 + i * 3:420 + i * 3, 850:1070] = 60 + 12 * i  # falante se mexendo
+        frames.append(f)
+    return frames
+
+
+def test_overlays_dos_frames_acha_quadro_e_ignora_falante():
+    caixas = tr.overlays_dos_frames(_frames_com_quadro(), rostos=[(860, 210, 200, 200)])
+    assert caixas == [[0, 0, 622, 720]] or (len(caixas) == 1 and caixas[0][2] in range(615, 630))
+
+
+def test_overlays_dos_frames_poucos_frames_ou_tudo_parado():
+    assert tr.overlays_dos_frames(_frames_com_quadro(n=3)) == []
+    parado = [np.full((720, 1280, 3), 90, np.uint8)] * 8
+    assert tr.overlays_dos_frames(parado) == []
 
 
 def test_nota_prefere_rosto_grande_iluminado_e_nitido():
@@ -120,3 +206,45 @@ def test_ranquear_pula_none_e_frames_ilegiveis(monkeypatch):
     monkeypatch.setattr(tr, "analisar", lambda f: {"rosto": None, "nota": 0.0})
     r = tr.ranquear(None, Path("c.mp4"))
     assert len(r) == tr.AMOSTRAS_CORTE and all(c["fonte"] == "corte" for c in r)
+
+
+# ── _canto / _conectados / detectar_overlays ────────────────────────────────
+
+@pytest.mark.parametrize("lado_v,lado_h,v,h,esperado", [
+    # dentro à esquerda de v (-1), h abaixo (+1): h termina em x=100, v desce de y=50
+    (-1, 1, (100, 50, 101, 200), (0, 50, 100, 51), True),
+    (-1, 1, (100, 50, 101, 200), (200, 50, 300, 51), False),   # h do lado errado de v
+    (1, 1, (100, 50, 101, 200), (100, 50, 220, 51), True),
+    (1, 1, (100, 50, 101, 200), (0, 50, 60, 51), False),
+    (-1, -1, (100, 0, 101, 50), (0, 50, 100, 51), True),       # h com dentro acima: v termina em y=50
+    (1, -1, (100, 0, 101, 50), (100, 50, 200, 51), True),
+    (1, -1, (100, 300, 101, 400), (100, 50, 200, 51), False),  # v longe de h
+])
+def test_canto_orientacoes(lado_v, lado_h, v, h, esperado):
+    assert tr._canto(v + (lado_v,), h + (lado_h,)) is esperado
+
+
+def test_conectados_colinear_respeita_vao_max():
+    a = (100, 0, 101, 100, 1)
+    perto = (100, 100 + tr.VAO_MAX, 101, 100 + tr.VAO_MAX + 50, 1)
+    longe = (100, 100 + tr.VAO_MAX + 1, 101, 100 + tr.VAO_MAX + 50, 1)
+    assert tr._conectados(a, perto)
+    assert not tr._conectados(a, longe)
+
+
+def test_conectados_lados_diferentes_ou_linhas_diferentes_nao_ligam():
+    a = (100, 0, 101, 100, 1)
+    assert not tr._conectados(a, (100, 110, 101, 200, -1))
+    assert not tr._conectados(a, (100 + tr.JUNTA_PX + 1, 110, 101 + tr.JUNTA_PX + 1, 200, 1))
+
+
+def test_detectar_overlays_sem_video_e_vazio():
+    assert tr.detectar_overlays(None) == []
+
+
+def test_detectar_overlays_usa_frames_amostrados(monkeypatch):
+    chamadas = []
+    monkeypatch.setattr(tr, "duracao", lambda v: 100.0)
+    monkeypatch.setattr(tr, "ler_frame", lambda v, t: chamadas.append(t) or None)
+    assert tr.detectar_overlays(Path("x.mp4")) == []   # todos None -> <6 frames
+    assert len(chamadas) == tr.AMOSTRAS_OVERLAY
