@@ -1,5 +1,6 @@
 """Aba "Time de dev": lógica de status (pura) + smoke do painel com AppTest."""
 import pandas as pd
+import streamlit as st
 from streamlit.testing.v1 import AppTest
 
 import time_dev
@@ -160,3 +161,23 @@ def test_descrever_mensagem_nan_ou_none():
         assert time_dev.descrever(ev) == "terminou"
         ev = pd.Series({"etapa": "corte", "status": "ok", "mensagem": vazio})
         assert time_dev.descrever(ev) == "corte · ok"
+
+
+def test_kanban_separa_pronto_de_agendado_e_esconde_arquivado(banco, monkeypatch):
+    import _eventos
+    from _eventos import upsert_bloco
+    upsert_bloco("v", 1, status="aprovado", forcar_status=True, titulo="Pronto A")
+    upsert_bloco("v", 2, status="aprovado", forcar_status=True, titulo="Pronto B")
+    upsert_bloco("v", 3, status="agendado", forcar_status=True, titulo="Agendado C",
+                 publish_at="2026-10-25T18:00:00")
+    upsert_bloco("velho", 1, status="arquivado", forcar_status=True, titulo="Velho D",
+                 motivo="conteúdo antigo")
+    monkeypatch.setenv("MISSAO_DB", str(_eventos.DB_PATH))
+    st.cache_data.clear()   # o carregar() é cacheado no processo: senão lê o banco do teste anterior
+    at = AppTest.from_file("../painel/app.py", default_timeout=60).run()
+    assert not at.exception
+    metricas = {m.label: m.value for m in at.metric}
+    assert metricas["Prontos p/ publicar"] == "2" and metricas["Agendados"] == "1"
+    textos = " ".join(m.value for m in at.markdown)
+    assert "Pronto para publicar · 2" in textos and "Agendado · 1" in textos
+    assert "Velho D" not in textos and "arquivado" not in textos

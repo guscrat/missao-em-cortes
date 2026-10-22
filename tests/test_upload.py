@@ -390,7 +390,7 @@ def test_auditoria_aprovada_invalida_falha_alto(tmp_path):
 
 # ── quarentena/descartado seguram o upload (regra do revisor/editor) ───────
 
-@pytest.mark.parametrize("status", ["quarentena", "descartado"])
+@pytest.mark.parametrize("status", ["quarentena", "descartado", "arquivado"])
 def test_nao_sobe_bloco_em_quarentena_ou_descartado(cenario, status, capsys):
     pasta, yt, _ = cenario
     from _eventos import upsert_bloco

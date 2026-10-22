@@ -21,13 +21,15 @@ ROOT = Path(__file__).parent.parent
 DB_PATH = Path(os.environ.get("MISSAO_DB") or ROOT / "state" / "pipeline.db")
 FONTE_ANTON = ROOT / "assets" / "fonts" / "Anton-Regular.ttf"
 
-# Colunas do kanban = responsabilidades. Cada status de bloco cai em UMA coluna.
+# Colunas do kanban = responsabilidades. Cada status de bloco cai em UMA coluna,
+# menos "arquivado" (conteúdo antigo que não vai sair): fica fora do kanban e das métricas.
 COLUNAS = [
     ("Curadoria", "curador", None),                       # vídeos ainda sem blocos
     ("Edição", "editor", {"segmentado", "cortado"}),
     ("Revisão", "revisor", {"montado", "revisao"}),
     ("Quarentena", "você", {"quarentena"}),
-    ("Agendado", "publicador", {"aprovado", "agendado"}),
+    ("Pronto para publicar", "publicador", {"aprovado"}),
+    ("Agendado", "publicador", {"agendado"}),         # já no YouTube com publish_at
     ("Publicado", "analista", {"publicado"}),
     ("Descartado", "revisor", {"descartado"}),          # conteúdo ruim: não sobe
 ]
@@ -214,12 +216,13 @@ def corpo() -> None:
     semana = eventos[eventos["ts"] >= pd.Timestamp.now() - pd.Timedelta(days=7)] \
         if not eventos.empty else eventos
     contar = lambda sts: int(blocos["status"].isin(sts).sum()) if not blocos.empty else 0  # noqa: E731
-    m = st.columns(5)
+    m = st.columns(6)
     m[0].metric("Na edição", contar({"segmentado", "cortado"}))
     m[1].metric("Aguardando revisão", contar({"montado", "revisao"}))
     m[2].metric("Quarentena", contar({"quarentena"}))
-    m[3].metric("Agendados", contar({"aprovado", "agendado"}))
-    m[4].metric("Custo 7 dias", f"${semana['custo_usd'].sum():.2f}" if not semana.empty else "$0.00")
+    m[3].metric("Prontos p/ publicar", contar({"aprovado"}))
+    m[4].metric("Agendados", contar({"agendado"}))
+    m[5].metric("Custo 7 dias", f"${semana['custo_usd'].sum():.2f}" if not semana.empty else "$0.00")
 
     aba_k, aba_a, aba_t, aba_d = st.tabs(["Kanban", "Agentes e custo", "Linha do tempo", "Time de dev"])
     with aba_k:

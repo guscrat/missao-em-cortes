@@ -68,7 +68,7 @@ DEFAULTS = {
 }
 PLACEHOLDER_URL = "[COLAR URL DA LIVE AQUI]"
 TESTE_JSON = "youtube_teste.json"
-NAO_SOBE = {"quarentena", "descartado"}   # decisão do revisor/editor: segura o upload
+NAO_SOBE = {"quarentena", "descartado", "arquivado"}   # decisão do revisor/editor/curadoria
 PREFIXO_TESTE = "[TESTE] "
 MSG_TRAVA = ("[!] Upload TRAVADO: a auditoria da YouTube Data API ainda não foi aprovada "
              "(config/upload.json → \"auditoria_aprovada\": false).\n"
