@@ -14,7 +14,8 @@ revisor/publicador como 'agendado' ou 'quarentena' nunca são rebaixadas):
 
 Conteúdo antigo: live com mais de DIAS_ARQUIVAR dias (pela data da pasta) cujos blocos
 ainda não foram pro YouTube vira 'arquivado' (motivo "conteúdo antigo"). Somem do
-kanban e das métricas. Agendado, publicado e descartado não são tocados.
+kanban e das métricas. Agendado, publicado e descartado não são tocados. Os Shorts
+ainda não postados dessa live ganham "arquivado" no shorts/shorts.json (saem do estoque).
 """
 import json
 import re
@@ -44,7 +45,31 @@ def arquivar_se_antigo(pasta: Path, stem: str, hoje: date | None = None) -> list
     if ids:
         evento(stem, "arquivar", "ok", mensagem=f"{MOTIVO_ANTIGO}: blocos {ids} "
                f"(live de {data:%d/%m/%Y}, >{DIAS_ARQUIVAR} dias sem publicar)")
+    shorts = arquivar_shorts(pasta)
+    if shorts:
+        evento(stem, "arquivar", "ok", mensagem=f"{MOTIVO_ANTIGO}: Shorts {shorts} "
+               f"(live de {data:%d/%m/%Y}, >{DIAS_ARQUIVAR} dias sem postar)")
     return ids
+
+
+def arquivar_shorts(pasta: Path) -> list[str]:
+    """Marca "arquivado" no shorts.json os Shorts ainda não postados (o 10_shorts preserva
+    a marca ao regerar). Short arquivado sai do estoque e não sobe. Só é chamado pra live
+    velha (arquivar_se_antigo)."""
+    caminho = pasta / "shorts" / "shorts.json"
+    try:
+        registro = json.loads(caminho.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(registro, dict):
+        return []
+    nns = [nn for nn, sh in registro.items() if isinstance(sh, dict)
+           and not sh.get("postado") and not sh.get("arquivado")]
+    if nns:
+        for nn in nns:
+            registro[nn]["arquivado"] = MOTIVO_ANTIGO
+        caminho.write_text(json.dumps(registro, ensure_ascii=False, indent=2), encoding="utf-8")
+    return sorted(nns)
 
 
 def sincronizar_pasta(pasta: Path, hoje: date | None = None) -> tuple[str, int]:

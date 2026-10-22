@@ -109,7 +109,8 @@ def test_gerar_sem_thumb_e_titulo_cai_pro_sugerido(tmp_path):
     assert "sex 23/10 18h" in texto                       # depois das 16h: começa amanhã
 
 
-def test_gerar_lista_short_quando_existe(tmp_path):
+def test_gerar_lista_short_quando_existe(tmp_path, monkeypatch):
+    monkeypatch.setattr(pub, "auditoria_aprovada", lambda: True)
     pasta = _pasta(tmp_path, {"01": {"status": "aprovado", "thumb": "thumb_01_a.png"},
                               "02": {"status": "aprovado"}},
                    [_bloco(1, 8), _bloco(2, 7)], ["video_01_a.mp4", "video_02_b.mp4"])
@@ -139,3 +140,24 @@ def test_ultimo_agendado_pega_o_maior_entre_canal_e_banco(tmp_path, monkeypatch,
     assert pub.ultimo_agendado() == date(2026, 10, 27)
     canal.write_text("lixo", encoding="utf-8")
     assert pub.ultimo_agendado() == date(2026, 10, 27)
+
+
+def test_gerar_sem_auditoria_omite_short_e_avisa(tmp_path, monkeypatch):
+    monkeypatch.setattr(pub, "auditoria_aprovada", lambda: False)
+    pasta = _pasta(tmp_path, {"01": {"status": "aprovado"}}, [_bloco(1, 8)], ["video_01_a.mp4"])
+    (pasta / "shorts").mkdir()
+    (pasta / "shorts" / "shorts.json").write_text(
+        json.dumps({"01": {"arquivo": "short_01_x.mp4"}}), encoding="utf-8")
+    caminho, _ = pub.gerar(pasta, datetime(2026, 10, 22, 9))
+    texto = caminho.read_text(encoding="utf-8")
+    assert "SHORT:" not in texto and "short_01_x.mp4" not in texto
+    assert "Só os vídeos LONGOS" in texto and "MESMO título" not in texto
+    assert "ARQUIVO: finalizados/video_01_a.mp4" in texto
+
+
+def test_gerar_com_auditoria_mantem_cabecalho_do_short(tmp_path, monkeypatch):
+    monkeypatch.setattr(pub, "auditoria_aprovada", lambda: True)
+    pasta = _pasta(tmp_path, {"01": {"status": "aprovado"}}, [_bloco(1, 8)], ["video_01_a.mp4"])
+    texto = pub.gerar(pasta, datetime(2026, 10, 22, 9))[0].read_text(encoding="utf-8")
+    assert "MESMO título" in texto and "SHORT:   (sem Short)" in texto
+    assert "Só os vídeos LONGOS" not in texto
