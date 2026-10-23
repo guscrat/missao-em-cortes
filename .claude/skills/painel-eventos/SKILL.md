@@ -23,5 +23,5 @@ O painel (`uv run streamlit run painel/app.py`) **só lê** o banco `state/pipel
 
 ## Onde está o detalhe
 
-- `references/estado.md` — arquivamento de conteúdo antigo, sincronização/backfill, tarefas e hooks do time de dev.
+- `references/estado.md` — arquivamento de conteúdo antigo, sincronização/backfill, tarefas e hooks do time de dev, aba "Hoje" (alertas, orçamento, contrato do `state/placar.json`).
 - Comandos do `tarefa.py`: skill `release` (`references/fluxo-agentes.md`).

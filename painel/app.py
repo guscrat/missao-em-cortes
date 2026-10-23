@@ -15,6 +15,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+import hoje
 from time_dev import aba_time_dev, faixa_decisoes
 
 ROOT = Path(__file__).parent.parent
@@ -84,10 +85,31 @@ def carregar() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     return videos, blocos, eventos, tarefas
 
 
+@st.cache_data(ttl=60)
+def carregar_custo_mes(inicio: str) -> pd.DataFrame:
+    """Eventos com custo desde o dia 1º (o carregar() só traz os 2000 últimos)."""
+    if not DB_PATH.exists():
+        return pd.DataFrame(columns=["agente", "custo_usd"])
+    con = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
+    try:
+        return pd.read_sql("SELECT agente, custo_usd FROM eventos WHERE ts >= ? AND custo_usd > 0",
+                           con, params=(inicio,))
+    except pd.errors.DatabaseError:
+        return pd.DataFrame(columns=["agente", "custo_usd"])
+    finally:
+        con.close()
+
+
+@st.cache_data(ttl=60)
+def carregar_estoque() -> dict | None:
+    return hoje.estoque()   # lê outputs/ inteiro: não precisa rodar a cada 10s
+
+
 def sincronizar() -> None:
     r = subprocess.run([sys.executable, str(ROOT / "scripts" / "sincronizar_estado.py")],
                        capture_output=True, text=True, encoding="utf-8")
     carregar.clear()
+    carregar_estoque.clear()
     if r.returncode == 0:
         st.toast(r.stdout.strip().splitlines()[-1] if r.stdout.strip() else "Sincronizado")
     else:
@@ -207,6 +229,12 @@ with st.sidebar:
 @st.fragment(run_every=10 if auto else None)
 def corpo() -> None:
     videos, blocos, eventos, tarefas = carregar()
+    agora = pd.Timestamp.now()
+    cfg = hoje.config_painel()
+    est = carregar_estoque()
+    hoje.faixa_alertas(hoje.alertas_curador(eventos, agora) + hoje.alertas_token(eventos, agora)
+                       + hoje.alerta_cota(pct_alerta=cfg["cota_alerta_pct"])
+                       + hoje.alertas_operacao(est, hoje.no_ar(blocos, (agora + pd.Timedelta(days=1)).date())))
     faixa_decisoes(tarefas)
     if videos.empty and tarefas.empty:
         st.warning("Banco vazio. Clique em **Sincronizar com outputs/** na barra lateral "
@@ -224,7 +252,12 @@ def corpo() -> None:
     m[4].metric("Agendados", contar({"agendado"}))
     m[5].metric("Custo 7 dias", f"${semana['custo_usd'].sum():.2f}" if not semana.empty else "$0.00")
 
-    aba_k, aba_a, aba_t, aba_d = st.tabs(["Kanban", "Agentes e custo", "Linha do tempo", "Time de dev"])
+    aba_h, aba_k, aba_a, aba_t, aba_d = st.tabs(["Hoje", "Kanban", "Agentes e custo",
+                                                 "Linha do tempo", "Time de dev"])
+    with aba_h:
+        custo = hoje.custo_mes(carregar_custo_mes(agora.strftime("%Y-%m-01")),
+                               cfg["orcamento_mensal_usd"], agora)
+        hoje.aba_hoje(blocos, tarefas, est, custo, agora)
     with aba_k:
         kanban(videos, blocos)
     with aba_a:
