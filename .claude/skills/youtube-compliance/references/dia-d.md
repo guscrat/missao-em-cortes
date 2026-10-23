@@ -58,7 +58,7 @@ uv run py scripts/dia_d.py verificar <youtube_id>
 - [ ] Nenhum aviso de "bloqueado/restrito como privado" nem de violação de política da API.
 - [ ] Verificações (direitos autorais) sem pendência.
 - [ ] Título, descrição com **Conteúdo original: <URL da fonte>** e tags certos; thumb (longo).
-- [ ] Short: aparece na aba Shorts e a descrição abre com "Vídeo completo: youtu.be/<longo>".
+- [ ] Short: aparece na aba Shorts, o título é a manchete do Short e a descrição abre com "Vídeo completo: youtu.be/<longo>".
 
 O Gu responde **"ok no Studio"** → passo 4. Problema → Rollback.
 
@@ -76,7 +76,7 @@ uv run py scripts/09_upload.py todos --shorts
   as lives, cada Short no 1º horário livre **depois do longo dele ir ao ar**.
 - Só sobe Short de bloco cujo longo já está no YouTube (API ou à mão, via 14_canal), fora de
   quarentena/descartado/arquivado, com crédito da fonte e sem `revisar: true` (pouco rosto).
-- Título = título do longo + ` #shorts` (o 14 casa pelo título). Sem thumb (Short não tem).
+- Título = **manchete do próprio Short** (o `texto_thumb` queimado no topo, senão o `tema`; até 60 chars, corta em palavra). O 14 reconhece Short pelo `texto_thumb` exato. Sem thumb (Short não tem).
 - Cota: cada Short = 1.600; cabem ~6 por dia. O 09 para antes de estourar; rodar de novo no
   dia seguinte (zera ~4-5h de Brasília) e os que faltam pegam os horários livres.
 - Registro: `outputs/<pasta>/youtube_shorts.json` + `youtube_id`/`postado` no `shorts.json`.
