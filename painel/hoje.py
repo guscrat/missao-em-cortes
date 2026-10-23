@@ -103,6 +103,15 @@ def estoque() -> dict | None:
         return None
 
 
+def _nome(b) -> str:
+    """titulo > tema > 'bloco N' (NaN do pandas é truthy: checa o tipo)."""
+    for campo in ("titulo", "tema"):
+        v = getattr(b, campo, None)
+        if isinstance(v, str) and v.strip():
+            return v
+    return f"bloco {b.bloco_id}"
+
+
 def decisoes(tarefas: pd.DataFrame, blocos: pd.DataFrame) -> list[tuple[str, str]]:
     """[(o quê, pergunta/motivo)]: perguntas do time de dev + blocos em quarentena."""
     itens = []
@@ -111,7 +120,7 @@ def decisoes(tarefas: pd.DataFrame, blocos: pd.DataFrame) -> list[tuple[str, str
             itens.append((f"Tarefa #{int(t.id)} · {t.titulo}", t.decisao_pendente))
     if not blocos.empty:
         for b in blocos[blocos["status"] == "quarentena"].itertuples():
-            nome = getattr(b, "titulo", None) or getattr(b, "tema", None) or f"bloco {b.bloco_id}"
+            nome = _nome(b)
             motivo = getattr(b, "motivo", None)
             itens.append((f"Quarentena · {nome} ({b.stem} #{int(b.bloco_id)})",
                           motivo if isinstance(motivo, str) and motivo else
@@ -274,7 +283,7 @@ def _lista_no_ar(rotulo: str, df: pd.DataFrame) -> str:
     if df.empty:
         linhas.append("<div class='hj-vazio'>nada agendado</div>")
     for b in df.itertuples():
-        titulo = getattr(b, "titulo", None) or getattr(b, "tema", None) or f"bloco {b.bloco_id}"
+        titulo = _nome(b)
         linhas.append(f"<div class='hj-item'><span class='hj-hora'>{b.quando:%Hh%M}</span>"
                       f"<span>{html.escape(str(titulo))}</span></div>")
     return "".join(linhas)
