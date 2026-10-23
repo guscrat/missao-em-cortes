@@ -17,7 +17,12 @@ se precisar corrigir uma palavra — rode de novo com --so-queimar pra não rege
 Subpasta de propósito: os globs corte_NN_*.mp4 dos outros steps não enxergam os legendados.
 Pra montar com eles: 06_montar.py <stem> --legendado [--polido].
 
-Cold opens NÃO são legendados (são curtos e o foco é o vídeo longo).
+Cold opens (cold_NN_*.mp4) também são legendados, com o estilo "Gancho": letra maior,
+até 3 palavras por linha e mais alta na tela (longe da borda de baixo), pra destacar o
+gancho. Saem em cortes/legendados/cold_NN_<slug>.mp4 + legenda_cold_NN.ass. O cold open
+não é polido, então usa sempre o cold cru (com ou sem --polido).
+
+Bloco já agendado/publicado/arquivado não é tocado (o vídeo já subiu).
 """
 import json
 import subprocess
@@ -25,6 +30,7 @@ import sys
 sys.stdout.reconfigure(encoding='utf-8')
 from pathlib import Path
 
+from _eventos import ler_bloco
 from _ffmpeg import AENC, VENC
 from _legenda import (agrupar_linhas as _agrupar, cabecalho_ass, estilo, eventos_karaoke,
                       filtro_ass, hhmmss_para_segundos, palavras_na_janela, remapear_polido)
@@ -33,10 +39,19 @@ from _paths import achar_pasta, stem_de
 # Devem casar com os paddings do 04_cortar.py (timestamp global -> relativo ao corte)
 PADDING_INICIO_S = 1.0
 PADDING_FIM_S = 2.0
+COLD_PADDING_S = 0.5    # idem pro cold open
 
 MAX_PALAVRAS = 4        # por linha: curto pra ler de relance
 MAX_CHARS = 26          # Anton 72px em 1280 de largura cabe folgado
 ESTILO = estilo("Karaoke", 72, alinhamento=2, margem_v=56)
+
+# Cold open: o gancho. Letra maior, linha mais curta e subida pro terço de baixo
+# (margem 170 de 720) em vez de colada na borda
+COLD_MAX_PALAVRAS = 3
+COLD_MAX_CHARS = 20     # Anton 96px
+ESTILO_COLD = estilo("Gancho", 96, alinhamento=2, margem_v=170, contorno=6)
+
+NAO_MEXER = {"agendado", "publicado", "arquivado"}
 
 
 def palavras_do_bloco(todas: list[dict], bloco: dict) -> list[dict]:
@@ -46,12 +61,23 @@ def palavras_do_bloco(todas: list[dict], bloco: dict) -> list[dict]:
     return palavras_na_janela(todas, inicio_s, fim_s)
 
 
-def agrupar_linhas(palavras: list[dict]) -> list[list[dict]]:
+def palavras_do_cold(todas: list[dict], bloco: dict) -> list[dict]:
+    """Palavras do cold open com tempos relativos ao início do cold_NN.mp4."""
+    co = bloco["cold_open"]
+    inicio_s = max(0, hhmmss_para_segundos(co["timestamp_inicio"]) - COLD_PADDING_S)
+    fim_s = hhmmss_para_segundos(co["timestamp_fim"]) + COLD_PADDING_S
+    return palavras_na_janela(todas, inicio_s, fim_s)
+
+
+def agrupar_linhas(palavras: list[dict], cold: bool = False) -> list[list[dict]]:
+    if cold:
+        return _agrupar(palavras, COLD_MAX_PALAVRAS, COLD_MAX_CHARS)
     return _agrupar(palavras, MAX_PALAVRAS, MAX_CHARS)
 
 
-def gerar_ass(linhas: list[list[dict]]) -> str:
-    return cabecalho_ass(1280, 720, [ESTILO]) + "\n".join(eventos_karaoke(linhas)) + "\n"
+def gerar_ass(linhas: list[list[dict]], cold: bool = False) -> str:
+    est, nome = (ESTILO_COLD, "Gancho") if cold else (ESTILO, "Karaoke")
+    return cabecalho_ass(1280, 720, [est]) + "\n".join(eventos_karaoke(linhas, nome)) + "\n"
 
 
 def cmd_queimar(entrada: Path, ass: Path, saida: Path) -> tuple[list, Path]:
@@ -70,6 +96,11 @@ def encontrar_corte(cortes_dir: Path, bloco_id: int, polido: bool) -> Path | Non
     else:
         achados = sorted(p for p in cortes_dir.glob(f"corte_{nn}_*.mp4")
                          if "_polido" not in p.stem)
+    return achados[0] if achados else None
+
+
+def encontrar_cold(cortes_dir: Path, bloco_id: int) -> Path | None:
+    achados = sorted(cortes_dir.glob(f"cold_{bloco_id:02d}_*.mp4"))
     return achados[0] if achados else None
 
 
@@ -102,34 +133,55 @@ def main(argv: list[str]) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     print(f"Legendando '{stem_de(pasta)}'{' (polidos)' if polido else ''} · custo $0 (sem API)")
 
-    feitos, falhas = 0, 0
+    stem = stem_de(pasta)
+    feitos, colds, falhas = 0, 0, 0
+
+    def legendar(bid: int, entrada: Path, ass: Path, palavras_fn, cold: bool) -> bool:
+        rotulo = f"bloco {bid}{' (cold open)' if cold else ''}"
+        if not (so_queimar and ass.exists()):
+            palavras = palavras_fn()
+            linhas = agrupar_linhas(palavras, cold)
+            ass.write_text(gerar_ass(linhas, cold), encoding="utf-8")
+            print(f"  {rotulo}: {len(palavras)} palavras em {len(linhas)} linhas → {ass.name}")
+        saida = out_dir / entrada.name
+        cmd, cwd = cmd_queimar(entrada, ass, saida)
+        r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+        if r.returncode != 0:
+            print(f"  [!] {rotulo}: ffmpeg falhou:\n{r.stderr[-600:]}")
+            return False
+        print(f"  OK {saida.relative_to(pasta).as_posix()}")
+        return True
+
     for b in blocos:
         bid = b["id"]
         if so_bloco is not None and bid != so_bloco:
             continue
+        status = (ler_bloco(stem, bid) or {}).get("status")
+        if status in NAO_MEXER:
+            print(f"  bloco {bid}: já {status}, não mexe")
+            continue
         corte = encontrar_corte(cortes_dir, bid, polido)
         if not corte:
             print(f"  [!] bloco {bid}: corte{' polido' if polido else ''} não encontrado — pulando")
-            continue
-        ass = out_dir / f"legenda_{bid:02d}{'_polido' if polido else ''}.ass"
-        if not (so_queimar and ass.exists()):
-            palavras = palavras_do_bloco(todas, b)
-            if polido:
-                palavras = remapear_polido(palavras, polimento.get(bid, []))
-            linhas = agrupar_linhas(palavras)
-            ass.write_text(gerar_ass(linhas), encoding="utf-8")
-            print(f"  bloco {bid}: {len(palavras)} palavras em {len(linhas)} linhas → {ass.name}")
-        saida = out_dir / corte.name
-        cmd, cwd = cmd_queimar(corte, ass, saida)
-        r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
-        if r.returncode != 0:
-            falhas += 1
-            print(f"  [!] bloco {bid}: ffmpeg falhou:\n{r.stderr[-600:]}")
-            continue
-        feitos += 1
-        print(f"  OK {saida.relative_to(pasta).as_posix()}")
+        else:
+            def pal_corte(b=b, bid=bid):
+                p = palavras_do_bloco(todas, b)
+                return remapear_polido(p, polimento.get(bid, [])) if polido else p
+            ass = out_dir / f"legenda_{bid:02d}{'_polido' if polido else ''}.ass"
+            if legendar(bid, corte, ass, pal_corte, cold=False):
+                feitos += 1
+            else:
+                falhas += 1
 
-    print(f"\n{feitos} corte(s) legendado(s), {falhas} falha(s). "
+        cold = encontrar_cold(cortes_dir, bid)
+        if cold and b.get("cold_open"):
+            ass = out_dir / f"legenda_cold_{bid:02d}.ass"
+            if legendar(bid, cold, ass, lambda b=b: palavras_do_cold(todas, b), cold=True):
+                colds += 1
+            else:
+                falhas += 1
+
+    print(f"\n{feitos} corte(s) e {colds} cold open(s) legendado(s), {falhas} falha(s). "
           f"Monte com: 06_montar.py {pos[0]} --legendado{' --polido' if polido else ''}")
     return 1 if falhas else 0
 

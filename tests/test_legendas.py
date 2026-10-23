@@ -166,3 +166,87 @@ def test_escolher_arquivo_prefere_legendado(tmp_path):
     (tmp_path / "video_01_a_polido_legendado.mp4").touch()
     assert _paths.escolher_arquivo(tmp_path, "video_01_*.mp4").name == "video_01_a_polido_legendado.mp4"
     assert _paths.escolher_arquivo(tmp_path, "video_01_*.mp4", False).name == "video_01_a.mp4"
+
+
+# ── cold open (estilo Gancho) ──────────────────────────────────────────────
+
+@pytest.fixture
+def video_cold(video):
+    """Bloco 1 com cold_open (12s-16s) + cold_01_slug.mp4; bloco 2 sem cold_open."""
+    pasta, chamadas = video
+    bj = json.loads((pasta / "blocos.json").read_text(encoding="utf-8"))
+    bj["blocos"][0]["cold_open"] = {"timestamp_inicio": "00:00:12", "timestamp_fim": "00:00:16"}
+    (pasta / "blocos.json").write_text(json.dumps(bj), encoding="utf-8")
+    (pasta / "cortes" / "cold_01_slug.mp4").touch()
+    (pasta / "cortes" / "cold_02_slug.mp4").touch()   # existe o mp4, mas o json não tem cold_open
+    return pasta, chamadas
+
+
+def test_palavras_do_cold_relativas_com_padding():
+    todas = [_w("fora", 11.0, 11.4), _w("dentro", 11.6, 12.0), _w("fim", 16.2, 16.4),
+             _w("depois", 16.8, 17.0)]
+    bloco = {"cold_open": {"timestamp_inicio": "00:00:12", "timestamp_fim": "00:00:16"}}
+    pal = leg.palavras_do_cold(todas, bloco)
+    # janela [11.5, 16.5): padding 0.5s dos dois lados
+    assert [p["word"] for p in pal] == ["dentro", "fim"]
+    assert pal[0]["start"] == pytest.approx(0.1)
+
+
+def test_gerar_ass_cold_usa_estilo_gancho_96():
+    ass = leg.gerar_ass([[_w("oi", 0, 1)]], cold=True)
+    assert "Style: Gancho,Anton,96," in ass
+    assert "Karaoke" not in ass
+    assert ",Gancho," in [l for l in ass.splitlines() if l.startswith("Dialogue:")][0]
+
+
+def test_agrupar_linhas_cold_ate_3_palavras():
+    pal = [_w(f"p{i}", i * 0.3, i * 0.3 + 0.25) for i in range(7)]
+    assert [len(l) for l in leg.agrupar_linhas(pal, cold=True)] == [3, 3, 1]
+
+
+def test_main_gera_cold_legendado(video_cold):
+    pasta, chamadas = video_cold
+    assert leg.main([str(pasta)]) == 0
+    out = pasta / "cortes" / "legendados"
+    assert (out / "cold_01_slug.mp4").exists()
+    assert (out / "legenda_cold_01.ass").exists()
+    assert "Gancho" in (out / "legenda_cold_01.ass").read_text(encoding="utf-8")
+    assert len(chamadas) == 3   # 2 cortes + 1 cold
+
+
+def test_main_polido_usa_cold_cru(video_cold):
+    pasta, chamadas = video_cold
+    assert leg.main([str(pasta), "--polido", "--bloco=1"]) == 0
+    entradas = [Path(c[0][c[0].index("-i") + 1]).name for c in chamadas]
+    assert "cold_01_slug.mp4" in entradas and "corte_01_slug_polido.mp4" in entradas
+    out = pasta / "cortes" / "legendados"
+    assert (out / "cold_01_slug.mp4").exists()
+    assert not list(out.glob("cold_*polido*"))
+
+
+def test_main_sem_cold_open_no_json_nao_gera_cold(video_cold):
+    pasta, _ = video_cold
+    leg.main([str(pasta), "--bloco=2"])
+    out = pasta / "cortes" / "legendados"
+    assert not (out / "cold_02_slug.mp4").exists()
+    assert not (out / "legenda_cold_02.ass").exists()
+
+
+def test_main_cold_so_queimar_preserva_ass(video_cold):
+    pasta, _ = video_cold
+    leg.main([str(pasta), "--bloco=1"])
+    ass = pasta / "cortes" / "legendados" / "legenda_cold_01.ass"
+    ass.write_text("editado", encoding="utf-8")
+    leg.main([str(pasta), "--bloco=1", "--so-queimar"])
+    assert ass.read_text(encoding="utf-8") == "editado"
+
+
+@pytest.mark.parametrize("status", ["agendado", "publicado", "arquivado"])
+def test_main_bloco_ja_publicado_nao_e_tocado(video_cold, status):
+    import _eventos
+    pasta, chamadas = video_cold
+    _eventos.upsert_bloco("v", 1, status=status, forcar_status=True)
+    leg.main([str(pasta), "--bloco=1"])
+    out = pasta / "cortes" / "legendados"
+    assert chamadas == []
+    assert not list(out.glob("*.mp4")) and not list(out.glob("*.ass"))

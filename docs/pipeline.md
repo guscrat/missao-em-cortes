@@ -58,13 +58,14 @@ Pra cada `corte_NN_*.mp4` ele: (1) reaproveita os word-level timestamps do `word
 
 **Grátis** (sem API) e roda **por padrão** no pipeline desde 21/10/2026 (`--sem-legendas` desliga por live). Reprocessar live antiga com `--desde=4` gera as legendas; `--desde=5`/`6` sem legendados falha alto e pede `--desde=4c` ou `--sem-legendas`.
 
-Queima legenda estilo **karaokê** nos cortes completos pra segurar retenção. Fatia o `words.json` pelo intervalo do bloco (mesmo padding do 04), agrupa em linhas curtas (até 4 palavras / 26 chars, quebra em pausa >0.7s e fim de frase), gera um `.ass` com `\k` (palavra falada acende em **amarelo 14**, o resto fica branco, Anton 72px com contorno preto, centralizada embaixo) e queima com o filtro `ass` do ffmpeg (libass) no formato canônico. Núcleo compartilhado com o 10 em `scripts/_legenda.py`.
+Queima legenda estilo **karaokê** nos cortes completos (e nos cold opens) pra segurar retenção. Fatia o `words.json` pelo intervalo do bloco (mesmo padding do 04), agrupa em linhas curtas (até 4 palavras / 26 chars, quebra em pausa >0.7s e fim de frase), gera um `.ass` com `\k` (palavra falada acende em **amarelo 14**, o resto fica branco, Anton 72px com contorno preto, centralizada embaixo) e queima com o filtro `ass` do ffmpeg (libass) no formato canônico. Núcleo compartilhado com o 10 em `scripts/_legenda.py`.
 
 - Com `--polido` legenda o `_polido` e **remapeia** os tempos pelos intervalos do `polimento.json` (palavra num trecho removido some, as seguintes recuam).
 - Saída em `cortes/legendados/` com o **mesmo nome** do corte. A subpasta é de propósito, porque os globs `corte_NN_*.mp4` dos outros steps não enxergam os legendados.
 - Errou uma palavra? Edite o `legenda_NN.ass` (`legenda_NN_polido.ass` com `--polido`) e rode de novo com `--so-queimar` (não regera o .ass).
-- Cold opens não são legendados.
-- Montagem: `06_montar.py <stem> --legendado [--polido]` → `video_NN_<slug>[_polido]_legendado.mp4`; o 09 prefere `_polido_legendado` > `_legendado` > `_polido` > original.
+- **Cold open também é legendado** (desde 22/10/2026), com o estilo **Gancho**, mais chamativo pra destacar o gancho: Anton 96px, contorno mais grosso, até 3 palavras / 20 chars por linha e mais alto na tela (margem 170 de 720, no terço de baixo em vez de colado na borda). Usa a janela do `cold_open` (mesmo padding de 0,5s do 04) e sempre o cold cru (cold não é polido). Saída `cortes/legendados/cold_NN_<slug>.mp4` + `legenda_cold_NN.ass` (editável, `--so-queimar` vale igual).
+- Bloco `agendado`/`publicado`/`arquivado` não é tocado pelo 04c.
+- Montagem: `06_montar.py <stem> --legendado [--polido]` → `video_NN_<slug>[_polido]_legendado.mp4`, com o cold legendado (live antiga sem ele usa o cold cru e avisa); o 09 prefere `_polido_legendado` > `_legendado` > `_polido` > original.
 
 ## Steps 5 e 6 — Card e montagem
 
