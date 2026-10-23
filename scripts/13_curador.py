@@ -343,7 +343,8 @@ def calcular_estoque(cfg: dict, hoje: date | None = None) -> dict:
     prontos = longos / cfg["estoque"]["longos_por_dia"]
     dias = dias_agendados + prontos
     return {"longos": longos, "shorts": shorts, "dias_agendados": dias_agendados, "dias": dias,
-            "coberto_ate": hoje + timedelta(days=math.ceil(dias)) if dias else None}
+            "coberto_ate": hoje + timedelta(days=math.ceil(dias))
+            if dias or (ultimo and ultimo >= hoje) else None}
 
 
 def _texto_estoque(est: dict) -> str:

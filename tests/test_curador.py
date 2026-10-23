@@ -557,6 +557,12 @@ def test_estoque_agendado_no_passado_conta_zero(raiz, monkeypatch):
     assert est["dias_agendados"] == 0 and est["dias"] == 0 and est["coberto_ate"] is None
 
 
+def test_estoque_ultimo_agendado_hoje_cobre_hoje(raiz, monkeypatch):
+    _sem_agendado(monkeypatch, date(2026, 10, 22))
+    est = cu.calcular_estoque(CFG_EST, date(2026, 10, 22))
+    assert est["dias"] == 0 and est["coberto_ate"] == date(2026, 10, 22)
+
+
 def test_estoque_agendados_mais_prontos_somam(raiz, monkeypatch):
     _sem_agendado(monkeypatch, date(2026, 10, 25))
     _pasta_com_blocos(raiz, "2026-10-22_kim_g", "kim_g", {1: "aprovado", 2: "aprovado"})
