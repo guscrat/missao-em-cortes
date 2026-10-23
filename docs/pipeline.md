@@ -105,4 +105,6 @@ Todo o pipeline (steps 4, 4b, 5, 6) produz vídeo **1280x720, 30fps, yuv420p, H.
 | YouTube/domínio | grátis (por enquanto) |
 | **Total mínimo** | **~$5/mês** |
 
+**Tempos aproximados por step (GTX 1650):** download 1-3min · transcrição ~6-12min · segmentação 30-90s · cortes ~2-4min (NVENC) · polimento ~3-6min · legenda ~1-2min/corte · cards <1min · montagem ~1-2min (concat copy) · thumbs <1min · descrições <5s.
+
 **Total por live:** ~15-25min de processamento, ~$0.20 de API no pipeline base (estimativa pós-otimização NVENC/concat-copy). Com Curador completo (polir + revisor + colagem) ~US$ 0,65-0,80 por vídeo.
