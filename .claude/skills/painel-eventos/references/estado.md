@@ -24,3 +24,11 @@
 - Tarefas via `scripts/tarefa.py` (nova/mover/resultado/decisao/lista), rodando **da pasta principal**.
 - Hooks em `.claude/settings.json` (SubagentStart/SubagentStop/Stop) → `scripts/hook_agente.py`: atividade dos subagents (`testador`, `revisor-codigo`) e fim de turno do tech-lead entram no banco, pendurados na tarefa ativa.
 - `MISSAO_TAREFA=N` no ambiente faz o custo de API de um script cair na tarefa N (e a quarentena do revisor vira faixa amarela nela).
+
+## Aba "Hoje" (tela inicial do PO)
+
+- `painel/hoje.py`: no ar hoje/amanhã (`publish_at` dos blocos agendado/publicado), fila no YouTube, estoque (chama o próprio `13_curador.calcular_estoque`, então bate com o que o Curador vê às 17h), decisões pendentes (tarefas + quarentena), status da auditoria, custo do mês x orçamento e placar do canal.
+- **Faixa de alertas** acima das abas: falha do Curador (evento `falha` sem `ok` depois, Traceback no `state/curador.log` ou log parado depois das 18h), erro de download (`01_baixar` na mensagem da falha), token ausente/sem `refresh_token`/`invalid_grant`, cota (`state/cota_youtube.json` ≥ `cota_alerta_pct`), estoque abaixo do mínimo e nada agendado pra amanhã.
+- Orçamento e limiar de cota em `config/painel.json` (`orcamento_mensal_usd`, padrão 10; `cota_alerta_pct`, padrão 80). O custo do mês soma `custo_usd` de todos os eventos desde o dia 1º, por agente.
+- **Placar do canal:** o Analista grava `state/placar.json` = `{"atualizado": ISO, "inscritos": int, "horas_12m": float, "views_shorts_90d": int}`. Sem o arquivo a seção mostra "—" (metas do YPP: 1.000 inscritos + 4.000 h ou 10 mi de views em Shorts).
+- Alerta novo = função pura em `hoje.py` que devolve `[(nivel "erro"|"aviso", título, detalhe)]`, somada na chamada de `faixa_alertas` no `app.py`.
