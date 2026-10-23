@@ -4,6 +4,8 @@ Uso:
     uv run py scripts/09_upload.py <stem> --dry-run      # mostra o plano, não chama a API
     uv run py scripts/09_upload.py <stem> [--bloco=N] [--max=N]
     uv run py scripts/09_upload.py <stem> --bloco=N --teste   # upload de TESTE (único liberado sem auditoria)
+    uv run py scripts/09_upload.py <stem>|todos --shorts [--bloco=N] [--max=N]   # Shorts (shorts/)
+    ... --dry-run --como-aprovada   # simula o plano como se a auditoria já estivesse aprovada
 
 O que lê (da pasta do vídeo):
   - blocos.json        → quais blocos existem
@@ -20,8 +22,17 @@ Trava da auditoria (config/upload.json → "auditoria_aprovada"):
   - true: sobe privado + publishAt (publica sozinho no horário agendado).
 
 Agendamento: config/upload.json (horário, intervalo, fuso). O próximo slot vem depois do
-último agendado em QUALQUER vídeo (lê outputs/*/youtube.json), então lives diferentes não
-disputam o mesmo horário.
+último longo agendado/publicado em QUALQUER vídeo: os outputs/*/youtube.json (API) e o que
+foi agendado à mão (_cobertura: canal.json do 14 + banco), então nada disputa o mesmo dia.
+
+Shorts (--shorts): sobe os shorts/short_NN_*.mp4 (do 10_shorts) como privados + publishAt
+nos "shorts_horarios" do config (2/dia), só de bloco cujo longo JÁ está no YouTube, no 1º
+horário livre a partir da ida do longo ao ar. "todos" = um plano só com todas as lives.
+Título = manchete do Short (_descricoes.manchete, até 60 chars; o 14 casa por ela),
+descrição do longo com "Vídeo completo: youtu.be/<longo>" no topo. Registro em
+youtube_shorts.json e youtube_id/postado no shorts/shorts.json. Short com "revisar" (pouco
+rosto) não sobe. O "vídeo relacionado" do Short NÃO existe na API: é marcado à mão no
+Studio (lista em `dia_d.py relacionados`).
 
 Idempotente: bloco com youtube_id (no youtube.json da pasta ou no banco) não sobe de
 novo. Se da outra vez só a thumb falhou, tenta só a thumb. O youtube.json é gravado logo
@@ -49,9 +60,11 @@ from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
 
 from _canal import eh_nosso_canal
-from _descricoes import ler_descricoes
+from _cobertura import agenda_canal
+from _descricoes import ler_descricoes, manchete
 from _eventos import evento, ler_bloco, upsert_bloco
 from _google import credenciais
+import _paths
 from _paths import achar_pasta, escolher_arquivo, escolher_thumb, stem_de
 
 ROOT = Path(__file__).parent.parent
@@ -65,9 +78,11 @@ DEFAULTS = {
     "antecedencia_min_horas": 2, "categoria_id": "25", "idioma": "pt-BR",
     "feito_para_criancas": False,
     "cota_limite_dia": 10_000, "cota_upload": 1_600, "cota_thumbnail": 50,
+    "shorts_horarios": ["12:00", "20:00"],
 }
 PLACEHOLDER_URL = "[COLAR URL DA LIVE AQUI]"
 TESTE_JSON = "youtube_teste.json"
+SHORTS_JSON = "youtube_shorts.json"
 NAO_SOBE = {"quarentena", "descartado", "arquivado"}   # decisão do revisor/editor/curadoria
 PREFIXO_TESTE = "[TESTE] "
 MSG_TRAVA = ("[!] Upload TRAVADO: a auditoria da YouTube Data API ainda não foi aprovada "
@@ -148,6 +163,17 @@ def ultimo_agendado(outputs: Path) -> datetime | None:
     return max(datas) if datas else None
 
 
+def ultimo_longo(outputs: Path, cfg: dict) -> datetime | None:
+    """Último longo no YouTube: o maior entre os uploads da API (youtube.json) e o que foi
+    agendado/publicado à mão (_cobertura.agenda_canal, a mesma fonte do Curador)."""
+    datas = [d for d in (ultimo_agendado(outputs),) if d]
+    dia = agenda_canal()["ultimo"]
+    if dia:
+        h, m = map(int, cfg["horario"].split(":"))
+        datas.append(datetime(dia.year, dia.month, dia.day, h, m, tzinfo=ZoneInfo(cfg["fuso"])))
+    return max(datas) if datas else None
+
+
 def proximos_slots(n: int, ultimo: datetime | None, cfg: dict,
                    agora_: datetime | None = None) -> list[datetime]:
     """n horários de publicação, no horário do config, espaçados por intervalo_dias.
@@ -165,6 +191,47 @@ def proximos_slots(n: int, ultimo: datetime | None, cfg: dict,
         depois = (ultimo.astimezone(tz) + passo).replace(hour=h, minute=m, second=0, microsecond=0)
         slot = max(slot, depois)
     return [slot + i * passo for i in range(n)]
+
+
+def _data(iso: str, cfg: dict) -> datetime:
+    d = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    return d if d.tzinfo else d.replace(tzinfo=ZoneInfo(cfg["fuso"]))
+
+
+def slots_shorts(minimos: list[datetime | None], ocupados: set[datetime], cfg: dict,
+                 agora_: datetime | None = None) -> list[datetime]:
+    """Um horário por Short, na ordem dada: o 1º dos shorts_horarios do config (2/dia) que
+    respeite a antecedência, não esteja ocupado por outro Short e não venha antes do
+    `minimo` do item (o publish_at do longo: o "Vídeo completo" aponta pra vídeo público)."""
+    tz = ZoneInfo(cfg["fuso"])
+    horas = sorted(tuple(map(int, h.split(":"))) for h in cfg["shorts_horarios"])
+    piso = (agora_ or agora()).astimezone(tz) + timedelta(hours=cfg["antecedencia_min_horas"])
+    tomados = {o.astimezone(tz) for o in ocupados}
+    saida = []
+    for minimo in minimos:
+        desde = max(piso, minimo.astimezone(tz)) if minimo else piso
+        dia, slot = desde.date(), None
+        while slot is None:
+            slot = next((x for h, m in horas
+                         if (x := datetime(dia.year, dia.month, dia.day, h, m, tzinfo=tz)) >= desde
+                         and x not in tomados), None)
+            dia += timedelta(days=1)
+        tomados.add(slot)
+        saida.append(slot)
+    return saida
+
+
+def shorts_ocupados(outputs: Path, cfg: dict) -> set[datetime]:
+    """publish_at de todos os Shorts já agendados (outputs/*/youtube_shorts.json)."""
+    datas = set()
+    for reg in outputs.glob(f"*/{SHORTS_JSON}"):
+        try:
+            datas |= {_data(i["publish_at"], cfg)
+                      for i in json.loads(reg.read_text(encoding="utf-8")).values()
+                      if i.get("publish_at")}
+        except (OSError, ValueError, AttributeError, TypeError) as e:
+            print(f"   [aviso] ignorando {reg} ilegível ({e})")
+    return datas
 
 
 # ── registro local (youtube.json) e cota ───────────────────────────────────
@@ -289,10 +356,23 @@ def main(argv: list[str]) -> int:
     teste = bool(flags.get("teste"))
     if teste and so_bloco is None:
         sys.exit("[!] --teste exige --bloco=N (sobe um vídeo só, não a live inteira).")
+    simulado = bool(flags.get("como-aprovada"))
+    if simulado and not dry:
+        sys.exit("[!] --como-aprovada só vale com --dry-run (é simulação).")
+    if teste and flags.get("shorts"):
+        sys.exit("[!] --teste não vale pra Shorts (sem auditoria, nada de Short).")
 
+    cfg = carregar_config()
+    if simulado:
+        cfg["auditoria_aprovada"] = True
+    if flags.get("shorts"):
+        if alvo == "todos" and so_bloco is not None:
+            sys.exit("[!] --bloco=N precisa de um stem, não de 'todos'.")
+        pastas = (sorted(p.parent.parent for p in _paths.OUTPUTS.glob("*/shorts/shorts.json"))
+                  if alvo == "todos" else [achar_pasta(alvo)])
+        return main_shorts(pastas, cfg, so_bloco, maximo, dry, simulado)
     pasta = achar_pasta(alvo)
     stem = stem_de(pasta)
-    cfg = carregar_config()
     desc_txt = pasta / "descricoes.txt"
     if not desc_txt.exists():
         sys.exit(f"[!] {desc_txt} não existe — rode o step 8 (08_descricao.py) antes.")
@@ -340,12 +420,12 @@ def main(argv: list[str]) -> int:
         so_thumb = []   # retentativa de thumb é do upload real, não do teste
     travado = not cfg["auditoria_aprovada"] and not teste
     slots = ([None] * len(novos) if teste
-             else proximos_slots(len(novos), ultimo_agendado(pasta.parent), cfg))
+             else proximos_slots(len(novos), ultimo_longo(pasta.parent, cfg), cfg))
     custo_un = lambda thumb: cfg["cota_upload"] + (cfg["cota_thumbnail"] if thumb else 0)  # noqa: E731
     estimativa = sum(custo_un(n[3]) for n in novos) + cfg["cota_thumbnail"] * len(so_thumb)
 
-    modo = ("TESTE" if teste else "agendado" if cfg["auditoria_aprovada"]
-            else "TRAVADO, auditoria pendente")
+    modo = ("TESTE" if teste else "SIMULAÇÃO como se a auditoria estivesse aprovada" if simulado
+            else "agendado" if cfg["auditoria_aprovada"] else "TRAVADO, auditoria pendente")
     print(f"\nPlano pra '{stem}' ({modo}): {len(novos)} upload(s), "
           f"{len(so_thumb)} thumb(s) pendente(s)")
     for (_, nn, video, thumb, meta), slot in zip(novos, slots):
@@ -449,6 +529,140 @@ def main(argv: list[str]) -> int:
 
     print(f"\n{'=' * 60}\nOK {agendados} vídeo(s) enviado(s) · {falhas} falha(s) · "
           f"cota hoje {cota.usadas:,}/{cota.limite:,} · custo US$ 0")
+    return 1 if falhas else 0
+
+
+# ── Shorts ─────────────────────────────────────────────────────────────────
+
+def meta_short(meta: dict, longo_id: str, titulo: str) -> dict:
+    """Título = manchete do próprio Short (_descricoes.manchete; o 14 casa por ela, exato) e a
+    descrição do longo com o link dele no topo — o crédito da fonte vem junto."""
+    descricao = f"▶️ Vídeo completo: https://youtu.be/{longo_id}\n\n{meta['descricao']}"
+    return preparar_metadados({"titulo": titulo, "descricao": descricao, "tags": meta["tags"]})
+
+
+def planejar_shorts(pasta: Path, cfg: dict, so_bloco: int | None) -> list[dict]:
+    """Shorts da pasta prontos pra subir (o longo do bloco já está no YouTube)."""
+    stem = stem_de(pasta)
+    try:
+        shorts = json.loads((pasta / "shorts" / "shorts.json").read_text(encoding="utf-8"))
+        descricoes = ler_descricoes((pasta / "descricoes.txt").read_text(encoding="utf-8"))
+        blocos = {b["id"]: b for b in json.loads(
+            (pasta / "blocos.json").read_text(encoding="utf-8"))["blocos"]}
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        print(f"   [!] {stem}: sem shorts.json/descricoes.txt/blocos.json legível ({e}) — pulando")
+        return []
+    longos, feitos = ler_registro(pasta), ler_registro(pasta, SHORTS_JSON)
+    itens = []
+    for nn, sh in sorted(shorts.items()):
+        bid = int(nn)
+        if so_bloco is not None and bid != so_bloco:
+            continue
+        if nn in feitos or sh.get("youtube_id"):
+            continue   # já está no YouTube (pela API ou à mão, marcado pelo 14)
+        bloco = ler_bloco(stem, bid) or {}
+        longo = longos.get(nn, {})
+        longo_id = longo.get("youtube_id") or bloco.get("youtube_id")
+        publish_at = longo.get("publish_at") or bloco.get("publish_at")
+        video = pasta / "shorts" / sh.get("arquivo", "")
+        meta = descricoes.get(bid)
+        titulo = manchete(blocos.get(bid, {}))
+        if titulo and not blocos.get(bid, {}).get("texto_thumb"):
+            print(f"   [aviso] {stem} {nn}: sem texto_thumb, título do Short vem do tema: '{titulo}'")
+        problema = (f"bloco em {bloco['status']} no painel" if bloco.get("status") in NAO_SOBE else
+                    "longo ainda não está no YouTube — o Short espera" if not longo_id else
+                    "pouco rosto (revisar: true no shorts.json) — confira e libere à mão"
+                    if sh.get("revisar") else
+                    "arquivo do Short não existe" if not sh.get("arquivo") or not video.exists() else
+                    "sem entrada no descricoes.txt" if not meta else
+                    "sem manchete (texto_thumb/tema) no blocos.json" if not titulo else
+                    problema_credito(meta["descricao"]))
+        if problema:
+            print(f"   [!] {stem} {nn}: {problema} — não sobe")
+            continue
+        itens.append({"pasta": pasta, "stem": stem, "bid": bid, "nn": nn, "video": video,
+                      "longo_id": longo_id,
+                      "minimo": _data(publish_at, cfg) if publish_at else None,
+                      "meta": meta_short(meta, longo_id, titulo)})
+    return itens
+
+
+def main_shorts(pastas: list[Path], cfg: dict, so_bloco: int | None, maximo: int | None,
+                dry: bool, simulado: bool) -> int:
+    itens = [x for pasta in pastas for x in planejar_shorts(pasta, cfg, so_bloco)]
+    longe = datetime.max.replace(tzinfo=timezone.utc)
+    itens.sort(key=lambda x: (x["minimo"] or longe, x["stem"], x["bid"]))
+    if maximo is not None:
+        itens = itens[:maximo]
+    outputs = pastas[0].parent if pastas else _paths.OUTPUTS
+    slots = slots_shorts([x["minimo"] for x in itens], shorts_ocupados(outputs, cfg), cfg)
+    modo = ("SIMULAÇÃO como se a auditoria estivesse aprovada" if simulado
+            else "agendado" if cfg["auditoria_aprovada"] else "TRAVADO, auditoria pendente")
+    print(f"\nShorts ({modo}): {len(itens)} upload(s) em {len(pastas)} live(s)")
+    for x, slot in sorted(zip(itens, slots), key=lambda par: par[1]):
+        print(f"   {slot:%d/%m %H:%M}  {x['stem'][:24]:<24} {x['nn']}  {x['meta']['titulo'][:50]}")
+        print(f"       {x['video'].name} · longo youtu.be/{x['longo_id']}")
+    print(f"   Cota estimada: {cfg['cota_upload'] * len(itens):,} unidades "
+          f"(limite {cfg['cota_limite_dia']:,}/dia) · custo US$ 0")
+    if itens and not cfg["auditoria_aprovada"]:
+        print("\n" + MSG_TRAVA)
+        if not dry:
+            evento(None, "09_upload", "aviso", agente="publicador",
+                   mensagem="Shorts recusados: auditoria da API pendente")
+            return 1
+    if dry or not itens:
+        print("\n(dry-run: nada foi enviado)" if dry else "\nNada a fazer.")
+        return 0
+
+    cota = Cota(cfg["cota_limite_dia"])
+    print(f"   Cota já usada hoje (dia do Pacífico): {cota.usadas:,}")
+    youtube = autenticar()
+    enviados, falhas = 0, 0
+    for x, slot in zip(itens, slots):
+        pasta, stem, nn, bid = x["pasta"], x["stem"], x["nn"], x["bid"]
+        if not cota.cabe(cfg["cota_upload"]):
+            print(f"\n[!] Parando antes de estourar a cota: {cota.usadas:,}/{cota.limite:,} usadas. "
+                  f"Rode de novo amanhã (os que faltam pegam os horários livres).")
+            evento(stem, "09_upload", "aviso", agente="publicador",
+                   mensagem=f"Shorts, cota: parou em {cota.usadas}/{cota.limite}")
+            break
+        print(f"\n>> Short {stem} {nn}: subindo {x['video'].name} ({_quando(slot)})")
+        t0 = time.time()
+        cota.gastar(cfg["cota_upload"])   # a API cobra mesmo se falhar
+        try:
+            yt_id = subir_video(youtube, x["video"], x["meta"], slot, cfg)
+        except HttpError as e:
+            falhas += 1
+            print(f"   [!] Short {nn}: upload falhou ({e.resp.status})")
+            evento(stem, "09_upload", "falha", agente="publicador", bloco_id=bid,
+                   mensagem=f"Short http {e.resp.status}", duracao_s=time.time() - t0)
+            if _cota_estourada(e):
+                cota.esgotar()
+                break
+            continue
+        feitos = ler_registro(pasta, SHORTS_JSON)
+        feitos[nn] = {"youtube_id": yt_id, "publish_at": slot.isoformat(), "longo_id": x["longo_id"],
+                      "titulo": x["meta"]["titulo"], "arquivo": x["video"].name,
+                      "relacionado_ok": False}
+        salvar_registro(pasta, feitos, SHORTS_JSON)   # antes de tudo: idempotência
+        shorts_path = pasta / "shorts" / "shorts.json"
+        try:   # mesmo formato do 14_canal: tira o Short do estoque e do publicacao.txt
+            shorts = json.loads(shorts_path.read_text(encoding="utf-8"))
+            shorts[nn].update(youtube_id=yt_id, postado=slot.date().isoformat())
+            shorts_path.write_text(json.dumps(shorts, ensure_ascii=False, indent=2), encoding="utf-8")
+        except (OSError, ValueError, KeyError) as e:
+            print(f"   [aviso] não atualizei o shorts.json ({e}); o 14_canal acerta depois")
+        enviados += 1
+        print(f"   OK https://youtu.be/{yt_id} · privado, {_quando(slot)}")
+        evento(stem, "09_upload", "ok", agente="publicador", bloco_id=bid,
+               mensagem=f"Short youtube_id={yt_id} publishAt={slot.isoformat()} "
+                        f"longo={x['longo_id']} cota={cfg['cota_upload']}",
+               duracao_s=time.time() - t0)
+
+    print(f"\n{'=' * 60}\nOK {enviados} Short(s) agendado(s) · {falhas} falha(s) · "
+          f"cota hoje {cota.usadas:,}/{cota.limite:,} · custo US$ 0")
+    if enviados:
+        print("Falta o VÍDEO RELACIONADO de cada um no Studio: uv run py scripts/dia_d.py relacionados")
     return 1 if falhas else 0
 
 

@@ -47,8 +47,8 @@ def chave(titulo: str) -> str:
 
 def titulos_locais(outputs: Path) -> list[dict]:
     """[{chave, pasta, stem, bloco, tipo}] de todos os vídeos processados. tipo 'titulo'
-    casa por similaridade; 'thumb' (texto_thumb, curto) só casa exato."""
-    from _descricoes import ler_descricoes
+    casa por similaridade; 'thumb' (texto_thumb e manchete do Short, curtos) só casa exato."""
+    from _descricoes import ler_descricoes, manchete
     locais = []
     for pasta in sorted(p for p in outputs.glob("*_*") if p.is_dir()):
         vistos = set()
@@ -71,6 +71,7 @@ def titulos_locais(outputs: Path) -> list[dict]:
                 add(b["id"], b.get(campo))
             for campo in ("texto_thumb", "texto_thumb_original"):
                 add(b["id"], b.get(campo), "thumb")
+            add(b["id"], manchete(b), "thumb")   # título do Short subido pelo 09 (pode ser o tema/cortada)
     return locais
 
 

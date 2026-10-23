@@ -22,7 +22,7 @@ O YouTube pune *reused content* desde Jul/2025. O que nos mantém elegíveis é 
 
 ## Trava da auditoria — leia antes de qualquer upload
 
-Vídeo enviado por projeto de API **não auditado** fica **bloqueado como privado** no YouTube: não dá pra publicar nem recorrer, só reenviando (queima o vídeo). Por isso `"auditoria_aprovada": false` em `config/upload.json` faz o 09 **recusar** upload real. Exceção: upload de teste (`--bloco=N --teste`). Até a auditoria, Curador e `publicacao.txt` trabalham **só com longos** (Shorts sobem pela API depois). A flag é lida por `_paths.auditoria_aprovada()`. Virar pra `true` só quando a auditoria for aprovada.
+Vídeo enviado por projeto de API **não auditado** fica **bloqueado como privado** no YouTube: não dá pra publicar nem recorrer, só reenviando (queima o vídeo). Por isso `"auditoria_aprovada": false` em `config/upload.json` faz o 09 **recusar** upload real. Exceção: upload de teste (`--bloco=N --teste`). Até a auditoria, Curador e `publicacao.txt` trabalham **só com longos** (Shorts sobem pela API depois). A flag é lida por `_paths.auditoria_aprovada()`. Virar pra `true` só quando a auditoria for aprovada, seguindo o **runbook do dia D** (`references/dia-d.md`): quando o Gu disser "auditoria aprovada", é executar ele.
 
 ## Dois projetos OAuth, nunca misturar
 
@@ -42,6 +42,7 @@ Publicar no YouTube pela primeira vez numa feature nova · rodar upload real (se
 
 ## Onde está o detalhe
 
-- `references/upload.md` — 09: slots, idempotência, cota, upload de teste.
+- `references/dia-d.md` — **runbook do dia D** da auditoria: `dia_d.py checar` (simulação), virar a flag, teste com 1 vídeo, verificação (script + Studio), liberação dos Shorts (`09 todos --shorts`, 2/dia) e vídeo relacionado, rollback.
+- `references/upload.md` — 09: slots, idempotência, cota, upload de teste, Shorts (`--shorts`).
 - `references/metricas.md` — 12: regra com/sem legenda + **setup do projeto analytics passo a passo**; 15: placar do canal pro YPP.
 - `references/canal-e-publicacao.md` — 14 (casamento por título, status) e `publicacao.txt`.

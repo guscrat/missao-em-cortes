@@ -31,5 +31,5 @@ Lista de publicação manual. Gerada pelo Curador; à mão: `uv run py scripts/_
 
 - Só blocos `aprovado` no `revisao.json`, em ordem de score, com arquivo final (prefere `_polido_legendado`), thumb escolhida pelo revisor, Short (se gerado), título/descrição/tags do `descricoes.txt` e dia sugerido às 18h.
 - 1 por dia, ou 2 por dia com 3+ aprovados. Começa hoje se rodou antes das 16h, mas **nunca antes do dia seguinte ao último longo agendado/publicado** (`state/canal.json` do 14 + `publish_at` do banco).
-- O cabeçalho pede pra subir o Short com o **mesmo título** do vídeo (pode pôr `#shorts`), porque é pelo título que o 14 reconhece.
-- **Até a auditoria a lista mostra só os longos** (sem linha SHORT). Com a flag `true`, volta a listar os Shorts.
+- Short à mão (só antes da auditoria, se for o caso): o 14 reconhece pelo título do longo, pelo `texto_thumb` ou pela manchete (`_descricoes.manchete`) exatos. Pela API (09 `--shorts`), o título é a manchete.
+- **Até a auditoria a lista mostra só os longos** (sem linha SHORT). Com a flag `true`, lista os Shorts marcados "sobe pela API": quem sobe é o `09_upload.py todos --shorts`, **nunca à mão** (Short já agendado sai da lista porque ganha `youtube_id` no `shorts.json`).
