@@ -49,11 +49,12 @@ def ler_url_fonte(stem, inputs=None):
     return url
 
 def bloco_para_texto(b, url_fonte=""):
+    # grafia oficial em tudo que vai pro YouTube (título, corpo, convidados, tags/hashtags)
     titulo = corrigir_grafia(b.get("titulo_sugerido", b["tema"]))
-    resumo = b.get("resumo", "").strip()
-    ganchos = b.get("ganchos", [])
-    tags_bloco = b.get("tags", [])
-    speakers = b.get("speakers_principais", [])
+    resumo = corrigir_grafia(b.get("resumo", "").strip())
+    ganchos = [corrigir_grafia(g) for g in b.get("ganchos", [])]
+    tags_bloco = [corrigir_grafia(t) for t in b.get("tags", [])]
+    speakers = [corrigir_grafia(s) for s in b.get("speakers_principais", [])]
 
     # Tags combinadas (sem duplicar, mantem ordem)
     tags_final = []
