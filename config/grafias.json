@@ -1,0 +1,27 @@
+{
+  "_comment": "Grafias oficiais dos personagens. Usada pelo editor (título, texto da thumb, colagem), pelo revisor (grafia errada reprova o título) e pela colagem (casa o nome nas tags). nome = grafia oficial completa; curto = como sai em título/thumb; erradas = variantes que aparecem na transcrição/tags e são trocadas pela oficial.",
+  "personagens": [
+    {"nome": "Renan Santos", "curto": "Renan", "erradas": []},
+    {"nome": "Kim Kataguiri", "curto": "Kim", "erradas": ["Kim Kataguri", "Kim Cataguiri"]},
+    {"nome": "Arthur do Val", "curto": "Arthur do Val", "erradas": ["Artur do Val"]},
+    {"nome": "Guto Zacarias", "curto": "Guto Zacarias", "erradas": ["Guto Zacharias"]},
+    {"nome": "Amanda Vettorazzo", "curto": "Amanda Vettorazzo", "erradas": ["Amanda Vetorazzo", "Amanda Vettorazo", "Amanda Vetorazo"]},
+    {"nome": "Nikolas Ferreira", "curto": "Nikolas", "erradas": ["Nicolas Ferreira", "Nícolas Ferreira", "Nicholas Ferreira", "Nickolas Ferreira", "Nicolas", "Nícolas", "Nicholas"]},
+    {"nome": "Flávio Bolsonaro", "curto": "Flávio", "erradas": ["Flavio Bolsonaro"]},
+    {"nome": "Jair Bolsonaro", "curto": "Bolsonaro", "erradas": []},
+    {"nome": "Eduardo Bolsonaro", "curto": "Eduardo Bolsonaro", "erradas": []},
+    {"nome": "Michelle Bolsonaro", "curto": "Michelle", "erradas": ["Michele Bolsonaro", "Micheli Bolsonaro"]},
+    {"nome": "Luiz Inácio Lula da Silva", "curto": "Lula", "erradas": ["Luis Inácio Lula da Silva", "Luiz Inacio Lula da Silva"]},
+    {"nome": "Fábio Luís Lula da Silva", "curto": "Lulinha", "erradas": ["Fabio Luis Lula da Silva", "Fábio Luiz Lula da Silva"]},
+    {"nome": "André Janones", "curto": "Janones", "erradas": ["Andre Janones", "André Janone", "Janone"]},
+    {"nome": "Lucas Pavanato", "curto": "Pavanato", "erradas": ["Lucas Pavanatto", "Pavanatto"]},
+    {"nome": "Erika Hilton", "curto": "Erika Hilton", "erradas": ["Érika Hilton", "Erica Hilton", "Érica Hilton"]},
+    {"nome": "André Fernandes", "curto": "André Fernandes", "erradas": ["Andre Fernandes"]},
+    {"nome": "Tarcísio de Freitas", "curto": "Tarcísio", "erradas": ["Tarcisio de Freitas", "Tarcízio"]},
+    {"nome": "Romeu Zema", "curto": "Zema", "erradas": []},
+    {"nome": "Ciro Nogueira", "curto": "Ciro Nogueira", "erradas": []},
+    {"nome": "Alexandre de Moraes", "curto": "Moraes", "erradas": ["Alexandre de Morais", "Alexandre Moraes"]},
+    {"nome": "Daniel Vorcaro", "curto": "Vorcaro", "erradas": ["Daniel Vorcarro"]},
+    {"nome": "Guilherme Boulos", "curto": "Boulos", "erradas": ["Guilherme Boullos"]}
+  ]
+}

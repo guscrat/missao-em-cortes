@@ -1,0 +1,186 @@
+{
+  "_comment": "Banco de personagens da thumb colagem: só licença aberta do Wikimedia Commons, conferida pela API (scripts/personagens.py). credito = linha que vai na descrição do vídeo quando a foto entra na thumb.",
+  "personagens": [
+    {
+      "slug": "andre_fernandes",
+      "nome": "André Fernandes",
+      "apelidos": [],
+      "wikidata": "Q59223526",
+      "arquivo": "andre_fernandes.webp",
+      "rosto": [
+        192,
+        55,
+        319,
+        319
+      ],
+      "fonte": "https://commons.wikimedia.org/wiki/File:Deputado_Andr%C3%A9_Fernandes.jpg",
+      "arquivo_commons": "File:Deputado André Fernandes.jpg",
+      "licenca": "CC BY 2.0",
+      "licenca_url": "https://creativecommons.org/licenses/by/2.0",
+      "autor": "Marcos Corrêa/PR",
+      "credito_fonte": "https://www.flickr.com/photos/palaciodoplanalto/49094580933/in/album-72157711860870642/",
+      "credito": "Foto de André Fernandes: Marcos Corrêa/PR / Wikimedia Commons, CC BY 2.0 (fundo removido)",
+      "baixado_em": "2026-10-22"
+    },
+    {
+      "slug": "arthur_do_val",
+      "nome": "Arthur do Val",
+      "apelidos": [
+        "mamaefalei"
+      ],
+      "wikidata": "Q59222749",
+      "arquivo": "arthur_do_val.webp",
+      "rosto": [
+        84,
+        118,
+        479,
+        479
+      ],
+      "fonte": "https://commons.wikimedia.org/wiki/File:Arthur_do_Val_(cropped).jpg",
+      "arquivo_commons": "File:Arthur do Val (cropped).jpg",
+      "licenca": "CC BY 3.0",
+      "licenca_url": "https://creativecommons.org/licenses/by/3.0",
+      "autor": "Michel Jesus/Câmara dos Deputados",
+      "credito_fonte": "Câmara dos Deputados do Brasil (1, 2)",
+      "credito": "Foto de Arthur do Val: Michel Jesus/Câmara dos Deputados / Wikimedia Commons, CC BY 3.0 (fundo removido)",
+      "baixado_em": "2026-10-22"
+    },
+    {
+      "slug": "flavio_bolsonaro",
+      "nome": "Flávio Bolsonaro",
+      "apelidos": [
+        "flavio",
+        "flavio bolsonaro"
+      ],
+      "wikidata": "Q10283057",
+      "arquivo": "flavio_bolsonaro.webp",
+      "rosto": [
+        217,
+        94,
+        360,
+        360
+      ],
+      "fonte": "https://commons.wikimedia.org/wiki/File:Foto_oficial_do_senador_Fl%C3%A1vio_Bolsonaro_(v._AgSen)_(3x4).jpg",
+      "arquivo_commons": "File:Foto oficial do senador Flávio Bolsonaro (v. AgSen) (3x4).jpg",
+      "licenca": "Attribution",
+      "licenca_url": "",
+      "autor": "Agência Senado",
+      "credito_fonte": "https://www25.senado.leg.br/web/senadores/senador/-/perfil/5894",
+      "credito": "Foto de Flávio Bolsonaro: Agência Senado / Wikimedia Commons, Attribution (fundo removido)",
+      "baixado_em": "2026-10-22"
+    },
+    {
+      "slug": "guto_zacarias",
+      "nome": "Guto Zacarias",
+      "apelidos": [],
+      "wikidata": "Q116520588",
+      "arquivo": "guto_zacarias.webp",
+      "rosto": [
+        190,
+        151,
+        358,
+        358
+      ],
+      "fonte": "https://commons.wikimedia.org/wiki/File:Guto-zacarias.jpg",
+      "arquivo_commons": "File:Guto-zacarias.jpg",
+      "licenca": "CC BY 4.0",
+      "licenca_url": "https://creativecommons.org/licenses/by/4.0",
+      "autor": "alesp",
+      "credito_fonte": "https://www.al.sp.gov.br/alesp/banco-imagens/?inicio=36&fim=54&textoCodificado=&tipoBusca=deputados&texto=&dtInicial=&dtFinal=&__ncforminfo=Q_pqkZqMQUVqbn8IzrO2c1xn4kasxQ9Pcddf2wlTF9JaTtpvJdfnXHdcqM8w_XHrRN2pRYG6Hv58-WN_FMKqj0Ex0vbjeBZHcSvOPSW0M2PGGxmAsXS0Vj03HGcVSvt1",
+      "credito": "Foto de Guto Zacarias: alesp / Wikimedia Commons, CC BY 4.0 (fundo removido)",
+      "baixado_em": "2026-10-22"
+    },
+    {
+      "slug": "kim_kataguiri",
+      "nome": "Kim Kataguiri",
+      "apelidos": [
+        "kim"
+      ],
+      "wikidata": "Q21715169",
+      "arquivo": "kim_kataguiri.webp",
+      "rosto": [
+        314,
+        149,
+        321,
+        321
+      ],
+      "fonte": "https://commons.wikimedia.org/wiki/File:CCJ_-_Comiss%C3%A3o_de_Constitui%C3%A7%C3%A3o,_Justi%C3%A7a_e_Cidadania_-_45921653432_(cropped).jpg",
+      "arquivo_commons": "File:CCJ - Comissão de Constituição, Justiça e Cidadania - 45921653432 (cropped).jpg",
+      "licenca": "CC BY 2.0",
+      "licenca_url": "https://creativecommons.org/licenses/by/2.0",
+      "autor": "Senado Federal",
+      "credito_fonte": "https://www.flickr.com/photos/agenciasenado/45921653432/",
+      "credito": "Foto de Kim Kataguiri: Senado Federal / Wikimedia Commons, CC BY 2.0 (fundo removido)",
+      "baixado_em": "2026-10-22"
+    },
+    {
+      "slug": "luiz_inacio_lula_da_silva",
+      "nome": "Luiz Inácio Lula da Silva",
+      "apelidos": [
+        "Lula",
+        "lula"
+      ],
+      "wikidata": "Q37181",
+      "arquivo": "luiz_inacio_lula_da_silva.webp",
+      "rosto": [
+        125,
+        69,
+        317,
+        317
+      ],
+      "fonte": "https://commons.wikimedia.org/wiki/File:Foto_oficial_de_Luiz_In%C3%A1cio_Lula_da_Silva_(estreita).jpg",
+      "arquivo_commons": "File:Foto oficial de Luiz Inácio Lula da Silva (estreita).jpg",
+      "licenca": "CC BY 2.0",
+      "licenca_url": "https://creativecommons.org/licenses/by/2.0",
+      "autor": "Palácio do Planalto from Brasilia, Brasil",
+      "credito_fonte": "Foto Oficial do Presidente da República, Luiz Inácio Lula da Silva",
+      "credito": "Foto de Luiz Inácio Lula da Silva: Palácio do Planalto from Brasilia, Brasil / Wikimedia Commons, CC BY 2.0 (fundo removido)",
+      "baixado_em": "2026-10-22"
+    },
+    {
+      "slug": "nikolas_ferreira",
+      "nome": "Nikolas Ferreira",
+      "apelidos": [
+        "nicolas ferreira",
+        "nikolas"
+      ],
+      "wikidata": "Q109937634",
+      "arquivo": "nikolas_ferreira.webp",
+      "rosto": [
+        215,
+        48,
+        192,
+        192
+      ],
+      "fonte": "https://commons.wikimedia.org/wiki/File:02.08.2023_-_Nikolas_Ferreira.jpg",
+      "arquivo_commons": "File:02.08.2023 - Nikolas Ferreira.jpg",
+      "licenca": "CC BY 3.0",
+      "licenca_url": "https://creativecommons.org/licenses/by/3.0",
+      "autor": "Zeca Ribeiro/Câmara dos Deputados",
+      "credito_fonte": "https://www.camara.leg.br/internet/bancoimagem/banco/2023/08/img20230802201721862.jpg",
+      "credito": "Foto de Nikolas Ferreira: Zeca Ribeiro/Câmara dos Deputados / Wikimedia Commons, CC BY 3.0 (fundo removido)",
+      "baixado_em": "2026-10-22"
+    },
+    {
+      "slug": "renan_santos",
+      "nome": "Renan Santos",
+      "apelidos": [],
+      "wikidata": "Q51882553",
+      "arquivo": "renan_santos.webp",
+      "rosto": [
+        105,
+        45,
+        443,
+        443
+      ],
+      "fonte": "https://commons.wikimedia.org/wiki/File:Renan_Santos.jpg",
+      "arquivo_commons": "File:Renan Santos.jpg",
+      "licenca": "CC BY 4.0",
+      "licenca_url": "https://creativecommons.org/licenses/by/4.0",
+      "autor": "Romerito Pontes from São Carlos",
+      "credito_fonte": "This image has been extracted from another file",
+      "credito": "Foto de Renan Santos: Romerito Pontes from São Carlos / Wikimedia Commons, CC BY 4.0 (fundo removido)",
+      "baixado_em": "2026-10-22"
+    }
+  ]
+}

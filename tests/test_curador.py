@@ -189,8 +189,11 @@ def test_avaliar_recusa_devolve_vazio():
 def rodada(raiz, monkeypatch):
     """Liga a rodada a fakes: canais, LLM e processamento. Devolve o registro de chamadas."""
     reg = {"listar": {}, "avaliacoes": {}, "processados": [], "llm": 0,
-           "estoque": {"longos": 0, "shorts": 0, "dias": 0.0}}
-    monkeypatch.setattr(cu, "calcular_estoque", lambda cfg, hoje=None: dict(reg["estoque"]))
+           "estoque": {"longos": 0, "shorts": 0, "dias": 0.0}, "canal": [], "aviso_canal": None}
+    monkeypatch.setattr(cu, "calcular_estoque",
+                        lambda cfg, hoje=None: reg["canal"].append("estoque") or dict(reg["estoque"]))
+    monkeypatch.setattr(cu, "sincronizar_canal",
+                        lambda dry=False: reg["canal"].append(("sync", dry)) or reg["aviso_canal"])
     monkeypatch.setattr(cu, "listar_canal", lambda canal, n: reg["listar"].get(canal["prefixo"], []))
     monkeypatch.setattr(cu, "detalhar", lambda item: item)
 
@@ -261,13 +264,14 @@ def test_sem_pipeline_registra_mas_nao_processa(raiz, rodada):
 
 
 def test_estoque_cheio_avalia_mas_nao_processa(raiz, rodada):
-    rodada["estoque"] = {"longos": 4, "shorts": 4, "dias": 2.0}
+    rodada["estoque"] = {"longos": 4, "shorts": 4, "dias": 2.0, "dias_agendados": 0,
+                         "coberto_ate": date(2026, 10, 24)}
     rodada["listar"] = {"renan": [_item("a", "Live Alfa")]}
     rodada["avaliacoes"] = {"a": _av(True, 9)}
     assert cu.main([]) == 0
     assert rodada["llm"] == 1 and rodada["processados"] == []
     assert json.loads(cu.ESTADO.read_text(encoding="utf-8"))["a"]["decisao"] == "fila"
-    assert "Estoque no início: 4 longo(s) + 4 Short(s) = 2.0" in cu.RESUMO.read_text(encoding="utf-8")
+    assert "Estoque no início: canal coberto até" in cu.RESUMO.read_text(encoding="utf-8")
 
 
 def test_estoque_baixo_processa_so_um(raiz, rodada):
@@ -521,7 +525,13 @@ def _pasta_com_blocos(raiz, nome, stem, status_por_bloco, shorts=None):
     return pasta
 
 
-def test_calcular_estoque_conta_longos_aprovados_e_shorts_nao_postados(raiz):
+def _sem_agendado(monkeypatch, ultimo=None):
+    import _publicacao
+    monkeypatch.setattr(_publicacao, "ultimo_agendado", lambda: ultimo)
+
+
+def test_calcular_estoque_conta_longos_aprovados_e_shorts_nao_postados(raiz, monkeypatch):
+    _sem_agendado(monkeypatch)
     hoje = date(2026, 10, 22)
     _pasta_com_blocos(raiz, "2026-10-21_renan_a", "renan_a",
                       {1: "aprovado", 2: "agendado", 3: "descartado", 4: "aprovado"},
@@ -530,15 +540,59 @@ def test_calcular_estoque_conta_longos_aprovados_e_shorts_nao_postados(raiz):
                       {1: "aprovado"}, shorts={1: False})
     est = cu.calcular_estoque({"estoque": {"longos_por_dia": 1, "shorts_por_dia": 2}}, hoje)
     # longos: blocos 1 e 4; shorts: 1 e 2 (3 descartado, 4 já postado)
-    assert est == {"longos": 2, "shorts": 2, "dias": 1.0}
+    assert est == {"longos": 2, "shorts": 2, "dias_agendados": 0, "dias": 2.0,
+                   "coberto_ate": date(2026, 10, 24)}
 
 
-def test_calcular_estoque_shorts_limitam_os_dias(raiz):
-    hoje = date(2026, 10, 22)
-    _pasta_com_blocos(raiz, "2026-10-22_kim_b", "kim_b",
-                      {1: "aprovado", 2: "aprovado", 3: "aprovado", 4: "aprovado"})
-    est = cu.calcular_estoque({"estoque": {"longos_por_dia": 1, "shorts_por_dia": 2}}, hoje)
-    assert est["longos"] == 4 and est["shorts"] == 0 and est["dias"] == 0.0
+def test_estoque_so_agendados(raiz, monkeypatch):
+    _sem_agendado(monkeypatch, date(2026, 10, 27))
+    est = cu.calcular_estoque(CFG_EST, date(2026, 10, 22))
+    assert est["dias_agendados"] == 5 and est["dias"] == 5.0 and est["longos"] == 0
+    assert est["coberto_ate"] == date(2026, 10, 27)
+
+
+def test_estoque_agendado_no_passado_conta_zero(raiz, monkeypatch):
+    _sem_agendado(monkeypatch, date(2026, 10, 10))
+    est = cu.calcular_estoque(CFG_EST, date(2026, 10, 22))
+    assert est["dias_agendados"] == 0 and est["dias"] == 0 and est["coberto_ate"] is None
+
+
+def test_estoque_ultimo_agendado_hoje_cobre_hoje(raiz, monkeypatch):
+    _sem_agendado(monkeypatch, date(2026, 10, 22))
+    est = cu.calcular_estoque(CFG_EST, date(2026, 10, 22))
+    assert est["dias"] == 0 and est["coberto_ate"] == date(2026, 10, 22)
+
+
+def test_estoque_agendados_mais_prontos_somam(raiz, monkeypatch):
+    _sem_agendado(monkeypatch, date(2026, 10, 25))
+    _pasta_com_blocos(raiz, "2026-10-22_kim_g", "kim_g", {1: "aprovado", 2: "aprovado"})
+    est = cu.calcular_estoque(CFG_EST, date(2026, 10, 22))
+    assert est["dias"] == 5.0 and est["coberto_ate"] == date(2026, 10, 27)
+
+
+def test_estoque_longos_por_dia_divide_prontos(raiz, monkeypatch):
+    _sem_agendado(monkeypatch)
+    _pasta_com_blocos(raiz, "2026-10-22_kim_h", "kim_h", {1: "aprovado", 2: "aprovado", 3: "aprovado"})
+    cfg = {"estoque": {"longos_por_dia": 2, "shorts_por_dia": 2}}
+    est = cu.calcular_estoque(cfg, date(2026, 10, 22))
+    assert est["dias"] == 1.5 and est["coberto_ate"] == date(2026, 10, 24)   # ceil(1.5)
+
+
+def test_estoque_sem_nada_coberto_ate_none(raiz, monkeypatch):
+    _sem_agendado(monkeypatch)
+    est = cu.calcular_estoque(CFG_EST, date(2026, 10, 22))
+    assert est == {"longos": 0, "shorts": 0, "dias_agendados": 0, "dias": 0.0, "coberto_ate": None}
+
+
+def test_estoque_shorts_nao_afetam_dias(raiz, monkeypatch):
+    _sem_agendado(monkeypatch)
+    _pasta_com_blocos(raiz, "2026-10-22_kim_b", "kim_b", {1: "aprovado", 2: "aprovado"})
+    sem = cu.calcular_estoque(CFG_EST, date(2026, 10, 22))
+    _pasta_com_blocos(raiz, "2026-10-22_kim_i", "kim_i", {1: "aprovado", 2: "aprovado"},
+                      shorts={1: False, 2: False})
+    com = cu.calcular_estoque(CFG_EST, date(2026, 10, 22))
+    assert sem["shorts"] == 0 and com["shorts"] == 2
+    assert com["dias"] == sem["dias"] + 2
 
 
 def test_proximo_da_fila_prioridade_depois_mais_recente():
@@ -593,27 +647,30 @@ def test_short_que_falha_vira_aviso(raiz, monkeypatch):
 
 # --- lacunas extras do estoque/fila ---------------------------------------------------------
 
-def test_estoque_pasta_none_no_banco_cai_no_glob(raiz):
+def test_estoque_pasta_none_no_banco_cai_no_glob(raiz, monkeypatch):
+    _sem_agendado(monkeypatch)
     import _eventos
     pasta = _pasta_com_blocos(raiz, "2026-10-21_kim_c", "kim_c", {1: "aprovado"}, shorts={1: False})
     _eventos.upsert_video("kim_c", pasta=None)
     est = cu.calcular_estoque({"estoque": {"longos_por_dia": 1, "shorts_por_dia": 1}}, date(2026, 10, 22))
-    assert pasta.exists() and est == {"longos": 1, "shorts": 1, "dias": 1.0}
+    assert pasta.exists() and est["longos"] == 1 and est["shorts"] == 1 and est["dias"] == 1.0
 
 
-def test_estoque_sem_pasta_nenhuma_nao_conta(raiz):
+def test_estoque_sem_pasta_nenhuma_nao_conta(raiz, monkeypatch):
+    _sem_agendado(monkeypatch)
     import _eventos
     _eventos.upsert_bloco("fantasma", 1, status="aprovado", forcar_status=True)
     est = cu.calcular_estoque({"estoque": {"longos_por_dia": 1, "shorts_por_dia": 1}}, date(2026, 10, 22))
     assert est["longos"] == 0 and est["shorts"] == 0
 
 
-def test_estoque_short_postado_nao_conta_e_arquivo_sumido_nao_conta(raiz):
+def test_estoque_short_postado_nao_conta_e_arquivo_sumido_nao_conta(raiz, monkeypatch):
+    _sem_agendado(monkeypatch)
     pasta = _pasta_com_blocos(raiz, "2026-10-22_kim_d", "kim_d", {1: "aprovado", 2: "aprovado"},
                               shorts={1: True, 2: False})
     (pasta / "shorts" / "short_02_x.mp4").unlink()
     est = cu.calcular_estoque({"estoque": {"longos_por_dia": 1, "shorts_por_dia": 1}}, date(2026, 10, 22))
-    assert est["longos"] == 2 and est["shorts"] == 0 and est["dias"] == 0.0
+    assert est["longos"] == 2 and est["shorts"] == 0 and est["dias"] == 2.0
 
 
 def test_fila_expirada_nao_e_escolhida(raiz, rodada):
@@ -641,3 +698,70 @@ def test_tentativas_preservadas_ao_voltar_pra_fila(raiz, rodada, monkeypatch):
     assert cu.main([]) == 1
     e = cu.ler_estado()["a"]
     assert e["tentativas"] == 2 and e["decisao"] == "fila"
+
+
+# --- leitura do canal (14_canal) no começo da rodada --------------------------------------
+
+def test_rodada_le_o_canal_antes_do_estoque(raiz, rodada):
+    cu.main([])
+    assert rodada["canal"][:2] == [("sync", False), "estoque"]
+
+
+def test_dry_run_le_o_canal_sem_gravar(raiz, rodada):
+    cu.main(["--dry-run"])
+    assert rodada["canal"][0] == ("sync", True)
+
+
+def test_aviso_do_canal_vai_pro_resumo(raiz, rodada):
+    rodada["aviso_canal"] = "não li o canal do YouTube (sem login)"
+    cu.main([])
+    assert "não li o canal do YouTube" in cu.RESUMO.read_text(encoding="utf-8")
+
+
+def test_sincronizar_canal_nunca_derruba(monkeypatch):
+    import sys
+    import types
+
+    def quebra(**kw):
+        raise RuntimeError("precisa de login")
+    monkeypatch.setitem(sys.modules, "14_canal", types.SimpleNamespace(sincronizar=quebra))
+    assert "precisa de login" in cu.sincronizar_canal()
+
+
+def test_sincronizar_canal_nao_interativo_e_lista_sem_match(monkeypatch):
+    import sys
+    import types
+    pedidos = []
+
+    def sinc(**kw):
+        pedidos.append(kw)
+        return {"longos": [1], "shorts": [], "sem_match": [{"titulo": "Vídeo editado"}]}
+    monkeypatch.setitem(sys.modules, "14_canal", types.SimpleNamespace(sincronizar=sinc))
+    aviso = cu.sincronizar_canal(True)
+    assert pedidos == [{"interativo": False, "dry": True}]
+    assert "1 vídeo(s)" in aviso and "Vídeo editado" in aviso
+
+
+# --- estoque: Shorts fora dos dias ----------------------------------------------------------
+
+CFG_EST = {"estoque": {"longos_por_dia": 1, "shorts_por_dia": 2}}
+
+
+def test_estoque_short_arquivado_nao_conta(raiz, monkeypatch):
+    _sem_agendado(monkeypatch)
+    pasta = _pasta_com_blocos(raiz, "2026-10-22_kim_f", "kim_f", {1: "aprovado", 2: "aprovado"},
+                              shorts={1: False, 2: False})
+    reg = json.loads((pasta / "shorts" / "shorts.json").read_text(encoding="utf-8"))
+    reg["01"]["arquivado"] = "conteúdo antigo"
+    (pasta / "shorts" / "shorts.json").write_text(json.dumps(reg), encoding="utf-8")
+    assert cu.calcular_estoque(CFG_EST, date(2026, 10, 22))["shorts"] == 1
+
+
+def test_texto_estoque_com_e_sem_cobertura():
+    t = cu._texto_estoque({"longos": 3, "shorts": 2, "dias_agendados": 2, "dias": 5.0,
+                           "coberto_ate": date(2026, 10, 27)})
+    assert t.startswith("canal coberto até 27/10 = 5.0 dia(s)")
+    assert "2 dia(s) já agendado(s) + 3 longo(s) pronto(s); 2 Short(s) à parte" in t
+    vazio = cu._texto_estoque({"longos": 0, "shorts": 0, "dias_agendados": 0, "dias": 0.0,
+                               "coberto_ate": None})
+    assert vazio.startswith("nada agendado nem pronto = 0.0 dia(s)")

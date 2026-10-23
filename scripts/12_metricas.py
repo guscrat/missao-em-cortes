@@ -6,7 +6,7 @@ Uso:
 
 Projeto do Google SEPARADO do upload (missao-em-cortes-analytics), com credencial e token
 próprios em secrets/ (fora do Git): o projeto do upload (publisher) está em auditoria
-declarando só upload e NÃO pode ganhar a Analytics API. Passo a passo no CLAUDE.md.
+declarando só upload e NÃO pode ganhar a Analytics API. Passo a passo em .claude/skills/youtube-compliance/references/metricas.md.
 
 Lê (só leitura):
   - YouTube Data API (youtube.readonly): vídeos do canal com título, data e duração
@@ -25,10 +25,8 @@ Custo: US$ 0 (cota da Data API ~3 unidades por rodada; Analytics tem cota própr
 Resultado também em state/metricas_retencao.json e evento agente="analista" no banco.
 """
 import json
-import re
 import sys
 sys.stdout.reconfigure(encoding='utf-8')
-import unicodedata
 from datetime import date
 from pathlib import Path
 
@@ -36,30 +34,14 @@ from _descricoes import ler_descricoes
 from _eventos import evento
 from _google import credenciais
 from _paths import OUTPUTS
+from _youtube_leitura import (CLIENT_SECRET, ESCOPOS, TOKEN, duracao_iso,  # noqa: F401
+                             listar_videos, normalizar)
 
 ROOT = Path(__file__).parent.parent
-CLIENT_SECRET = ROOT / "secrets" / "analytics_client_secret.json"   # projeto missao-em-cortes-analytics
-TOKEN = ROOT / "secrets" / "analytics_token.json"
 SAIDA = ROOT / "state" / "metricas_retencao.json"
-ESCOPOS = ["https://www.googleapis.com/auth/yt-analytics.readonly",
-           "https://www.googleapis.com/auth/youtube.readonly"]
 LEGENDA_PADRAO_DESDE = "2026-10-21"   # pipeline passou a legendar por padrão
 MAX_SHORT_S = 180
 MIN_VIEWS = 20
-
-
-def normalizar(titulo: str) -> str:
-    t = unicodedata.normalize("NFKD", titulo).encode("ascii", "ignore").decode().lower()
-    return re.sub(r"[^a-z0-9]+", " ", t).strip()
-
-
-def duracao_iso(d: str) -> int:
-    """'PT1H2M3S' → segundos."""
-    m = re.fullmatch(r"P(?:(\d+)D)?T?(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?", d)
-    if not m:
-        return 0
-    dd, h, mi, s = (int(x or 0) for x in m.groups())
-    return dd * 86400 + h * 3600 + mi * 60 + s
 
 
 def titulos_locais(outputs: Path) -> dict[str, bool]:
@@ -98,27 +80,9 @@ def resumo_grupo(videos: list[dict]) -> dict | None:
 # ── API ────────────────────────────────────────────────────────────────────
 
 def videos_do_canal(yt) -> list[dict]:
-    canal = yt.channels().list(part="contentDetails", mine=True).execute()["items"][0]
-    uploads = canal["contentDetails"]["relatedPlaylists"]["uploads"]
-    itens, pagina = [], None
-    while True:
-        r = yt.playlistItems().list(part="contentDetails,snippet", playlistId=uploads,
-                                    maxResults=50, pageToken=pagina).execute()
-        itens += r["items"]
-        pagina = r.get("nextPageToken")
-        if not pagina:
-            break
-    videos = []
-    for i in range(0, len(itens), 50):
-        ids = [it["contentDetails"]["videoId"] for it in itens[i:i + 50]]
-        r = yt.videos().list(part="contentDetails,snippet,status", id=",".join(ids)).execute()
-        for v in r["items"]:
-            if v["status"]["privacyStatus"] != "public":
-                continue   # privado/agendado/teste não tem retenção pra comparar
-            videos.append({"id": v["id"], "titulo": v["snippet"]["title"],
-                           "publicado": v["snippet"]["publishedAt"],
-                           "duracao_s": duracao_iso(v["contentDetails"]["duration"])})
-    return videos
+    """Só os públicos: privado/agendado/teste não tem retenção pra comparar."""
+    return [{k: v[k] for k in ("id", "titulo", "publicado", "duracao_s")}
+            for v in listar_videos(yt) if v["privacidade"] == "public"]
 
 
 def metricas(analytics, ids: list[str], inicio: str) -> dict[str, dict]:

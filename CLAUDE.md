@@ -1,381 +1,86 @@
 # CLAUDE.md — Missão em Cortes
 
-> Contexto do projeto para o Claude Code. Lido automaticamente no início de cada sessão.
+> Visão geral + ponteiros. O detalhe mora nas skills de `.claude/skills/` (carregadas sob demanda) e em `docs/`.
 
 ## O projeto
 
-Canal de YouTube de cortes de lives, entrevistas, debates e eventos do **Partido Missão (legenda 14)**, partido brasileiro de direita liberal fundado em 2025, ligado ao MBL. O canal pega vídeos longos (lives de 1-2h ou entrevistas de 30-60min) das principais figuras do partido (Renan Santos, Kim Kataguiri, Arthur do Val, Guto Zacarias, Amanda Vettorazzo) e gera **vários vídeos por fonte**, cada um focado num único ponto, otimizados para monetização no YouTube Partner Program. O alvo de duração é **5-7min por corte** (mudança de Jun/2026 pra melhorar retenção) — cortes curtos e focados num assunto só. Lives longas naturalmente rendem mais blocos.
+Canal de YouTube de cortes de lives, entrevistas, debates e eventos do **Partido Missão (legenda 14)**, partido brasileiro de direita liberal fundado em 2025, ligado ao MBL (Renan Santos, Kim Kataguiri, Arthur do Val, Guto Zacarias, Amanda Vettorazzo). Cada vídeo longo vira **vários cortes de 5-7 min**, um ponto por corte, otimizados pro YouTube Partner Program.
 
-**Nome do canal:** Missão em Cortes  
-**Canal:** https://www.youtube.com/channel/UCRJDgbBEndOdbNaiwzFju2g (handle `@missaoemcortes-14`; o handle `@missaoemcortes` NÃO é nosso, não usar)
+**Canal:** https://www.youtube.com/channel/UCRJDgbBEndOdbNaiwzFju2g (handle `@missaoemcortes-14`; o `@missaoemcortes` NÃO é nosso).
 
-## Postura editorial
+Postura: simpática ao partido com independência crítica; títulos ousados **sem distorcer a fala**; crédito à fonte sempre.
 
-- Simpática ao Partido Missão, mas com independência crítica
-- Linha editorial: direita liberal, anti-bolsonarista crítica
-- Títulos podem ser ousados/com gancho, **sem distorcer o que foi dito**
-- Mantém crédito visual à fonte original (logo MBL/Valete preservado nos cortes)
-- Overlays desatualizados: removidos via zoom programático por fonte (`config/zoom.json`, lido pelo `04_cortar.py`), sem blur — ver "Tratamento de overlays"
+## Skills (leia a skill antes de mexer na área)
 
-## Stack técnica
+| Skill | Quando |
+|---|---|
+| `editorial-missao` | título, `texto_thumb`, descrição, segmentação (03/08), revisor (11), editor, grafias, Curador (13) |
+| `thumb-colagem` | thumbs: template pelo rosto (07), colagem (07b), banco de personagens/licenças, identidade visual |
+| `youtube-compliance` | YPP, crédito da fonte, trava da auditoria, OAuth (2 projetos), upload (09), métricas (12), canal (14), `publicacao.txt` |
+| `release` | git flow, as duas pastas, testador/revisor, PR, merge, release pra main, status de sexta |
+| `painel-eventos` | banco `state/pipeline.db`, eventos/custo por agente, status de bloco, kanban, arquivamento, `tarefa.py`/hooks |
 
-- **Python 3.10+** com **uv** (gerenciador de dependências)
-- **faster-whisper** — transcrição local (modelo `medium`, GPU NVIDIA via CUDA)
-- **Anthropic API** — segmentação temática via `claude-sonnet-4-6` (~$0.20/live)
-- **ffmpeg** — corte com fades, montagem final
-- **Pillow (PIL)** — geração programática de cards de contexto
-- **yt-dlp** — download das lives do YouTube
-- **OpenCV (headless, 4.x)** — detecção de rosto pro crop dos Shorts (Haar, local, sem modelo pra baixar)
-- **Canva** — intro, outro e template de thumbnail (externos ao pipeline)
+Docs: `docs/pipeline.md` (detalhes dos steps 4/4b/4c/5/6/10, zoom anti-overlay, formato canônico, dependências, custos) · `docs/historico.md` (estado e roadmap).
 
-## Estrutura do projeto
+## Stack
+
+Python 3.10+ com **uv** · **faster-whisper** `medium` (GPU CUDA, cai pra CPU) · **Anthropic API** (segmentação `claude-sonnet-4-6`; revisor/editor/Curador `claude-opus-5-5`; visão da colagem `claude-haiku-5-5`) · **ffmpeg** com NVENC · **Pillow** · **yt-dlp** (sempre `uv run yt-dlp`, com solver JS) · **OpenCV** headless (rosto, Haar) · **rembg** (recorte da colagem) · **Canva** (intro/outro, fora do pipeline) · **Streamlit** (painel).
+
+## Estrutura
 
 ```
-missao-em-cortes/
-├── inputs/                          # Vídeos baixados (mp4)
-│   ├── live_teste.mp4
-│   ├── renan_entrevista.mp4
-│   └── <stem>.url                    # URL da fonte (salva pelo 01_baixar, lida pelo 08)
-├── outputs/                          # Tudo gerado pelo pipeline — UMA PASTA POR VÍDEO
-│   ├── <AAAA-MM-DD>_<stem>/          # ex: 2026-06-03_renan_vorcaro/ (data = processamento)
-│   │   ├── transcricao.txt
-│   │   ├── words.json                # word-level timestamps (reaproveitado pelo 04b)
-│   │   ├── blocos.json
-│   │   ├── polimento.json            # intervalos de jump cut do 04b
-│   │   ├── descricoes.txt            # titulo+descricao+tags por bloco pro YouTube
-│   │   ├── revisao.json              # veredito e checagens do agente revisor (step 11)
-│   │   ├── cortes/                   # corte_NN_<slug>.mp4 + cold_NN_<slug>.mp4 (+ _polido)
-│   │   │   └── legendados/           # cortes com legenda karaokê (mesmo nome) + legenda_NN.ass (step 4c)
-│   │   ├── cards/                    # card_NN.png e card_NN.mp4
-│   │   ├── thumbs/                   # thumb_NN_a/b/c.png (3 variantes pra escolher)
-│   │   ├── shorts/                   # short_NN_<slug>.mp4 (9:16) + short_NN.ass + shorts.json (step 10)
-│   │   └── finalizados/              # video_NN_<slug>.mp4 (cold+intro+card+corte+outro)
-│   ├── _calibracao/                  # scratch da calibração de zoom (dev)
-│   ├── _debug/                       # dumps de resposta do LLM quando falha o parse
-│   └── _old/                         # artefatos legados (pré-reorganização)
-├── assets/
-│   ├── intro.mp4                     # do Canva, sem áudio
-│   ├── intro_norm.mp4                # normalizado com áudio silencioso
-│   ├── outro.mp4                     # do Canva, com voz IA ("inscreva-se")
-│   ├── outro_norm.mp4
-│   └── fonts/Anton-Regular.ttf
-├── scripts/                          # Pipeline numerado
-│   ├── pipeline.py                   # orquestrador: roda (02)→03→04→(4b)→05→06→07→08 em sequência
-│   ├── 01_baixar.py                  # yt-dlp + salva inputs/<stem>.url
-│   ├── 02_transcribe.py
-│   ├── 03_segmentar.py
-│   ├── 04_cortar.py
-│   ├── 04b_polir.py                  # opcional: jump cut de silêncios/fillers via LLM
-│   ├── 04c_legendas.py               # legenda karaokê burned-in (words.json → .ass → ffmpeg), $0 — LIGADA por padrão no pipeline
-│   ├── 05_cards.py
-│   ├── 06_montar.py
-│   ├── 07_thumb.py                   # thumbs semi-automáticas (off-pipeline)
-│   ├── 08_descricao.py               # gera txt com titulo+descricao+tags pro YouTube
-│   ├── 12_metricas.py                # retenção COM legenda x SEM (YouTube Analytics, só leitura) pro resumo semanal (off-pipeline)
-│   ├── 13_curador.py                 # agente Curador: acha vídeos novos dos canais, escolhe (LLM) e dispara o pipeline (1x/dia, off-pipeline)
-│   ├── _publicacao.py                # lista de publicação manual (publicacao.txt: aprovados por score + Short + dia sugerido)
-│   ├── registrar_publicacao.py       # registra upload manual (longo agendado/publicado, Short postado) → painel e estoque do Curador
-│   ├── 11_revisor.py                 # agente revisor (Claude com visão) + loop do editor: aprovado / quarentena / descartado (off-pipeline)
-│   ├── _editor.py                    # agente editor: reescreve título + texto_thumb reprovados (chamado pelo 11)
-│   ├── 10_shorts.py                  # Shorts 9:16 dos cold opens: crop no rosto + manchete + legenda karaokê (off-pipeline)
-│   ├── 09_upload.py                  # sobe pro YouTube como privado agendado (publishAt) + thumb; travado até a auditoria (off-pipeline)
-│   ├── calibrar_zoom.py              # off-pipeline: calibra o crop anti-overlay (--salvar grava em config/zoom.json)
-│   ├── _canal.py                     # ID/URL do NOSSO canal (só no "Inscreva-se"; nunca como fonte)
-│   ├── _paths.py                     # resolve outputs/<data>_<stem>/ por stem (helper compartilhado)
-│   ├── _descricoes.py                # parser do descricoes.txt + trocar_titulo (compartilhado pelo 09/11/12 e pelo editor)
-│   ├── _google.py                    # login OAuth do YouTube (token por uso, escopo mínimo) — 09 e 12
-│   ├── _legenda.py                   # núcleo da legenda karaokê (.ass) compartilhado pelo 04c e pelo 10
-│   ├── _ffmpeg.py                    # formato canônico (VENC/AENC/SCALE_PAD) compartilhado pelos steps 4/4b/5/6
-│   ├── _migrar_outputs.py            # one-off: migrou a estrutura antiga pro layout por vídeo
-│   ├── _eventos.py                   # estado/eventos em SQLite (state/pipeline.db) — best-effort, nunca derruba o pipeline
-│   ├── sincronizar_estado.py         # backfill/reconciliação do banco a partir de outputs/ (idempotente)
-│   ├── tarefa.py                     # CLI das tarefas do time de dev (nova/mover/resultado/decisao/lista)
-│   └── hook_agente.py                # hook do Claude Code: atividade dos subagents/tech-lead → banco
-├── painel/
-│   ├── app.py                        # painel Streamlit (só LÊ o banco): kanban, custo por agente, timeline
-│   └── time_dev.py                   # aba "Time de dev": status dos agentes, tarefas, decisões pro Gu
-├── state/                            # pipeline.db (gitignored)
-├── tests/                            # pytest (conftest com outputs/ e banco falsos; tudo mockado)
-├── .claude/agents/                   # subagents do time de dev: testador, revisor-codigo
-├── .claude/settings.json             # hooks SubagentStart/SubagentStop/Stop → scripts/hook_agente.py
-├── .github/workflows/ci.yml          # CI: uv sync + pytest em todo PR e push pra develop/main
-├── prompts/
-│   └── segmentacao.md                # Prompt do LLM pra topic segmentation
-├── config/
-│   ├── zoom.json                     # crop anti-overlay por stem (lido pelo 04_cortar.py)
-│   ├── canais.json                   # canais que o Curador monitora + zoom padrão por canal + limites (dias, duração) + estoque mínimo
-│   └── upload.json                   # trava da auditoria (auditoria_aprovada), agendamento do 09 e custos de cota
-├── secrets/                          # youtube_client_secret.json + youtube_token.json (upload, projeto publisher) + analytics_client_secret.json + analytics_token.json (métricas, projeto analytics) — gitignored
-├── .env                              # ANTHROPIC_API_KEY
-└── pyproject.toml
+inputs/           <stem>.mp4 + <stem>.url (URL da fonte, salva pelo 01)
+outputs/<AAAA-MM-DD>_<stem>/   uma pasta por vídeo (transcrição, blocos.json, cortes/, thumbs/, shorts/, finalizados/...)
+assets/           intro/outro (Canva), fonts/Anton, logoCanal.png, personagens/ (fotos + licencas.json)
+config/           zoom.json · canais.json · upload.json · thumb.json · grafias.json
+prompts/          segmentacao.md
+state/            pipeline.db, curador_resumo.md, canal.json... (gitignored)
+secrets/          tokens/clients OAuth (gitignored, repo é público)
+painel/           app.py (Streamlit, só lê o banco) + time_dev.py
+tests/            pytest, tudo mockado
+.claude/          agents/ (testador, revisor-codigo) · skills/ · settings.json (hooks)
 ```
 
-## Pipeline (ordem de execução)
+Scripts (`scripts/`):
+- **Pipeline:** `pipeline.py` (orquestrador) · `01_baixar` · `02_transcribe` · `03_segmentar` · `04_cortar` · `04b_polir` · `04c_legendas` · `05_cards` · `06_montar` · `08_descricao`
+- **Off-pipeline:** `07_thumb` · `07b_colagem` · `09_upload` · `10_shorts` · `11_revisor` · `12_metricas` · `13_curador` · `14_canal` · `calibrar_zoom` · `personagens` · `sincronizar_estado` · `tarefa` · `hook_agente`
+- **Helpers (`_*.py`):** `_paths` (resolve pasta por stem, falha alto se ambíguo) · `_ffmpeg` (formato canônico) · `_eventos` (banco) · `_descricoes` · `_legenda` · `_grafias` · `_editor` · `_colagem` · `_thumb_rosto` · `_publicacao` · `_google` · `_youtube_leitura` · `_canal`
 
-| # | Etapa | Script / Comando | Tempo aprox. | Custo |
-|---|---|---|---|---|
-| 1 | Download | `uv run py scripts/01_baixar.py URL <stem>` | 1-3min | grátis |
-| 2 | Transcrição | `uv run py scripts/02_transcribe.py inputs/<stem>.mp4` | ~6-12min (GTX 1650) | grátis (local) |
-| 3 | Segmentação via LLM | `uv run py scripts/03_segmentar.py <stem>` | 30-90s | ~$0.20 |
-| 4 | Cortes | `uv run py scripts/04_cortar.py <stem>` | ~2-4min (NVENC) | grátis |
-| 4b* | Polimento (jump cut) | `uv run py scripts/04b_polir.py <stem>` | ~3-6min (sem re-transcrever) | ~$0.20 |
-| 4c* | Legenda karaokê | `uv run py scripts/04c_legendas.py <stem> [--polido]` | ~1-2min/corte (NVENC) | grátis |
-| 5 | Cards de contexto | `uv run py scripts/05_cards.py <stem>` | <1min | grátis |
-| 6 | Montagem final | `uv run py scripts/06_montar.py <stem> [--polido] [--legendado]` | ~1-2min (concat copy) | grátis |
-| 7* | Thumbs (off-pipeline) | `uv run py scripts/07_thumb.py <stem>` | <1min | grátis |
-| 8 | Descrições pro YouTube | `uv run py scripts/08_descricao.py <stem>` | <5s | grátis |
+## Pipeline
 
-> **Orquestrador:** `uv run py scripts/pipeline.py <stem> [--polir] [--sem-llm] [--sem-legendas] [--desde=N]` roda os steps 2→8 em sequência (mesmos scripts, para na primeira falha e mostra o `--desde` pra retomar). Sem `--desde`, pula o step 2 se a transcrição já existe. `--polir` inclui o 04b e monta com `--polido`; `--sem-llm` faz o 04b rodar grátis (só silêncios programáticos, sem API). A legenda karaokê (04c) roda **por padrão** desde 21/10/2026 e a montagem usa `--legendado`; `--sem-legendas` desliga numa live específica (`--desde=4c` retoma do 04c). O download (step 1) fica de fora — rode antes, uma vez.
+| # | Etapa | Comando | Custo |
+|---|---|---|---|
+| 1 | Download | `uv run py scripts/01_baixar.py URL <stem>` | grátis |
+| 2 | Transcrição | `uv run py scripts/02_transcribe.py inputs/<stem>.mp4` | grátis (local, ~6-12min) |
+| 3 | Segmentação | `uv run py scripts/03_segmentar.py <stem>` | ~$0.20 |
+| 4 | Cortes (+ cold open) | `uv run py scripts/04_cortar.py <stem>` | grátis |
+| 4b* | Polimento (jump cut) | `uv run py scripts/04b_polir.py <stem> [--sem-llm]` | ~$0.20 / $0 |
+| 4c | Legenda karaokê (padrão) | `uv run py scripts/04c_legendas.py <stem> [--polido]` | grátis |
+| 5 | Cards de contexto | `uv run py scripts/05_cards.py <stem>` | grátis |
+| 6 | Montagem final | `uv run py scripts/06_montar.py <stem> [--polido] [--legendado]` | grátis |
+| 8 | Descrições | `uv run py scripts/08_descricao.py <stem>` | grátis |
 
-> **Organização dos outputs:** uma pasta por vídeo em `outputs/<AAAA-MM-DD>_<stem>/` (data de processamento; prefixo ISO faz a ordenação alfabética = cronológica). Os steps 3-8 recebem só o **stem** (ex: `renan_vorcaro`) e o `scripts/_paths.py` resolve a pasta. Se houver mais de uma pasta pro mesmo stem (ambíguo), o script **falha alto** e lista as opções em vez de adivinhar — passe então o nome completo da pasta (ex: `2026-06-03_renan_vorcaro`). O step 2 (transcrição) recebe o caminho do vídeo em `inputs/` e cria/reusa a pasta do stem. Reprocessar um stem **reusa** a mesma pasta (não duplica).
+**Orquestrador:** `uv run py scripts/pipeline.py <stem> [--polir] [--sem-llm] [--sem-legendas] [--desde=N]` roda 2→8, para na primeira falha e mostra o `--desde` pra retomar (pula o 2 se a transcrição existe; `--desde=4c` retoma do 04c). O download fica de fora. Steps 3-8 recebem só o **stem**.
 
-O step 4 gera **dois arquivos por bloco**: `corte_NN_<slug>.mp4` (corte completo, fade out 0.5s) e `cold_NN_<slug>.mp4` (cold open 15-30s, fade in+out 0.4s). Se o JSON não tiver `cold_open`, gera só o corte e loga um aviso.
+Vídeo final: `[Cold open 15-30s] → [Intro 3s] → [Card 3s] → [Corte 5-7min] → [Outro 5s]`.
 
-O step 4b é **opcional** — pra cada `corte_NN_*.mp4` ele: (1) reaproveita os word-level timestamps do `words.json` (gerado no step 2), fatiando pelo intervalo do bloco — **não re-transcreve** (cai pra re-transcrição via whisper só se o words.json não existir), (2) detecta silêncios >3s **programaticamente** (gap entre palavras consecutivas — determinístico, sem API, nunca nos primeiros 30s), (3) manda pro Claude com prompt conservador só o que exige julgamento (fillers extremos e problemas técnicos), funde os intervalos e aplica jump cut via `ffmpeg filter_complex select/aselect` e salva `corte_NN_<slug>_polido.mp4` na mesma pasta. Filtro defensivo descarta intervalos com motivo "ignorar/manter/abaixo do limiar". Suporta `--bloco=N` pra reprocessar só um bloco e `--sem-llm` pra rodar **só a parte programática** (silêncios) sem chamar o Claude — custo $0, abre mão dos cortes de fillers/problemas técnicos. Os intervalos ficam em `polimento.json`; `--reaplicar` re-aplica os intervalos salvos aos cortes sem chamar o LLM (útil após re-cortar, ex: mudou o zoom). Cold opens **não** são polidos. Pra usar os polidos na montagem: `06_montar.py <stem> --polido` (gera `video_NN_<slug>_polido.mp4`).
+Overlays da live saem por **zoom por fonte** (`config/zoom.json`); stem sem entrada roda sem zoom e avisa. Calibrar: `calibrar_zoom.py <video> --salvar=<stem>`, depois `pipeline.py <stem> --desde=4`. Detalhes em `docs/pipeline.md`.
 
-O step 4c é **grátis** (sem API) e roda **por padrão** no pipeline (`--sem-legendas` desliga por live). Reprocessar live antiga com `--desde=4` gera as legendas; `--desde=5`/`6` sem legendados falha alto e pede `--desde=4c` ou `--sem-legendas`. O que ele faz: queima legenda estilo **karaokê** nos cortes completos pra segurar retenção. Fatia o `words.json` pelo intervalo do bloco (mesmo padding do 04), agrupa em linhas curtas (até 4 palavras / 26 chars, quebra em pausa >0.7s e fim de frase), gera um `.ass` com `\k` (palavra falada acende em **amarelo 14**, o resto fica branco, Anton 72px com contorno preto, centralizada embaixo) e queima com o filtro `ass` do ffmpeg (libass) no formato canônico. Com `--polido` legenda o `_polido` e **remapeia** os tempos pelos intervalos do `polimento.json` (palavra num trecho removido some, as seguintes recuam). Saída em `cortes/legendados/` com o **mesmo nome** do corte. A subpasta é de propósito, porque os globs `corte_NN_*.mp4` dos outros steps não enxergam os legendados. Errou uma palavra? Edite o `legenda_NN.ass` (`legenda_NN_polido.ass` com `--polido`) e rode de novo com `--so-queimar` (não regera o .ass). Cold opens não são legendados. Montagem: `06_montar.py <stem> --legendado [--polido]` → `video_NN_<slug>[_polido]_legendado.mp4`; o 09 prefere `_polido_legendado` > `_legendado` > `_polido` > original.
+Agentes off-pipeline (detalhes nas skills): Curador 13 às 17h decide o que processar · revisor 11 aprova/quarentena/descarta · 10 gera Shorts · 09 sobe (**travado até a auditoria**) · 12/14 só leem o canal.
 
-O step 10 (`uv run py scripts/10_shorts.py <stem> [--bloco=N]`) é **off-pipeline** e **grátis**: gera um **Short 9:16** (1080x1920, 30fps, NVENC) por bloco a partir do **cold open**. Recorta direto do vídeo **original** (`inputs/<stem>.mp4`, 1080p), porque o `cold_NN.mp4` é 720p e ficaria borrado esticado. A janela 9:16 usa a altura toda da área anti-overlay do `config/zoom.json` e fica **sempre dentro dela**, então os overlays continuam fora (stem sem zoom: quadro inteiro + aviso). A posição horizontal segue o rosto de quem fala: OpenCV detecta rostos a cada 0.5s, agrupa por posição e, entre os que aparecem em ≥30% dos frames, escolhe o **mais perto do centro do quadro** (quem filma mantém o palestrante no centro). O critério "maior rosto" perdia pra foto no telão, e o "rosto que mais mexe" perdia pra quem bebia água na mesa. Queima o `texto_thumb` como manchete no topo (caixa preta, amarelo 14), a legenda karaokê grande (3 palavras por linha, 110px) e a marca MISSÃO EM CORTES. Saída em `outputs/<pasta>/shorts/` + `shorts.json` (crop e taxa de rosto). Taxa de rosto <30% = provável tela compartilhada/plateia: o script avisa e marca `revisar: true`. Tempo: ~1min por Short (a detecção domina). Upload de Shorts ainda é manual.
+## Regras transversais
 
-O step 11 (`uv run py scripts/11_revisor.py <stem> [--bloco=N] [--dry-run] [--sem-editor]`) é o **agente revisor de conteúdo** (`agente="revisor"`, off-pipeline, **API paga**: ~US$ 0,05/bloco, ~US$ 0,25/live com `claude-opus-5-5`). Pra cada bloco com corte, faz **uma** chamada com visão. Manda o título que vai pro YouTube (do `descricoes.txt`, edição manual vale; na falta, `titulo_sugerido`), o `texto_thumb`, a transcrição do trecho (`words.json`), a thumb escolhida (manual > a > b > c) e 6 frames do corte completo. Volta JSON estruturado com 4 checagens: **título fiel à fala** (gancho ousado ok, distorção não), **thumb ok** (rosto visível, texto legível e coerente, sem tela compartilhada), **tela compartilhada** (maior parte do corte mostra tela em vez de gente) e **corte sem sentido** (o trecho não se sustenta sozinho). Quem decide é o **código**, pela regra de produto da quarentena:
-
-- **Conteúdo ruim** (tela compartilhada ou corte sem sentido) → `descartado` com o motivo. Não sobe, não passa pelo editor, não chama o Gu.
-- **Título reprovado** → o **agente editor** (`_editor.py`, `agente="editor"`, ~US$ 0,01/reescrita, só texto) reescreve título + `texto_thumb` a partir do problema apontado e da transcrição. Grava no `descricoes.txt` (só o título daquele bloco) e no `blocos.json` (originais em `titulo_original`/`texto_thumb_original`). Refaz a thumb escolhida (mesma variante, via `07_thumb.py --variante=`) e o Short do bloco, se existir. O revisor reavalia. São **no máximo 2 reescritas**: se o título reprovar nas 2, fica em `quarentena` com "decisão do Gu" (faixa amarela na tarefa do `MISSAO_TAREFA`). **Só aí o Gu é chamado.** Thumb manual não é refeita sozinha (o script avisa).
-- **Só a thumb reprovada** → `quarentena` (trocar o frame é à mão: `07_thumb.py --t=`).
-- Tudo ok → `aprovado`. Recusa do modelo vira quarentena ("revisar à mão").
-
-`--sem-editor` desliga as reescritas. O `09_upload` **não sobe** bloco em `quarentena`, `descartado` ou `arquivado`. Fallback de refusal do servidor ligado (`fallbacks: "default"`). **Nunca** mexe em bloco `agendado`/`publicado`/`arquivado`. Detalhes em `outputs/<pasta>/revisao.json`; custo por bloco no banco (evento `llm`). `--dry-run` mostra a fila e o custo estimado sem chamar a API.
-
-O step 12 (`uv run py scripts/12_metricas.py [--desde=AAAA-MM-DD]`) é o **analista de retenção** (`agente="analista"`, off-pipeline, US$ 0). Compara a **retenção** (% média assistida, a do Studio) dos vídeos **com** legenda karaokê x **sem**, pro resumo semanal. Só leitura, num **projeto do Google Cloud separado** (`missao-em-cortes-analytics`), com client e token **próprios** (`secrets/analytics_client_secret.json` + `secrets/analytics_token.json`, escopos `yt-analytics.readonly` + `youtube.readonly`). **Nunca** ativar a Analytics API no projeto `missao-em-cortes-publisher` (o do upload): a auditoria dele declara só upload. O `_google.credenciais` recusa token feito com o client de outro projeto (compara o `client_id`) e pede login de novo. 1ª vez abre o navegador. Lista os vídeos **públicos** do canal (título, data, duração) e puxa views/duração média/% assistida de cada um. Um vídeo é "com legenda" se o título bate (normalizado) com um `descricoes.txt` cujo bloco tem `finalizados/video_NN_*_legendado.mp4`. Vale pra upload pela API e pelo Studio. Sem match: antes de 21/10/2026 conta como "sem legenda"; depois fica de fora ("sem info", listado pra conferir; título editado no Studio quebra o match). Shorts (≤3 min) e vídeos com <20 views ficam de fora. Retenção do grupo = média **ponderada por views**. Saída no terminal + `state/metricas_retencao.json`.
-
-**Setup do projeto de métricas (uma vez, feito pelo Gu no console):**
-1. [console.cloud.google.com](https://console.cloud.google.com) → seletor de projeto → **Novo projeto** → nome `missao-em-cortes-analytics` (não mexer no `missao-em-cortes-publisher`).
-2. Com o projeto novo selecionado: **APIs e serviços → Biblioteca** → ativar **YouTube Analytics API** e **YouTube Data API v3**.
-3. **Google Auth Platform** (tela de consentimento OAuth) → tipo **Externo** → nome do app `Missão em Cortes Métricas`, e-mail de suporte do Gu → em **Acesso a dados**, adicionar só `.../auth/yt-analytics.readonly` e `.../auth/youtube.readonly` → em **Público-alvo**, **Publicar app** (status **Em produção**). App em teste tem token que expira em 7 dias. Em produção o token não expira, e o app segue sem verificação do Google (uso interno), então o login mostra "app não verificado" → **Avançado → continuar**. A política de privacidade desse app é `https://guscrat.github.io/missao-em-cortes/PRIVACY-ANALYTICS.html`.
-4. **Clientes → Criar cliente** → tipo **App para computador** → nome `metricas-desktop` → **Baixar JSON** → salvar como `secrets/analytics_client_secret.json` na pasta principal (gitignored; nunca commitar, nunca colar no chat). **Antes de salvar, confira o `project_id` do JSON**: tem que ser `missao-em-cortes-analytics`. Client criado com o projeto errado selecionado sai no `missao-em-cortes-publisher`.
-5. Rodar `uv run py scripts/12_metricas.py`: abre o navegador, login com a conta do **canal** (escolher o canal Missão em Cortes se pedir), aceitar os 2 escopos de leitura → grava `secrets/analytics_token.json`. Erro 403 `accessNotConfigured` = faltou o passo 2 (ativar as APIs no projeto analytics; leva alguns minutos pra valer).
-
-> **Os dois apps OAuth ficam "Em produção"** (status em Google Auth Platform → Público-alvo): o `missao-em-cortes-publisher` (upload, 09) e o `missao-em-cortes-analytics` (métricas, 12). Nenhum volta pra "Em teste", senão os tokens passam a expirar em 7 dias.
-
-O step 13 (`uv run py scripts/13_curador.py [--dry-run] [--sem-pipeline] [--forcar]`) é o **agente Curador** (`agente="curador"`, off-pipeline, roda **1x por dia às 17h**). Ele **verifica** os canais de `config/canais.json` (abas streams + videos) todo dia, mas só **processa** quando falta estoque.
-
-1. **Achar vídeos novos:** só os dos últimos `dias` (padrão 3) que nunca foram vistos. "Visto" = id em `inputs/*.url`, no banco ou já avaliado em `state/curadoria.json`. Antes de gastar, aplica um filtro grátis: duração entre `duracao_min` e `duracao_max` (20-240 min) e nada de live em andamento/agendada (volta no dia seguinte).
-2. **Avaliar:** os novos vão numa **única** chamada pro Claude (`claude-opus-5-5`, effort low, ~US$ 0,02-0,05/rodada), que decide `vale`, `prioridade` (1-10) e `motivo` (a frase que aparece no painel). O que vale entra na **fila**. Os recusados nunca são reavaliados.
-3. **Estoque:** dias de estoque = min(longos prontos ÷ `longos_por_dia`, Shorts prontos ÷ `shorts_por_dia`). Longo pronto = bloco `aprovado` (coluna "Pronto para publicar"). Short pronto = Short gerado de bloco aprovado/agendado/publicado e ainda não marcado como postado. Só conta live dos últimos 15 dias (`DIAS_ARQUIVAR`). Os limites ficam em `config/canais.json` → `estoque` (padrão: mínimo 2 dias, 1 longo + 2 Shorts por dia).
-4. **Processar:** só se o estoque estiver **abaixo do mínimo** (ou com `--forcar`). Aí processa **1 vídeo**, o de maior prioridade da fila (empate: o mais recente): `01_baixar` → `pipeline.py --polir` → `11_revisor` → `10_shorts` (só dos aprovados, $0) → `publicacao.txt`. Custa ~US$ 0,65 por vídeo. O resto continua na fila, e item da fila com mais de 15 dias vira `expirado`.
-
-- **Registrar o que foi publicado à mão** (obrigatório enquanto o upload pela API está travado; sem isso o Curador acha que o estoque está cheio):
-  - Longo: `uv run py scripts/registrar_publicacao.py <stem> --bloco=N --video=<URL ou id> [--quando=AAAA-MM-DDTHH:MM]`. Futuro vira `agendado`, passado vira `publicado`, com `youtube_id`/`publish_at`.
-  - Short: `uv run py scripts/registrar_publicacao.py <stem> --bloco=N --short [--quando=AAAA-MM-DD]` (marca `postado` no `shorts.json`; o `10_shorts` preserva a marca se o Short for regerado).
-- **Zoom:** o `zoom` do canal é copiado pro `config/zoom.json` do stem novo (como o `calibrar_zoom --salvar`). Canal com `zoom: null` (Kim) é processado sem zoom, e o resumo avisa pra calibrar e re-cortar com `--desde=4`. Estúdio diferente do padrão do canal também pede conferência.
-- **Falha:** erro num vídeo não derruba a rodada. Se o vídeo nem chegou a baixar, ele volta pra fila e é tentado de novo, no máximo 3 vezes (`falhou`). Se a falha veio depois do download, o vídeo fica `escolhido` e o resumo mostra o erro. Retomar com `pipeline.py <stem> --desde=N`.
-- **Saída:** `state/curador_resumo.md` (estoque no início/fim, prontos pra publicar com o caminho do `publicacao.txt`, falhas, escolhido, fila, recusados com motivo, avisos) e eventos no painel. O resumo semanal de sexta lê o `curador_resumo.md`. O log do agendamento vai pra `state/curador.log`.
-- **Trava:** `state/curador.lock` (criação atômica) impede duas rodadas ao mesmo tempo. Trava com mais de 12h é considerada morta e é liberada.
-- **`publicacao.txt`** (`scripts/_publicacao.py`, dá pra rodar à mão: `uv run py scripts/_publicacao.py <stem>`): só blocos `aprovado` no `revisao.json`, em ordem de score, com arquivo final (prefere `_polido_legendado`), thumb escolhida pelo revisor, Short (se gerado), título/descrição/tags do `descricoes.txt` e dia sugerido às 18h. É 1 por dia, ou 2 por dia com 3+ aprovados. Começa hoje se rodou antes das 16h.
-- **yt-dlp:** precisa da versão com solver JS (`yt-dlp[default]`, Node no PATH). Sem isso o YouTube devolve 403 no download.
-
-**Agendamento (Agendador de Tarefas do Windows):** todo dia às 17:00. Se o PC estiver desligado no horário, roda assim que ligar (`-StartWhenAvailable`). Registrar uma vez, no PowerShell, apontando pra **pasta principal**:
-
-```powershell
-$a = New-ScheduledTaskAction -Execute "cmd.exe" -Argument '/c cd /d "C:\Users\gusta\Downloads\projetos\missao-em-cortes" && "C:\Users\gusta\.local\bin\uv.exe" run py scripts\13_curador.py >> state\curador.log 2>&1'
-$t = New-ScheduledTaskTrigger -Daily -At 17:00
-$s = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 6) -DontStopIfGoingOnBatteries -AllowStartIfOnBatteries
-Register-ScheduledTask -TaskName "MissaoEmCortes-Curador" -Action $a -Trigger $t -Settings $s -Description "Missão em Cortes: agente Curador (13_curador.py)"
-```
-
-Conferir: `Get-ScheduledTask -TaskName "MissaoEmCortes-Curador" | Get-ScheduledTaskInfo`. Rodar agora: `Start-ScheduledTask -TaskName "MissaoEmCortes-Curador"`. Remover: `Unregister-ScheduledTask -TaskName "MissaoEmCortes-Curador" -Confirm:$false`.
-
-O step 7 é opcional e não afeta a montagem — gera 3 variantes de thumb por bloco (`thumb_NN_a/b/c.png`) com frames extraídos a 25/50/75% do cold open. Você escolhe a melhor variante e finaliza no Canva (colar collage de figuras na metade direita). Layout: frame do speaker deslocado pra direita (`FRAME_X=150`), título adaptativo (fonte 96→64 dependendo do comprimento), gradient escuro embaixo pra contraste.
-
-**Texto da thumb:** usa o campo curto `texto_thumb` do `blocos.json` (2-5 palavras de impacto, gerado pelo LLM no step 3); na falta dele (vídeos segmentados antes desse campo), cai pro `tema` (3-6 palavras). **Nunca** usa o `titulo_sugerido` — esse é o título do YouTube (frase longa de até 70 chars), que estourava a thumb e era truncado no meio da frase (gerava incoerência tipo "...ZEMA E É"). Se o texto ainda assim não couber em 4 linhas, o script **avisa** (não corta em silêncio). Override manual: `--titulo="TEXTO CURTO"` (exige `--bloco=N`) força o texto de um bloco — útil pra punchar a thumb de vídeos sem `texto_thumb`.
-
-**Modo manual (`--bloco=N --t=MM:SS`):** quando os frames automáticos caem em **tela compartilhada** (lives onde o speaker mostra matéria/pesquisa, ex: `renan_2turn_x_lula`), as 3 variantes saem ruins. Aí você abre o corte, acha um segundo com o speaker na câmera e gera uma thumb daquele frame: `uv run py scripts/07_thumb.py <stem> --bloco=N --t=MM:SS` (aceita `MM:SS`, `HH:MM:SS` ou segundos puros) → salva `thumb_NN_manual.png`. Puxa do **corte completo** por padrão (mais momentos na câmera que o cold open curto; usa o `corte_NN_*.mp4`, não o `_polido`); `--fonte=cold` puxa do cold open. `--bloco=N` sozinho (sem `--t`) regenera só as variantes a/b/c daquele bloco. É a alternativa ao face_recognition, que segue adiado.
-
-O step 8 gera `descricoes.txt` (na pasta do vídeo) com, pra cada bloco: título sugerido (com contagem de chars), descrição (resumo + ganchos como bullets), créditos do canal, hashtags e lista de tags pronta pra colar no YouTube Studio. **Sem chamada de API** — reaproveita o que o LLM já produziu no `blocos.json`. A URL da fonte ("Conteúdo original") é preenchida automaticamente a partir de `inputs/<stem>.url` (salva pelo `01_baixar.py`); sem o arquivo, deixa o placeholder `[COLAR URL DA LIVE AQUI]` e avisa no log. O link do **nosso** canal (`scripts/_canal.py`) só entra na linha "Inscreva-se" — se o `.url` apontar pro nosso canal, o 08 ignora e o 09 se recusa a subir (crédito da fonte é obrigatório).
-
-O step 9 (`uv run py scripts/09_upload.py <stem> [--dry-run] [--bloco=N] [--max=N] [--teste]`) é **off-pipeline**: sobe os `finalizados/video_NN_*.mp4` (prefere `_polido`) como **privados com `publishAt`** (agendamento público, publica sozinho no horário), usando título/descrição/tags do `descricoes.txt` (edição manual no txt vale) e a thumb escolhida (manual > a > b > c; >2 MB vira JPEG). Os slots saem de `config/upload.json` (padrão 1/dia às 18h, horário de Brasília) e continuam depois do último agendado em **qualquer** vídeo. O registro à prova de falha fica em `outputs/<pasta>/youtube.json`; com isso e com o `youtube_id` do banco, o script é **idempotente**: não re-sobe, e se só a thumb falhou, tenta só a thumb. Bloco com `[COLAR URL DA LIVE AQUI]` **não sobe** (crédito da fonte é obrigatório). Cota: upload ≈1600 + thumb 50 de 10.000/dia (zera à meia-noite do Pacífico), contada em `state/cota_youtube.json`; o script para **antes** de estourar. Custo US$ 0. Grava no banco `youtube_id` + `status=agendado` + `publish_at` e eventos com `agente="publicador"`. Credenciais em `secrets/` (gitignored, repo é público). **Sempre rode `--dry-run` antes.**
-
-> **Trava da auditoria (`"auditoria_aprovada"` no `config/upload.json`, padrão `false`):** vídeo enviado por projeto de API **não auditado** fica **bloqueado como privado** no YouTube: não dá pra publicar nem recorrer, só reenviando (queima o vídeo). Com a flag `false`, o 09 **recusa** qualquer upload real (sai com exit 1 e explica o motivo; o `--dry-run` mostra o plano marcado como TRAVADO). A única exceção é o upload de **teste** (`--bloco=N --teste`, pra screencast/validação): sobe privado, sem data, com `[TESTE]` no título, registrado à parte em `outputs/<pasta>/youtube_teste.json`. Ele **não** conta como upload real (não grava `youtube_id`/status no banco nem ocupa slot), então o bloco continua liberado pro upload de verdade. Quando a auditoria for aprovada, mude a flag pra `true` e o 09 passa a subir privado + `publishAt`.
-
-**Total por live:** ~15-25min de processamento, ~$0.20 de API (estimativa pós-otimização NVENC/concat-copy — validar na próxima live processada).
-
-> **Formato canônico:** todo o pipeline (steps 4, 4b, 5, 6) produz vídeo **1280x720, 30fps, yuv420p, H.264 via NVENC (GPU), áudio AAC 44100 Hz stereo**. Isso é o que permite o `06_montar` concatenar com `-c copy` (instantâneo) em vez de re-encodar o vídeo inteiro. Se algum segmento sair fora do padrão, o montar imprime o formato de cada segmento (pra apontar o destoante), detecta a falha do `-c copy` e cai automaticamente pro fallback de re-encode (`filter_complex`). As constantes `VENC`/`AENC`/`SCALE_PAD` vivem em `scripts/_ffmpeg.py` (compartilhado) — pra trocar pra CPU/libx264, edite só lá.
+- **Custo transparente:** toda chamada de API loga estimativa de custo e registra evento `llm` no banco (skill `painel-eventos`).
+- **Perguntar SEMPRE antes de:** publicar no YouTube pela primeira vez numa feature nova · gastar API paga fora de teste · ação destrutiva (apagar arquivo/branch, force push, reset) · mudar segredo/credencial.
+- **Pasta principal sempre na `develop`**; código novo em worktree/feature branch (skill `release`).
+- Nunca mexer em bloco `agendado`/`publicado`/`arquivado`.
 
 ## Identidade visual
 
-- **Preto onça:** `#0A0A0A`
-- **Amarelo 14:** `#F5C518` (cor oficial do partido)
-- **Branco:** `#FFFFFF`
-- **Fonte principal:** Anton (sans-serif bold condensada)
-- **Marca do canal:** "MISSÃO EM CORTES" amarelo, canto inferior direito
-- **Badge partido:** "MISSÃO 14" amarelo sobre preto, canto superior esquerdo
-- **Tipografia em thumbnails:** Anton bold, sentence/CAPS estratégico, primeira linha amarela, restante branco
+Preto onça `#0A0A0A` · **Amarelo 14** `#F5C518` · Branco `#FFFFFF` · fonte **Anton** · marca "MISSÃO EM CORTES" amarelo no canto inferior direito · badge "MISSÃO 14" no superior esquerdo.
 
-## Estrutura do vídeo final
+## Convenções
 
-```
-[Cold open 15-30s] → [Intro 3s] → [Card de contexto 3s] → [Corte 5-7min] → [Outro 5s]
-```
-
-O cold open é o trecho de maior impacto do bloco, exibido antes da intro pra prender o espectador nos primeiros segundos. Se `cold_NN_*.mp4` não existir na pasta de cortes, o `06_montar.py` monta sem ele e loga um aviso.
-
-Cada parte contribui pro "valor agregado" exigido pelo YouTube Partner Program (que pune `reused content` desde Jul/2025).
-
-## Tratamento de overlays da live original
-
-O `04_cortar.py` remove os overlays via **zoom programático** (`crop` + `scale`), sem blur. O recorte é **por fonte**, lido de `config/zoom.json` pelo stem (`{"<stem>": "crop=w:h:x:y"}` na fonte 1080p, aplicado antes do `scale=1280:720`). Stem **sem entrada** no config roda SEM zoom (só scale+pad) e loga um aviso — é o motivo nº1 de um corte sair com os overlays aparecendo: faltou cadastrar a fonte. O truque do recorte: deslocar a janela 16:9 pra direita encaixa-a **entre** os overlays das duas bordas das lives MBL:
-
-- **valete.plus** (círculo, topo-esquerdo) → sai pela esquerda
-- **contador de membros** (topo-direito) → sai pela direita
-- **QR code / SmartCast** (base-direita) → sai pela direita
-
-A parede neon "Academia MBL" é **cenário do estúdio** (não overlay) e fica. O zoom aplica-se ao corte **e** ao cold open. Fontes com o mesmo estúdio/enquadramento podem **reaproveitar** o mesmo valor (ex: `renan_live2`/`renan_vorcaro`/`renan_2turn_x_lula` = `1476:830:200:100`, zoom ~1.30); fonte com layout diferente precisa calibrar.
-
-**Calibração visual:** `uv run py scripts/calibrar_zoom.py <video> [--zoom=..] [--fx=..] [--fy=..] [--salvar=<stem>]` gera previews antes/depois em `outputs/_calibracao/` pra dialar o recorte numa fonte nova; `--salvar=<stem>` grava direto no `config/zoom.json`. Depois de cadastrar/calibrar, re-corte com `uv run py scripts/pipeline.py <stem> --desde=4` (não re-transcreve nem re-segmenta).
-
-**Alternativa manual:** editar o `corte_NN_*.mp4` no CapCut, salvar de volta na mesma subpasta com o mesmo nome, depois rodar steps 5 e 6.
-
-## Prompt de segmentação (resumo)
-
-Está em `prompts/segmentacao.md`. Objetivo: a LLM recebe a transcrição completa com timestamps e retorna JSON com 2-6 blocos temáticos de 5-7min, com início e fim em pontos naturais (não cortar no meio de frase ou raciocínio), título sugerido (frase longa pro YouTube), **`texto_thumb`** (2-5 palavras de impacto pra miniatura, distinto do título), score de potencial viral, ganchos, tags e **`cold_open`** (trecho de 15-30s de maior impacto dentro do bloco, com timestamps próprios). Modelo: `claude-sonnet-4-6`.
-
-## Estado atual (Maio 2026)
-
-- ✅ Pipeline MVP funcionando ponta-a-ponta
-- ✅ Scripts aceitam argumento de arquivo (multi-live sem editar código)
-- ✅ Identidade visual mínima pronta
-- ✅ 1º vídeo publicado: Arthur do Val sobre Penélope (19/05/2026)
-- ✅ Conta YouTube verificada
-- ✅ Vídeo 01 do Renan (Flávio/STF/rachadinha) — publicado 22/05/2026
-- ✅ Cold open implementado no pipeline (prompt + 04_cortar.py + 06_montar.py)
-- ✅ Vídeo 02 do Renan (plano de governo / Bolsa Família) — publicado 23/05/2026
-- ✅ `04_cortar.py` com remoção de overlays via **zoom programático** (`USE_ZOOM`/`ZOOM_CROP`) — substituiu o blur. Recorte 16:9 deslocado pra direita tira valete.plus (esq) + contador/QR (dir) sem blur. Calibrado com `scripts/calibrar_zoom.py` (02/06/2026)
-- ✅ renan_live2 segmentado — 4 blocos: long house/masculinidade, Ciro Nogueira/Piauí, MBL como Roma (score 9), Datafolha/metodologia
-- ⏳ Vídeos 03-06 do Renan (renan_live2) — corte + montagem + agendamento pendentes
-- ✅ `05_cards.py` simplificado — removidos metadados de evento/data do card de contexto
-- ✅ `07_thumb.py` — geração semi-automática de thumb (3 variantes por bloco com frames do cold open + layout adaptativo + gradient pra texto), metade direita preta pro collage no Canva
-- ✅ `08_descricao.py` — gera txt com título/descrição/tags/hashtags pronto pra YouTube Studio (sem chamada de API, reaproveita campos do `blocos.json`)
-- ✅ `04b_polir.py` — polimento opcional via LLM: re-transcreve word-level, Claude conservador lista intervalos de silêncio/filler/problema técnico, ffmpeg aplica jump cut. `06_montar.py` ganhou flag `--polido`. Custo: ~$0.20/live.
-- ✅ arthur_flavio_trump processado (lFJ1DSOjUw0) — 4 vídeos finalizados (+ versões polidas disponíveis), thumbs e descrições geradas (28/05/2026). Polimento removeu ~2min totais de tempo morto.
-- ✅ **Cortes mais curtos pra retenção (02/06/2026)**: segmentação reduzida de 8-15min pra **5-7min** (e até 6 blocos por live), com ênfase em UM ponto por corte. Card de contexto 5s→3s (`05_cards.py`). Intro encurtada 5s→3s via trim no `06_montar.py` (`INTRO_SEGUNDOS`, gera `assets/intro_trim.mp4`). Hipótese: vídeos curtos e mais focados num tema só seguram melhor a retenção. Validar com métricas.
-- ✅ **Otimização de performance do pipeline (02/06/2026)**: (1) **NVENC** (encoder na GPU) em todos os ffmpeg dos steps 4/4b/5/6 — libera a CPU e acelera; (2) **montagem sem re-encode** — todos os segmentos saem no formato canônico e o `06_montar` concatena com `-c copy` (fallback automático pra re-encode se falhar); (3) **04b não re-transcreve** — reaproveita `words.json` gerado no step 2; (4) `beam_size` da transcrição 5→2. Estimativa: tempo total de ~30-45min pra ~15-25min. Validar na próxima live.
-- ✅ **Outputs reorganizados — pasta por vídeo (03/06/2026)**: de `outputs/<tipo>/<stem>/` + arquivos soltos pra `outputs/<AAAA-MM-DD>_<stem>/` (tudo do vídeo num lugar, ordenado por data). Steps 3-8 recebem só o stem; `scripts/_paths.py` resolve a pasta e **falha alto se ambíguo** (nunca roda no vídeo errado). Migração feita com `scripts/_migrar_outputs.py`. Processou 2 vídeos novos hoje: `arthur_flavio_taxar` (E Detalhe, zoom 1.32) e `renan_vorcaro` (live de reação com overlays pesados — crop do Renan, blocos de tela-compartilhada pra revisar manualmente).
-
-- ✅ **QoL e robustez (12/06/2026)**: `scripts/pipeline.py` (orquestrador dos steps 2-8 com `--polir`/`--desde`); `scripts/01_baixar.py` (download + salva `inputs/<stem>.url`, que o `08_descricao.py` usa pra preencher a URL da fonte sozinho); `04b_polir.py` não duplica mais blocos no `polimento.json` em re-runs; `04_cortar.py` sai com exit 1 e resumo se algum ffmpeg falhar; `02_transcribe.py` valida o input antes de carregar o modelo.
-- ✅ **Melhorias rodada 2 (12/06/2026)**: `04b` detecta silêncios >3s programaticamente (gap entre palavras, sem API — LLM só avalia fillers/problemas técnicos); `03` valida os timestamps do LLM (fim>início, cold_open dentro do bloco, fim≤duração do vídeo; salva `blocos_invalido.json` e sai com erro em vez de gravar lixo) e loga custo em $; `06` só re-normaliza intro/outro se o asset do Canva mudou e, quando o concat `-c copy` falha, imprime o formato de cada segmento pra apontar o destoante; `scripts/_ffmpeg.py` centraliza VENC/AENC/SCALE_PAD; whisper cai pra CPU se CUDA indisponível (02/04b).
-- ✅ **Zoom por fonte + thumb manual (13/06/2026)**: `renan_2turn_x_lula` processado (live 2º turno x Lula, 3 blocos, `Lab_UcxeEDs`) reaproveitando o zoom do `renan_live2` (`1476:830:200:100`) — entrada nova no `config/zoom.json`, re-corte com `pipeline.py --desde=4 --polir`. **`07_thumb.py` ganhou modo manual** (`--bloco=N --t=MM:SS [--fonte=corte|cold]`): pra lives com tela compartilhada onde os frames automáticos (25/50/75% do cold open) caem na tela em vez do speaker, você escolhe o segundo na mão e gera `thumb_NN_manual.png` do corte completo. `--bloco` sozinho regenera só a/b/c daquele bloco.
-- ✅ **Texto da thumb curto e impactante (13/06/2026)**: a thumb usava o `titulo_sugerido` (título de YouTube, frase longa) — estourava o layout e era truncado no meio da frase ("...ZEMA E É", incoerente). Agora: (1) prompt de segmentação gera `texto_thumb` (2-5 palavras de impacto, distinto do título); (2) `07_thumb.py` prefere `texto_thumb` → `tema`, **nunca** o `titulo_sugerido`, e **avisa** em vez de truncar em silêncio; (3) override manual `--titulo="..."` (exige `--bloco`) pra punchar thumbs de vídeos sem `texto_thumb`. Aplicado no `renan_2turn_x_lula` via `--titulo` (esse vídeo foi segmentado antes do campo existir).
-
-## Roadmap pós-MVP
-
-### Curto prazo (próximas semanas)
-- Capítulos com timestamps na descrição
-- Tipografia animada no intro (motion graphics no Canva)
-- ~~Configuração de fonte por canal/speaker (coordenadas de overlay por fonte)~~ — feito pro zoom anti-overlay em `config/zoom.json` (crop por stem). Outras configs por fonte (ex: zoom de speaker) ainda podem migrar pra cá.
-- ~~Narração própria de 20-30s no início~~ — substituído pelo cold open automático
-
-### Médio prazo
-- Diarização na transcrição (separar speakers automaticamente)
-- ~~Legendas burned-in nos momentos de impacto (aumenta retenção)~~ — karaokê no vídeo inteiro via `04c_legendas.py` (Out/2026)
-- ~~Templates de thumbnail dinâmicos via PIL (com frame do vídeo + texto)~~ — implementado em `07_thumb.py` (semi-automático, collage manual no Canva)
-- Detecção automática de rosto no frame da thumb (face_recognition) pra escolher melhor variante sem 3 opções
-- ~~Geração automática de descrição + tags via LLM~~ — `08_descricao.py` faz isso reaproveitando o LLM do step 3 (sem nova chamada). Capítulos com timestamps ainda pendentes (requer mapeamento de subtópicos dentro de cada bloco).
-
-### Longo prazo
-- Automação de upload via YouTube Data API
-- Pipeline em batch (processar várias lives em sequência)
-- Detecção automática de regiões de overlay via Claude com vision (remoção via zoom já existe via `USE_ZOOM`/`ZOOM_CROP`, calibrada à mão com `calibrar_zoom.py`)
-- Métricas: correlacionar score do LLM com views/retenção reais
-
-## Painel e camada de estado (Out/2026)
-
-- **`state/pipeline.db`** (SQLite, WAL): tabelas `videos`, `blocos` e `eventos`. Escrita via `scripts/_eventos.py` (`evento()`, `upsert_video()`, `upsert_bloco()`); toda escrita é **best-effort** — falha de banco vira aviso no stderr, nunca exceção.
-- **Status de bloco**: AUTO (`segmentado` → `cortado` → `montado`, derivados dos arquivos) e DECISÃO (`revisao`, `aprovado`, `quarentena`, `descartado`, `agendado`, `publicado`, `arquivado`, setados por agente com `forcar_status=True`). O `sincronizar_estado.py` **nunca rebaixa** um status de decisão.
-- **Kanban**: `aprovado` cai em **Pronto para publicar** e `agendado` (já no YouTube com `publish_at`) em **Agendado**. A métrica "Agendados" do topo conta só `agendado`.
-- **Arquivado = conteúdo antigo**: o `sincronizar_estado.py` (botão Sincronizar do painel) arquiva sozinho os blocos de live com **mais de 15 dias** (data da pasta `outputs/<AAAA-MM-DD>_<stem>/`) que ainda não foram pro YouTube, com motivo "conteúdo antigo". Agendado, publicado e descartado não são tocados. Arquivado some do kanban e das métricas, o 09 não sobe e o 11 não revisa. Pra resgatar um bloco, mude o status à mão no banco, mas a próxima sincronização arquiva de novo se a live continuar velha.
-- **Eventos**: todo step/agente registra `inicio`/`ok`/`falha` (+ `llm` com tokens e custo). Campo `agente` ∈ `pipeline | curador | editor | revisor | publicador | analista` — é o que alimenta o "custo por agente" do painel.
-- **Regra pra agentes novos**: registrar evento com o próprio nome em `agente` e, se chamar LLM, `tokens_in`/`tokens_out`/`custo_usd`.
-- Rodar: `uv run streamlit run painel/app.py`.
-
-## Git flow
-
-- **`main`**: só o que está rodando "em produção" (o que publica no canal). Recebe merge de `release/*` ou `hotfix/*`, nunca commit direto.
-- **`develop`**: integração. Toda feature nasce daqui e volta pra cá via PR.
-- **`feature/<nome>`**: uma frente por branch (ex: `feature/painel-estado`, `feature/upload-api`, `feature/agente-revisor`).
-- **`fix/<nome>`**: bug em `develop`. **`hotfix/<nome>`**: bug em `main`, sai de `main` e volta pra `main` + `develop`.
-- **Commits**: Conventional Commits em português — `feat(escopo):`, `fix(escopo):`, `chore:`, `docs:`, `refactor:`. Escopos usuais: `pipeline`, `estado`, `painel`, `upload`, `agentes`, `thumb`, `shorts`.
-- **Claude Code**: sempre trabalhar numa branch `feature/*`/`fix/*` a partir de `develop`; nunca commitar em `main`/`develop` direto; commits pequenos e atômicos; abrir PR pra `develop` no fim da frente.
-- **CI** (`.github/workflows/ci.yml`): `uv sync --locked` + `uv run pytest -q` em todo PR e push pra `develop`/`main`. As duas branches são protegidas e exigem CI verde.
-
-## Fluxo de desenvolvimento com agentes
-
-**Papéis:** o Gu é o **PO**: passa tarefas macro, não revisa código nem aprova PR. O Claude Code (agente principal) é o **tech lead**: planeja, implementa e aprova.
-
-**Duas pastas (o painel nunca cai):**
-- `missao-em-cortes/` (principal) fica **sempre na `develop`**. Aqui rodam o painel, o pipeline e os scripts reais, com `inputs/`, `outputs/` e `state/` reais. **Nunca trocar de branch aqui.** Trocar removia `painel/` do disco no meio do uso, e o Streamlit caía.
-- `../missao-em-cortes-dev/` é o **worktree de dev**: toda `feature/*`/`fix/*`/`docs/*` é criada, editada, testada e commitada lá (`git -C ../missao-em-cortes-dev ...`, `uv run --directory ../missao-em-cortes-dev pytest -q`). Ele não tem `inputs/`/`outputs/`/`state/`. Os testes usam fixtures, e execução com dados reais roda na principal depois do merge.
-- O Claude Code é **aberto na pasta principal**, e `tarefa.py` roda **sempre de lá**: é lá que fica o banco que o painel lê, e os hooks (`$CLAUDE_PROJECT_DIR`) gravam nele.
-- Nova frente: `git -C ../missao-em-cortes-dev switch -c feature/x origin/develop` (depois de `git fetch`). Se o worktree não existir, recrie com `git worktree add ../missao-em-cortes-dev -b feature/x develop` + `uv sync` lá dentro (o uv cria hardlinks do cache, então não ocupa disco extra).
-- Depois de cada merge em develop: `git pull --ff-only` na principal (+ `uv sync` se o `pyproject.toml` mudou). O painel recarrega uma vez, já com a versão nova.
-
-1. **Implementar** numa `feature/*` (ou `fix/*`) saindo de `develop`. PRs pequenos e focados.
-2. **Testar:** chamar o subagent `testador` (roda `uv run pytest -q` e escreve testes pro código novo/alterado, sempre com mock).
-3. **Revisar:** chamar o subagent `revisor-codigo` (revisa `git diff develop...HEAD` contra as regras deste arquivo).
-4. **Corrigir** se algum reprovar e chamar de novo, no **máximo 3 rodadas**. Se não resolver, parar e explicar o problema pro Gu em linguagem de produto.
-5. **PR pra `develop`** só com os dois APROVADOS. A descrição tem: o que mudou (3-5 linhas), como foi testado, custo de API estimado da feature e "decisões pendentes para o Gu".
-6. **Merge em `develop` é do tech lead:** com testador APROVADO + revisor APROVADO + CI verde, `gh pr merge --squash --delete-branch` sem perguntar.
-7. **Quebrou depois do merge?** Primeiro `git revert` (numa `fix/*`, via PR), depois investigar.
-8. **Release pra `main`:** mandar pro Gu um resumo de produto (o que muda pro canal, risco, custo) em até 5 linhas, sem detalhe técnico, e **esperar o "ok"**.
-
-**Tarefas no painel:** toda tarefa macro do Gu vira uma linha em `tarefas` via `scripts/tarefa.py`; mova a etapa a cada transição (implementar → testador → revisor → merge):
-
-```
-uv run py scripts/tarefa.py nova "Upload via API do YouTube" --branch feature/upload-api   # → #N, backlog
-uv run py scripts/tarefa.py mover N fazendo --responsavel tech-lead
-uv run py scripts/tarefa.py mover N testando --responsavel testador
-uv run py scripts/tarefa.py resultado N APROVADO|REPROVADO --msg "..."                  # REPROVADO soma rodada
-uv run py scripts/tarefa.py mover N revisando --responsavel revisor-codigo
-uv run py scripts/tarefa.py mover N pronto                                             # depois do merge
-```
-
-Pergunta pro Gu = `tarefa.py decisao N "pergunta?"` (faixa amarela no painel), **além** de perguntar no chat; quando ele responder, `tarefa.py decisao N --resolvida`. A atividade dos subagents e o fim de cada turno do tech-lead entram sozinhos via hooks (`.claude/settings.json` → `scripts/hook_agente.py`, penduram na tarefa ativa). Gasto de API paga dentro de uma tarefa: rode o script com `MISSAO_TAREFA=N` pra o custo cair nela.
-
-**Perguntar SEMPRE antes de:** publicar no YouTube pela primeira vez numa feature nova · gastar API paga fora de teste · ação destrutiva (apagar arquivo/branch, force push, reset) · mudar segredo/credencial.
-
-**Status:** toda sexta (ou quando o Gu pedir "status"), um resumo em linguagem de produto: o que foi entregue, o que quebrou e foi corrigido, custo de API da semana e próximas entregas.
-
-## Convenções pra colaboração com Claude Code
-
-- **Idioma:** português brasileiro casual
-- **Filosofia:** MVP sempre — cortar over-engineering, validar antes de polir
-- **Decisões técnicas:** preferir simples a sofisticado; ffmpeg + Python puro batem qualquer SaaS sofisticado pra esse caso
-- **Tom:** direto, sem enrolar, com humor leve quando couber
-- **Sobre custos:** transparência sempre — toda chamada de API deve ter estimativa de custo no log
-
-## Dependências externas
-
-- **Conta Anthropic API** (`.env` com `ANTHROPIC_API_KEY`) — créditos pré-pagos
-- **Conta YouTube verificada** — necessário pra upload >15min
-- **Canva (free ou Pro)** — pra intro/outro/thumbnail
-- **GTX 1650 ou superior** — pra rodar faster-whisper em GPU (cai pra CPU se sem GPU, mas é 4-5x mais lento)
-- **ffmpeg + cuDNN/cuBLAS no PATH** — pro pipeline rodar (no Windows, requer `nvidia-cublas-cu12` e `nvidia-cudnn-cu12` instalados via uv)
-- **NVENC (encoder H.264 na GPU)** — os steps 4/4b/5/6 encodam via `h264_nvenc`. A GTX 1650 (Turing) suporta. Se rodar numa máquina sem NVENC, troque `VENC` em `scripts/_ffmpeg.py` pra `["-c:v","libx264","-preset","fast","-crf","20","-pix_fmt","yuv420p"]`
-
-## Custos operacionais previstos
-
-| Item | Custo mensal |
-|---|---|
-| Anthropic API (~20 lives/mês, com polimento) | ~$8-9 |
-| Canva Pro (opcional) | $13 |
-| YouTube/domínio | grátis (por enquanto) |
-| **Total mínimo** | **~$5/mês** |
-
-## Notas técnicas (Windows)
-
-- Todos os scripts têm `sys.stdout.reconfigure(encoding='utf-8')` no topo — necessário pra emojis e caracteres especiais não quebrarem no terminal Windows (cp1252)
-- Permissões do Claude Code ficam em `.claude/settings.local.json` (não commitado)
-- Formato de download recomendado: `-f "299+140"` (1080p60 mp4 + m4a 129k)
-
-## Notas finais
-
-Este projeto é fruto de uma sessão de desenvolvimento intensa em Maio/2026 onde o pipeline saiu do zero ao MVP funcional em menos de um dia. A filosofia foi sempre cortar escopo, validar rápido e iterar depois — vide as várias coisas marcadas como "pós-MVP" acima. **Não otimizar antes da hora.**
+- Português brasileiro casual; direto, sem enrolar, humor leve quando couber.
+- **MVP sempre:** cortar over-engineering, validar antes de polir, preferir simples (ffmpeg + Python puro). Não otimizar antes da hora.
+- Windows: todo script tem `sys.stdout.reconfigure(encoding='utf-8')` no topo (emojis no cp1252). Permissões locais em `.claude/settings.local.json` (não commitado).

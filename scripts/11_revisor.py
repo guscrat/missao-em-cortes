@@ -9,8 +9,10 @@ Pra cada bloco montado, UMA chamada ao Claude (com visão) recebe:
   - a transcrição do trecho (words.json)
   - a thumb escolhida (manual > a > b > c) e 6 frames espalhados pelo corte
 e responde 4 checagens em JSON estruturado:
-  1. título fiel à fala (gancho pode ser ousado, mas não pode distorcer o que foi dito)
-  2. thumb ok (rosto do speaker visível, texto legível e coerente, não é tela compartilhada)
+  1. título fiel à fala (gancho pode ser ousado, mas não pode distorcer o que foi dito) e
+     sem destacar palavrão ou termo que soe como ofensa a um grupo, mesmo que dito
+  2. thumb ok (a thumb FINAL: rosto inteiro, visível e iluminado, sem sombra/degradê em
+     cima, texto legível e coerente, não é tela compartilhada)
   3. tela compartilhada (a maior parte do corte mostra tela em vez de gente falando)
   4. corte sem sentido (o trecho não se sustenta sozinho)
 
@@ -19,13 +21,17 @@ Quem decide é o código, não o modelo (regra de produto da quarentena):
   - título reprovado → o EDITOR (_editor.py) reescreve título + texto da thumb, refaz a
     thumb/Short e o revisor reavalia; no máx. 2 reescritas. Reprovou nas 2 → "quarentena"
     e vira decisão do Gu (faixa amarela na tarefa do MISSAO_TAREFA, se houver)
-  - só a thumb reprovada → "quarentena" (trocar o frame é à mão: 07_thumb.py --t=)
+  - só a thumb reprovada → troca o frame sozinho: 07_thumb.py --proximo (próximo frame com
+    rosto da fila, por nota de tamanho/luz/nitidez) e reavalia só a thumb, até
+    MAX_TROCAS_THUMB vezes. Nenhum serviu → "descartado". Thumb manual reprovada →
+    "quarentena" (foi escolhida à mão: refazer com 07_thumb.py --t=)
   - tudo ok → "aprovado"
 Nunca mexe em bloco já "agendado", "publicado" ou "arquivado". --sem-editor desliga as reescritas.
 Resultado completo em outputs/<pasta>/revisao.json.
 
 Custo: ~US$ 0.05 por bloco (claude-opus-5-5, ~7 imagens pequenas + transcrição),
-~US$ 0.25 por live; cada rodada do editor soma ~US$ 0.06 (reescrita + nova revisão).
+~US$ 0.25 por live; cada rodada do editor soma ~US$ 0.06 (reescrita + nova revisão) e cada
+troca de frame da thumb ~US$ 0.01 (reavalia só a thumb).
 Logado por bloco no banco (agente="revisor" e agente="editor").
 """
 import base64
@@ -37,7 +43,9 @@ sys.stdout.reconfigure(encoding='utf-8')
 import time
 from pathlib import Path
 
+import _colagem
 import _editor
+import _grafias
 from _descricoes import ler_descricoes
 from _eventos import atualizar_tarefa, evento, ler_bloco, upsert_bloco
 from _legenda import hhmmss_para_segundos, palavras_na_janela
@@ -45,10 +53,12 @@ from _paths import achar_pasta, escolher_thumb, stem_de
 
 MODELO = "claude-opus-5-5"
 PRECO_IN, PRECO_OUT = 4.0, 20.0        # US$ por 1M tokens (opus 5.5)
-CUSTO_ESTIMADO_BLOCO = 0.05            # só pro --dry-run
+CUSTO_ESTIMADO_BLOCO = 0.05            # só pro --dry-run (+ até ~US$ 0.03 se trocar a thumb)
 N_FRAMES = 6
 LARGURA_IMG = 512                      # imagem pequena = menos token; dá pra ler a tela
 NAO_MEXER = {"agendado", "publicado", "arquivado"}  # decisão já tomada: revisor não mexe
+MAX_TROCAS_THUMB = 3                   # frames novos tentados antes de descartar o bloco
+SCRIPTS = Path(__file__).parent
 
 SCHEMA = {
     "type": "object",
@@ -67,6 +77,22 @@ SCHEMA = {
     "additionalProperties": False,
 }
 
+SCHEMA_THUMB = {
+    "type": "object",
+    "properties": {"thumb_ok": {"type": "boolean"}, "thumb_problema": {"type": "string"}},
+    "required": ["thumb_ok", "thumb_problema"],
+    "additionalProperties": False,
+}
+
+CRITERIO_THUMB = """a thumb (primeira imagem) é a arte FINAL que vai pro YouTube. Ela mostra \
+o rosto de quem fala INTEIRO (sem cortar testa, queixo ou metade do rosto), visível e bem \
+iluminado, sem sombra, degradê ou escurecimento em cima dele? O texto está legível, sem corte \
+no meio de palavra, e coerente com o título? Reprove se o fundo é tela compartilhada ou \
+documento, se não há rosto, se o rosto está escuro, cortado ou coberto, ou se o texto está \
+truncado ou sem sentido. EXCEÇÃO, thumb colagem (apresentador recortado com contorno branco na \
+frente + 2 cenas do assunto ao fundo, círculo ou seta vermelha): as cenas ao fundo podem ser \
+tela, vídeo ou foto; o que vale é o rosto do APRESENTADOR inteiro e o texto legível."""
+
 SISTEMA = """Você é o revisor de conteúdo do canal "Missão em Cortes", que publica cortes de \
 lives e entrevistas do Partido Missão. Linha editorial: simpática ao partido, com independência \
 crítica. Títulos podem ser ousados e com gancho, desde que NÃO distorçam o que foi dito.
@@ -77,10 +103,14 @@ uma frase curta e concreta (vazio "" quando não há problema).
 1. titulo_fiel: o título e o texto da thumb são sustentados pela transcrição? Reprove se \
 atribuem ao speaker algo que ele não disse, invertem o sentido, exageram um fato a ponto de \
 ficar falso, ou prometem um assunto que o trecho não entrega. Gancho forte, paráfrase e \
-simplificação são OK.
-2. thumb_ok: a thumb (primeira imagem) mostra uma pessoa com o rosto visível, tem texto \
-legível, sem corte no meio de palavra, e coerente com o título? Reprove se o fundo é tela \
-compartilhada/documento, se não há rosto, ou se o texto está truncado ou sem sentido.
+simplificação são OK. Números, datas, fatos e nomes têm que bater EXATAMENTE com a \
+transcrição (ex.: "3 INQUÉRITOS" quando a fala diz 2 reprova). Nome de pessoa fora da \
+grafia oficial (lista no pedido) também reprova. Se vierem várias variantes de texto da \
+thumb separadas por " | " (teste A/B da thumb colagem), TODAS precisam passar: aponte qual \
+falhou. Reprove TAMBÉM se o título ou o texto da thumb destacam palavrão ou \
+termo que possa soar como ofensa a um grupo (raça, etnia, gênero, orientação sexual, \
+religião, origem, deficiência etc.), MESMO que esteja na fala: diga isso em titulo_problema.
+2. thumb_ok: """ + CRITERIO_THUMB + """
 3. tela_compartilhada: nos frames do corte (imagens seguintes), a MAIOR parte mostra tela \
 compartilhada (navegador, matéria, gráfico, documento) em vez de pessoas falando? Isso é \
 true. Algum frame de tela no meio é normal: aí é false.
@@ -133,19 +163,31 @@ def montar_conteudo(titulo: str, texto_thumb: str, transcricao: str,
     sem_thumb = "" if thumb_b64 else "SEM THUMB ESCOLHIDA: marque thumb_ok=false.\n"
     conteudo.append({"type": "text", "text": (
         f"TÍTULO DO YOUTUBE: {titulo}\nTEXTO DA THUMB: {texto_thumb}\n{sem_thumb}"
+        f"\nGRAFIAS OFICIAIS:\n{_grafias.para_prompt()}\n"
         f"\nTRANSCRIÇÃO DO TRECHO:\n{transcricao}")})
     return conteudo
 
 
-def chamar_claude(client, conteudo: list[dict]) -> tuple[dict | None, object]:
+def texto_da_thumb(pasta: Path, bid: int, texto_thumb: str) -> str:
+    """O texto que está NA thumb que sobe: com a colagem aplicada (modo padrão), os textos das
+    variantes a/b/c (vão todas pro "Testar e comparar"), separados por ' | '."""
+    reg = _colagem.colagem_aplicada(pasta / "thumbs", bid)
+    if not reg:
+        return texto_thumb
+    textos = [_colagem.sem_marcas(" ".join(v["texto"])) for v in reg.get("variantes", {}).values()]
+    return " | ".join(dict.fromkeys(textos)) or texto_thumb
+
+
+def chamar_claude(client, conteudo: list[dict], sistema: str = SISTEMA, schema: dict = SCHEMA,
+                  effort: str = "medium") -> tuple[dict | None, object]:
     """(checagens ou None se recusou, resposta). Fallback de refusal ligado (servidor)."""
     resp = client.beta.messages.create(
         model=MODELO,
         max_tokens=16000,
-        system=SISTEMA,
+        system=sistema,
         messages=[{"role": "user", "content": conteudo}],
-        output_config={"effort": "medium",
-                       "format": {"type": "json_schema", "schema": SCHEMA}},
+        output_config={"effort": effort,
+                       "format": {"type": "json_schema", "schema": schema}},
         betas=["server-side-fallback-2026-07-01"],
         extra_body={"fallbacks": "default"},
     )
@@ -245,6 +287,76 @@ def editar(client, anthropic, stem, pasta, b, titulo, texto_thumb, problema, tra
     return novo, usd
 
 
+SISTEMA_THUMB = f"""Você é o revisor de thumbs do canal "Missão em Cortes". Avalie só a thumb \
+e responda o JSON pedido (thumb_problema: uma frase curta em português, "" se ok).
+thumb_ok: {CRITERIO_THUMB}"""
+
+
+def checar_thumb(client, thumb: Path, titulo: str, texto_thumb: str) -> tuple[dict | None, object]:
+    """Reavalia só a thumb (1 imagem, sem frames nem transcrição): ~US$ 0.01."""
+    conteudo = [{"type": "text", "text": "THUMB:"},
+                {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
+                                             "data": ler_imagem_b64(thumb)}},
+                {"type": "text", "text": f"TÍTULO DO YOUTUBE: {titulo}\nTEXTO DA THUMB: {texto_thumb}"}]
+    return chamar_claude(client, conteudo, SISTEMA_THUMB, SCHEMA_THUMB, effort="low")
+
+
+def proximo_frame(pasta: Path, bid: int) -> bool | None:
+    """07_thumb --proximo: troca o frame da thumb_NN_a pelo seguinte da fila.
+    True = trocou; False = acabou a fila (o 07 sai com 2); None = o 07 quebrou."""
+    try:
+        r = subprocess.run([sys.executable, str(SCRIPTS / "07_thumb.py"), pasta.name,
+                            f"--bloco={bid}", "--proximo"], capture_output=True, timeout=300)
+    except subprocess.TimeoutExpired:
+        print(f"  [!] {bid:02d}: 07_thumb --proximo passou de 5 min")
+        return None
+    if r.returncode not in (0, 2):
+        erro = (r.stderr or b"").decode("utf-8", "replace").strip().splitlines()[-1:]
+        print(f"  [!] {bid:02d}: 07_thumb --proximo falhou: {' '.join(erro)[:200]}")
+        return None
+    return r.returncode == 0
+
+
+def trocar_thumb(client, anthropic, stem, pasta, bid, nn, titulo, texto_thumb,
+                 problema) -> tuple[str, str | None, list[str], float]:
+    """Thumb reprovada (e o resto ok): tenta os próximos frames com rosto até
+    MAX_TROCAS_THUMB. (status, motivo, problemas de cada troca, custo)."""
+    thumb = escolher_thumb(pasta / "thumbs", nn)
+    if thumb and thumb.stem.endswith("_manual"):
+        return ("quarentena", f"thumb manual reprovada: {problema} — refaça com "
+                f"07_thumb.py --bloco={bid} --t=MM:SS", [], 0.0)
+    problemas, usd_total = [problema], 0.0
+    for _ in range(MAX_TROCAS_THUMB):
+        trocou = proximo_frame(pasta, bid)
+        if trocou is None:
+            return ("quarentena", "thumb: falhou ao gerar frame novo (07_thumb) — revisar à mão",
+                    problemas, usd_total)
+        if not trocou:
+            break
+        t0 = time.time()
+        try:
+            r, resp = checar_thumb(client, escolher_thumb(pasta / "thumbs", nn), titulo, texto_thumb)
+        except (anthropic.APIError, json.JSONDecodeError) as e:
+            evento(stem, "11_revisor", "falha", agente="revisor", bloco_id=bid,
+                   mensagem=f"thumb: {type(e).__name__}")
+            return ("quarentena", f"thumb: falhou ao reavaliar o frame novo ({type(e).__name__})"
+                    " — revisar à mão", problemas, usd_total)
+        tin, tout, usd = custo(resp)
+        usd_total += usd
+        evento(stem, "11_revisor", "llm", agente="revisor", bloco_id=bid, tokens_in=tin,
+               tokens_out=tout, custo_usd=usd, mensagem=f"{resp.model} (thumb)",
+               duracao_s=time.time() - t0)
+        if r is None:
+            return "quarentena", "thumb: revisor recusou analisar — revisar à mão", problemas, usd_total
+        print(f"  {nn}: frame novo da thumb → {'ok' if r['thumb_ok'] else r['thumb_problema']}"
+              f" (US$ {usd:.3f})")
+        if r["thumb_ok"]:
+            return "aprovado", None, problemas, usd_total
+        problemas.append(r["thumb_problema"])
+    return ("descartado", f"thumb: nenhum frame com rosto serviu ({len(problemas) - 1} troca(s); "
+            f"último problema: {problemas[-1]})", problemas, usd_total)
+
+
 def chamar_gu(stem: str, nn: str, motivo: str) -> None:
     """Título reprovou em todas as reescritas: decisão do Gu (chat + faixa amarela)."""
     print(f"\n  >>> DECISÃO DO GU ({stem} bloco {nn}): {motivo}\n")
@@ -310,7 +422,8 @@ def main(argv: list[str]) -> int:
     for b, nn, video in fila:
         bid = b["id"]
         titulo = descricoes.get(bid, {}).get("titulo") or b.get("titulo_sugerido", "")
-        texto_thumb = b.get("texto_thumb") or b.get("tema", "")
+        texto_base = b.get("texto_thumb") or b.get("tema", "")    # o do template (07)
+        texto_thumb = texto_da_thumb(pasta, bid, texto_base)
         ini = hhmmss_para_segundos(b["timestamp_inicio"])
         fim = hhmmss_para_segundos(b["timestamp_fim"])
         transcricao = " ".join(w["word"] for w in palavras_na_janela(todas, ini, fim))
@@ -340,16 +453,44 @@ def main(argv: list[str]) -> int:
                 break
             tentativas.append({"titulo": titulo, "texto_thumb": texto_thumb,
                                "problema": checagens["titulo_problema"]})
-            titulo, texto_thumb = novo["titulo"], novo["texto_thumb"]
+            # colagem refeita com o texto novo (ou voltou pro template): confere o que ficou
+            titulo, texto_base = novo["titulo"], novo["texto_thumb"]
+            texto_thumb = texto_da_thumb(pasta, bid, texto_base)
         if r is None:
             continue
+        if status == "quarentena" and checagens and checagens["titulo_fiel"] \
+                and not checagens["thumb_ok"] and _colagem.colagem_aplicada(pasta / "thumbs", bid):
+            # colagem reprovada na arte: as 3 variantes voltam pro template (o --proximo só
+            # trocaria a 'a') e o bloco é revisado de novo, com o texto do template
+            print(f"  {nn}: colagem reprovada ({checagens['thumb_problema']}) → template atual")
+            if _editor.voltar_template(pasta, bid):
+                texto_thumb = texto_base
+                r2 = revisar_bloco(client, anthropic, stem, pasta, b, nn, video, titulo,
+                                   texto_thumb, transcricao)
+                if r2 is not None:
+                    checagens, status, motivo, usd = r2
+                    total += usd
+                    custo_bloco += usd
+            else:
+                motivo += " (falhou ao voltar pro template — revisar à mão)"
+        trocas_thumb = []
+        if status == "quarentena" and checagens and checagens["titulo_fiel"] \
+                and not checagens["thumb_ok"]:
+            status, motivo, trocas_thumb, usd_t = trocar_thumb(
+                client, anthropic, stem, pasta, bid, nn, titulo, texto_thumb,
+                checagens["thumb_problema"])
+            total += usd_t
+            custo_bloco += usd_t
+            if status == "aprovado":
+                checagens = {**checagens, "thumb_ok": True, "thumb_problema": ""}
 
         upsert_bloco(stem, bid, status=status, forcar_status=True, motivo=motivo)
         thumb = escolher_thumb(pasta / "thumbs", nn)
         revisao[nn] = {"status": status, "motivo": motivo, "checagens": checagens,
                        "titulo": titulo, "texto_thumb": texto_thumb,
                        "thumb": thumb.name if thumb else None,
-                       "reescritas": tentativas, "modelo": MODELO,
+                       "reescritas": tentativas, "trocas_thumb": trocas_thumb[1:],
+                       "modelo": MODELO,
                        "custo_usd": round(custo_bloco, 4)}
         revisao_path.write_text(json.dumps(revisao, ensure_ascii=False, indent=2),
                                 encoding="utf-8")

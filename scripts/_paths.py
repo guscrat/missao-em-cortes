@@ -6,6 +6,7 @@ O prefixo ISO faz a ordenação alfabética coincidir com a cronológica.
 Regra de segurança: como os outputs viram input dos passos seguintes, NUNCA
 adivinhamos qual pasta usar. O resolvedor falha alto se um stem for ambíguo.
 """
+import json
 import re
 import sys
 from datetime import date
@@ -13,7 +14,18 @@ from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
 OUTPUTS = ROOT / "outputs"
+UPLOAD_JSON = ROOT / "config" / "upload.json"
 _DATE_PREFIX = re.compile(r"^\d{4}-\d{2}-\d{2}_")
+
+
+def auditoria_aprovada() -> bool:
+    """Flag "auditoria_aprovada" do config/upload.json. Enquanto for false, os Shorts não
+    sobem (nem pela API, nem à mão): estoque do Curador e publicacao.txt contam só longos.
+    Arquivo ausente/ilegível ou valor que não seja true = travado."""
+    try:
+        return json.loads(UPLOAD_JSON.read_text(encoding="utf-8")).get("auditoria_aprovada") is True
+    except (OSError, ValueError, AttributeError):
+        return False
 
 
 def stem_de(pasta: Path) -> str:

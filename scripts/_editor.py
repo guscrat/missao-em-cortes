@@ -17,7 +17,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-from _descricoes import trocar_titulo
+import _grafias
+from _descricoes import trocar_creditos, trocar_titulo
 
 MODELO = "claude-opus-5-5"
 PRECO_IN, PRECO_OUT = 4.0, 20.0        # US$ por 1M tokens (opus 5.5)
@@ -25,6 +26,8 @@ CUSTO_ESTIMADO = 0.01                  # só pro --dry-run
 MAX_RODADAS = 2
 MAX_TITULO = 70
 SCRIPTS = Path(__file__).parent
+GRAFIAS_PEDIDO = ("GRAFIAS OFICIAIS (nome de pessoa sempre assim, mesmo que a transcrição ou as "
+                  "tags escrevam diferente):")
 
 SCHEMA = {
     "type": "object",
@@ -38,15 +41,20 @@ SCHEMA = {
 }
 
 SISTEMA = f"""Você é o editor do canal "Missão em Cortes", que publica cortes de lives e \
-entrevistas do Partido Missão. O revisor reprovou o título deste corte por não ser fiel à \
-fala. Reescreva o título do YouTube e o texto da thumb.
+entrevistas do Partido Missão. O revisor reprovou o título deste corte (infiel à fala, ou \
+destacando palavrão/termo ofensivo). Reescreva o título do YouTube e o texto da thumb.
 
 Regras:
 - Só afirme o que a transcrição sustenta. Nada de atribuir ao speaker frase, alvo ou \
 promessa que ele não disse. Corrija exatamente o problema apontado pelo revisor.
 - Continue com gancho: título ousado e curioso é bem-vindo, desde que fiel.
+- Título e texto da thumb NUNCA destacam palavrão nem termo que possa soar como ofensa a um \
+grupo (raça, etnia, gênero, orientação sexual, religião, origem, deficiência etc.), MESMO que \
+esteja na fala. Descreva o tom ("desabafo sem filtro", "detona") em vez de citar o termo.
 - titulo: no máximo {MAX_TITULO} caracteres, no formato do canal ("Nome: 'gancho'" funciona bem).
 - texto_thumb: 2 a 5 palavras de impacto, no máximo 28 caracteres, diferente do título.
+- Números, datas, fatos e nomes batem EXATAMENTE com a transcrição; nome de pessoa sempre na \
+grafia oficial da lista do pedido.
 - Não repita tentativas que o revisor já reprovou.
 - mudanca: uma frase curta em português dizendo o que você corrigiu."""
 
@@ -58,7 +66,7 @@ def montar_pedido(titulo: str, texto_thumb: str, problema: str, transcricao: str
     for i, t in enumerate(tentativas, 1):
         linhas.append(f"TENTATIVA {i} (também reprovada): {t['titulo']} | thumb: "
                       f"{t['texto_thumb']} | motivo: {t['problema']}")
-    linhas += ["", "TRANSCRIÇÃO DO TRECHO:", transcricao]
+    linhas += ["", GRAFIAS_PEDIDO, _grafias.para_prompt(), "", "TRANSCRIÇÃO DO TRECHO:", transcricao]
     return "\n".join(linhas)
 
 
@@ -80,9 +88,92 @@ def reescrever(client, pedido: str) -> tuple[dict | None, object]:
     if texto is None:
         raise json.JSONDecodeError(f"resposta sem texto (stop_reason={resp.stop_reason})", "", 0)
     novo = json.loads(texto)
-    novo["titulo"] = novo["titulo"].strip()[:100]          # limite duro do YouTube
-    novo["texto_thumb"] = novo["texto_thumb"].strip()
+    novo["titulo"] = _grafias.corrigir(novo["titulo"].strip())[:100]   # limite duro do YouTube
+    novo["texto_thumb"] = _grafias.corrigir(novo["texto_thumb"].strip())
     return novo, resp
+
+
+MAX_LINHA_COLAGEM = 16
+
+SCHEMA_COLAGEM = {
+    "type": "object",
+    "properties": {
+        "opcoes": {"type": "array", "items": {
+            "type": "object",
+            "properties": {"linha1": {"type": "string"}, "linha2": {"type": "string"}},
+            "required": ["linha1", "linha2"], "additionalProperties": False}},
+    },
+    "required": ["opcoes"],
+    "additionalProperties": False,
+}
+
+SISTEMA_COLAGEM = f"""Você é o editor do canal "Missão em Cortes", que publica cortes de lives \
+e entrevistas do Partido Missão. Escreva 3 opções DIFERENTES de texto para a thumbnail estilo \
+canal de react: 2 linhas curtas e grandes, em MAIÚSCULAS.
+
+Regras:
+- De preferência em forma de pergunta (gera curiosidade), mas só se a transcrição sustentar. \
+Só afirme o que a fala sustenta: nada de atribuir ao speaker frase, alvo ou promessa que ele \
+não disse. Números, datas, fatos e nomes têm que bater EXATAMENTE com a transcrição (o \
+revisor reprova "3 INQUÉRITOS" se a fala diz 2).
+- Nome de pessoa sempre na grafia oficial da lista do pedido.
+- Cada linha com no máximo {MAX_LINHA_COLAGEM} caracteres (contando espaços e pontuação).
+- Marque com *asteriscos* 1 ou 2 palavras de impacto (vão em amarelo). Se citar o nome da \
+pessoa comentada, marque com [colchetes] (vai em vermelho), ex.: "[LULA] VAI *CAIR*?". \
+No máximo um nome por opção.
+- O nome em [colchetes] fica ao lado da CENA DESTACADA (a que leva círculo/seta vermelha). \
+Só use [nome] se a descrição dessa cena diz que é essa pessoa; se não diz quem é, escreva \
+sem nome em vermelho. Nunca ponha o nome de uma pessoa ao lado da foto de outra.
+- NUNCA destaque palavrão nem termo que possa soar como ofensa a um grupo (raça, etnia, \
+gênero, orientação sexual, religião, origem, deficiência etc.), MESMO que esteja na fala.
+- Diferente do título do YouTube (não repita a frase)."""
+
+
+def montar_pedido_colagem(titulo: str, texto_thumb: str, destacada: str, outra: str,
+                          transcricao: str) -> str:
+    linhas = [f"TÍTULO DO YOUTUBE: {titulo}", f"TEXTO DA THUMB ATUAL: {texto_thumb}",
+              f"CENA DESTACADA (círculo/seta): {destacada or 'sem descrição (não use nome)'}",
+              f"OUTRA CENA: {outra or 'sem descrição'}",
+              "", GRAFIAS_PEDIDO, _grafias.para_prompt(),
+              "", "TRANSCRIÇÃO DO TRECHO:", transcricao]
+    return "\n".join(linhas)
+
+
+def opcao_valida(linhas: list[str]) -> bool:
+    """2 linhas, cada uma cabendo em MAX_LINHA_COLAGEM sem as marcas, 1-2 amarelas, até 1 nome."""
+    import _colagem as col
+    if len(linhas) != 2 or not all(l.strip() for l in linhas):
+        return False
+    junto = " ".join(linhas)
+    amarelas = sum(1 for _, c in (p for l in linhas for p in col.pedacos(l)) if c == col.AMARELO)
+    nomes = junto.count("[")
+    return (all(len(col.sem_marcas(l)) <= MAX_LINHA_COLAGEM + 2 for l in linhas)
+            and 1 <= amarelas <= 2 and nomes <= 1 and junto.count("*") % 2 == 0)
+
+
+def texto_colagem(client, pedido: str) -> tuple[list[list[str]] | None, object]:
+    """([[linha1, linha2], ...] só as opções válidas, ou None se recusou, resposta)."""
+    resp = client.beta.messages.create(
+        model=MODELO,
+        max_tokens=8000,
+        system=SISTEMA_COLAGEM,
+        messages=[{"role": "user", "content": pedido}],
+        output_config={"effort": "medium",
+                       "format": {"type": "json_schema", "schema": SCHEMA_COLAGEM}},
+        betas=["server-side-fallback-2026-07-01"],
+        extra_body={"fallbacks": "default"},
+    )
+    if resp.stop_reason == "refusal":
+        return None, resp
+    # Resposta paga mas ilegível volta [] (não exceção) pra o custo ainda ser logado
+    texto = next((b.text for b in resp.content if b.type == "text"), None)
+    try:
+        opcoes = [[_grafias.corrigir(o["linha1"].strip().upper()),
+                   _grafias.corrigir(o["linha2"].strip().upper())]
+                  for o in json.loads(texto)["opcoes"]]
+    except (TypeError, ValueError, KeyError, AttributeError):
+        return [], resp
+    return [o for o in opcoes if opcao_valida(o)][:3], resp
 
 
 def custo(resp) -> tuple[int, int, float]:
@@ -106,6 +197,24 @@ def gravar_texto(pasta: Path, bid: int, titulo: str, texto_thumb: str) -> None:
                         encoding="utf-8")
 
 
+def _colagem_aplicada(thumb: Path) -> dict | None:
+    import _colagem
+    return _colagem.variante_aplicada(thumb)
+
+
+def voltar_template(pasta: Path, bid: int) -> bool:
+    """Tira a colagem do bloco: refaz a/b/c no template atual (07) e tira da descrição o crédito
+    da foto do banco (a foto saiu da thumb). True se o 07 rodou."""
+    r = subprocess.run([sys.executable, str(SCRIPTS / "07_thumb.py"), pasta.name, f"--bloco={bid}"],
+                       capture_output=True)
+    if r.returncode:
+        return False
+    desc = pasta / "descricoes.txt"
+    if desc.exists():
+        desc.write_text(trocar_creditos(desc.read_text(encoding="utf-8"), bid, []), encoding="utf-8")
+    return True
+
+
 def refazer_artes(pasta: Path, bid: int, thumb: Path | None) -> list[str]:
     """Refaz a thumb escolhida e o Short com o texto novo. Devolve avisos (não derruba)."""
     nn, avisos = f"{bid:02d}", []
@@ -113,6 +222,16 @@ def refazer_artes(pasta: Path, bid: int, thumb: Path | None) -> list[str]:
     if thumb and thumb.stem.endswith("_manual"):
         avisos.append("thumb manual tem o texto antigo — refaça com 07_thumb.py --bloco="
                       f"{bid} --t=MM:SS")
+    elif thumb and _colagem_aplicada(thumb):
+        # thumb colagem (modo padrão): refaz a colagem com o texto_thumb novo, sem o editor da
+        # colagem escrever outro texto por cima do que o revisor vai reavaliar. Não saiu →
+        # template atual nas 3 variantes, pra nenhuma ficar com o texto reprovado.
+        r = subprocess.run([*py, str(SCRIPTS / "07b_colagem.py"), pasta.name, f"--bloco={bid}",
+                            "--aplicar", "--sem-editor"], capture_output=True)
+        if r.returncode:
+            avisos.append("colagem não saiu com o texto novo: voltou pro template atual")
+            if not voltar_template(pasta, bid):
+                avisos.append("falhou ao refazer a thumb")
     elif thumb:
         variante = thumb.stem.rsplit("_", 1)[-1]
         cmd = [*py, str(SCRIPTS / "07_thumb.py"), pasta.name, f"--bloco={bid}"]

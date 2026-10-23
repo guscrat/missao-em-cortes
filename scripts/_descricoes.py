@@ -25,6 +25,49 @@ def ler_descricoes(texto: str) -> dict[int, dict]:
     return saida
 
 
+def adicionar_credito(texto: str, bloco_id: int, linha: str) -> str:
+    """Põe `linha` (crédito de foto com licença aberta) no fim da DESCRIÇÃO de UM bloco.
+    Idempotente: se a linha já está lá, não repete."""
+    texto = texto.replace("\r\n", "\n")
+    cabecalhos = list(_CABECALHO_BLOCO.finditer(texto))
+    for i, cab in enumerate(cabecalhos):
+        if int(cab.group(1)) != bloco_id:
+            continue
+        fim = cabecalhos[i + 1].start() if i + 1 < len(cabecalhos) else len(texto)
+        trecho = texto[cab.end():fim]
+        miolo = _CORPO.search(trecho)
+        if not miolo or linha in miolo.group(1):
+            return texto
+        pos = cab.end() + miolo.end(1)
+        return texto[:pos] + f"\n{linha}" + texto[pos:]
+    return texto
+
+
+_LINHA_CREDITO = re.compile(r"\n?^Foto de [^\n]*\(fundo removido\)$", re.M)
+
+
+def trocar_creditos(texto: str, bloco_id: int, linhas: list[str]) -> str:
+    """Tira os créditos de foto antigos (linhas 'Foto de ... (fundo removido)') da DESCRIÇÃO de
+    UM bloco e põe `linhas` no lugar. Lista vazia só tira."""
+    texto = texto.replace("\r\n", "\n")
+    cabecalhos = list(_CABECALHO_BLOCO.finditer(texto))
+    for i, cab in enumerate(cabecalhos):
+        if int(cab.group(1)) != bloco_id:
+            continue
+        fim = cabecalhos[i + 1].start() if i + 1 < len(cabecalhos) else len(texto)
+        trecho = texto[cab.end():fim]
+        miolo = _CORPO.search(trecho)
+        if not miolo:
+            return texto
+        limpo = _LINHA_CREDITO.sub("", miolo.group(1))
+        trecho = trecho[:miolo.start(1)] + limpo + trecho[miolo.end(1):]
+        texto = texto[:cab.end()] + trecho + texto[fim:]
+        for linha in linhas:
+            texto = adicionar_credito(texto, bloco_id, linha)
+        return texto
+    return texto
+
+
 def trocar_titulo(texto: str, bloco_id: int, novo: str) -> str:
     """Troca o título (e a contagem de chars) de UM bloco, sem mexer no resto do txt."""
     texto = texto.replace("\r\n", "\n")

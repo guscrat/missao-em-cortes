@@ -14,12 +14,15 @@ Fluxo:
      state/curadoria.json).
   2. Busca título original (pt) e data exata dos que passaram e manda pro Claude
      (claude-opus-5-5, effort low, ~US$ 0,02-0,05/rodada): vale a pena? prioridade? motivo?
-  3. Todo vídeo que vale entra na FILA (state/curadoria.json). Só processa quando o
-     ESTOQUE pronto pra publicar cai abaixo de estoque.dias_minimos (config): dias de
-     estoque = min(longos aprovados / longos_por_dia, Shorts prontos / shorts_por_dia).
+  3. Todo vídeo que vale entra na FILA (state/curadoria.json). Só processa quando a
+     COBERTURA do canal cai abaixo de estoque.dias_minimos (config): dias cobertos = de
+     hoje até o último longo agendado no canal + longos aprovados / longos_por_dia
+     ("canal coberto até DD/MM"). Shorts não entram na conta.
      Aí processa 1 vídeo só, o de maior prioridade (empate: o mais recente):
      01_baixar → pipeline.py --polir → 11_revisor → 10_shorts (aprovados) → publicacao.txt.
      ~US$ 0,65 por vídeo. Fila com mais de DIAS_ARQUIVAR dias expira.
+     Thumb colagem (config/thumb.json): "teste" roda o 07b_colagem no fim, em thumbs/colagem/
+     (~US$ 0,15/vídeo, não mexe nas thumbs que sobem); "padrao" roda com --aplicar antes do revisor.
   4. Resumo em state/curador_resumo.md (cortes prontos pra publicar, recusados com motivo,
      avisos) e decisões em state/curadoria.json. Tudo também vira evento no painel.
 
@@ -27,6 +30,7 @@ Canal com zoom no config: o zoom é copiado pro config/zoom.json do stem novo (c
 calibrar_zoom --salvar). Canal sem zoom: processa sem e o resumo pede pra calibrar.
 """
 import json
+import math
 import os
 import re
 import subprocess
@@ -298,10 +302,13 @@ def ler_shorts(pasta: Path) -> dict:
 
 
 def calcular_estoque(cfg: dict, hoje: date | None = None) -> dict:
-    """O que está pronto e ainda não foi pro ar, de lives dos últimos DIAS_ARQUIVAR dias.
-    Longo = bloco 'aprovado' (coluna "Pronto para publicar"). Short = short_NN gerado de
-    bloco aprovado/agendado/publicado que ainda não foi marcado como postado
-    (registrar_publicacao.py --short)."""
+    """Dias de canal COBERTO: de hoje até o último longo agendado no canal
+    (_publicacao.ultimo_agendado: state/canal.json do 14_canal + publish_at do banco) e
+    mais os prontos pra publicar, a longos_por_dia por dia. coberto_ate = o último dia com
+    vídeo garantido. Pronto = bloco 'aprovado' (coluna "Pronto para publicar") de live dos
+    últimos DIAS_ARQUIVAR dias. Shorts (short_NN de bloco aprovado/agendado/publicado, não
+    postado nem arquivado) só aparecem no resumo: não entram nos dias."""
+    from _publicacao import ultimo_agendado
     hoje = hoje or date.today()
     try:
         con = conectar()
@@ -328,12 +335,23 @@ def calcular_estoque(cfg: dict, hoje: date | None = None) -> dict:
         if pasta not in cache:
             cache[pasta] = ler_shorts(pasta)
         sh = cache[pasta].get(f"{r['bloco_id']:02d}")
-        if sh and sh.get("arquivo") and not sh.get("postado") and \
+        if sh and sh.get("arquivo") and not sh.get("postado") and not sh.get("arquivado") and \
                 (pasta / "shorts" / sh["arquivo"]).exists():
             shorts += 1
-    est = cfg["estoque"]
-    dias = min(longos / est["longos_por_dia"], shorts / est["shorts_por_dia"])
-    return {"longos": longos, "shorts": shorts, "dias": dias}
+    ultimo = ultimo_agendado()
+    dias_agendados = max((ultimo - hoje).days, 0) if ultimo else 0
+    prontos = longos / cfg["estoque"]["longos_por_dia"]
+    dias = dias_agendados + prontos
+    return {"longos": longos, "shorts": shorts, "dias_agendados": dias_agendados, "dias": dias,
+            "coberto_ate": hoje + timedelta(days=math.ceil(dias))
+            if dias or (ultimo and ultimo >= hoje) else None}
+
+
+def _texto_estoque(est: dict) -> str:
+    ate = est.get("coberto_ate")
+    cobertura = f"canal coberto até {ate:%d/%m}" if ate else "nada agendado nem pronto"
+    return (f"{cobertura} = {est['dias']:.1f} dia(s) ({est.get('dias_agendados', 0)} dia(s) já "
+            f"agendado(s) + {est['longos']} longo(s) pronto(s); {est['shorts']} Short(s) à parte)")
 
 
 # --- processamento ------------------------------------------------------------------------
@@ -367,6 +385,15 @@ def cadastrar_zoom(stem: str, zoom: str | None) -> bool:
     return True
 
 
+def modo_colagem() -> str:
+    """config/thumb.json → 'desligado' | 'teste' | 'padrao' (sem arquivo: desligado)."""
+    try:
+        modo = json.loads((ROOT / "config" / "thumb.json").read_text(encoding="utf-8")).get("colagem")
+    except (OSError, ValueError, AttributeError):
+        return "desligado"
+    return modo if modo in ("teste", "padrao") else "desligado"
+
+
 def rodar(script: str, *args: str) -> bool:
     print(f"\n>> {script} {' '.join(args)}", flush=True)
     return subprocess.run([sys.executable, str(SCRIPTS / script), *args],
@@ -385,10 +412,14 @@ def processar(item: dict) -> dict:
         res["avisos"].append(f"{stem}: canal sem zoom calibrado — confira os overlays "
                              f"(calibrar_zoom.py, depois pipeline.py {stem} --desde=4)")
     upsert_video(stem, fonte_url=item["url"], status="curadoria")
+    colagem = modo_colagem()
     etapas = [("01_baixar.py", item["url"], stem),
               ("pipeline.py", stem, "--polir"),
               ("11_revisor.py", stem)]
     for script, *args in etapas:
+        if script == "11_revisor.py" and colagem == "padrao":   # revisor já avalia a colagem
+            if not rodar("07b_colagem.py", stem, "--aplicar"):
+                res["avisos"].append(f"{stem}: thumb colagem falhou, ficou o template atual")
         if not rodar(script, *args):
             res["erro"] = f"{script} falhou"
             evento(stem, "curador_pipeline", "falha", agente="curador", mensagem=res["erro"])
@@ -398,6 +429,11 @@ def processar(item: dict) -> dict:
         if not rodar("10_shorts.py", stem, f"--bloco={bloco['id']}"):
             res["avisos"].append(f"{stem}: Short do bloco {bloco['id']} falhou "
                                  f"(10_shorts.py {stem} --bloco={bloco['id']})")
+    if colagem == "teste":                         # ~US$ 0.03/bloco; não mexe nas thumbs que sobem
+        if rodar("07b_colagem.py", stem):
+            res["colagem"] = str(pasta / "thumbs" / "colagem")
+        else:
+            res["avisos"].append(f"{stem}: thumb colagem (teste) falhou (07b_colagem.py {stem})")
     caminho, lista = gerar(pasta)
     res.update(ok=True, aprovados=len(lista), publicacao=str(caminho) if caminho else None)
     evento(stem, "curador_pipeline", "ok", agente="curador",
@@ -423,18 +459,22 @@ def escrever_resumo(rodada: dict) -> str:
     linhas = [f"# Curador — {rodada['quando']}", "",
               f"Custo de curadoria: US$ {rodada['custo']:.3f} · "
               f"{len(rodada['processados'])} vídeo(s) processado(s)",
-              f"Estoque no início: {est['longos']} longo(s) + {est['shorts']} Short(s) = "
-              f"{est['dias']:.1f} dia(s)"]
+              f"Estoque no início: {_texto_estoque(est)}"]
     if rodada.get("estoque_depois"):
         d = rodada["estoque_depois"]
-        linhas.append(f"Estoque no fim: {d['longos']} longo(s) + {d['shorts']} Short(s) = "
-                      f"{d['dias']:.1f} dia(s)")
+        linhas.append(f"Estoque no fim: {_texto_estoque(d)}")
     linhas.append("")
     prontos = [p for p in rodada["processados"] if p.get("aprovados")]
     if prontos:
         linhas.append("## Prontos pra publicar")
         linhas += [f"- **{p['aprovados']} corte(s)** de {p['canal']}: {p['titulo']} → "
                    f"`{p['publicacao']}`" for p in prontos]
+        linhas.append("")
+    colagens = [p for p in rodada["processados"] if p.get("colagem")]
+    if colagens:
+        linhas.append("## Thumb colagem (teste)")
+        linhas += [f"- {p['canal']}: {p['titulo']} → `{p['colagem']}` (3 variantes por bloco; "
+                   "compare com as thumbs atuais antes de virar padrão)" for p in colagens]
         linhas.append("")
     zerados = [p for p in rodada["processados"] if p["ok"] and not p.get("aprovados")]
     if zerados:
@@ -454,6 +494,8 @@ def escrever_resumo(rodada: dict) -> str:
             linhas += [f"- {x['canal']}: {x['titulo']} — {x['motivo']}" for x in rodada[chave]]
             linhas.append("")
     avisos = [a for p in rodada["processados"] for a in p["avisos"]]
+    if rodada.get("aviso_canal"):
+        avisos.insert(0, rodada["aviso_canal"])
     if rodada.get("falha_llm"):
         avisos.insert(0, f"avaliação dos vídeos novos falhou ({rodada['falha_llm']}); "
                          "eles voltam amanhã")
@@ -508,6 +550,24 @@ def expirar_fila(estado: dict, hoje: date) -> list[str]:
     return expirados
 
 
+def sincronizar_canal(dry_run: bool = False) -> str | None:
+    """14_canal: marca o que já está publicado/agendado no NOSSO canal (só leitura, US$ 0).
+    Nunca abre o navegador (roda pelo Agendador) e nunca derruba a rodada: devolve o aviso."""
+    try:
+        import importlib
+        res = importlib.import_module("14_canal").sincronizar(interativo=False, dry=dry_run)
+    except Exception as e:  # noqa: BLE001 — sem canal, o estoque fica como estava
+        print(f"[aviso] não li o canal ({e}): estoque sem o que subiu desde a última leitura",
+              file=sys.stderr)
+        return f"não li o canal do YouTube ({str(e)[:200]}); rode `uv run py scripts/14_canal.py`"
+    print(f"Canal: {len(res['longos'])} longo(s) e {len(res['shorts'])} Short(s) marcados "
+          f"como agendado/publicado")
+    if res["sem_match"]:
+        return (f"{len(res['sem_match'])} vídeo(s) recente(s) do canal sem bloco correspondente "
+                f"(título editado no Studio?): " + "; ".join(x["titulo"][:50] for x in res["sem_match"]))
+    return None
+
+
 def _rodada(cfg: dict, dry_run: bool, sem_pipeline: bool, forcar: bool) -> int:
     hoje = date.today()
     estado = ler_estado()
@@ -530,11 +590,11 @@ def _rodada(cfg: dict, dry_run: bool, sem_pipeline: bool, forcar: bool) -> int:
                 novos.append(item)
                 print(f"   + {item['titulo'][:60]} ({item['duracao_s'] // 60} min, {item['data']})")
 
+    aviso_canal = sincronizar_canal(dry_run)        # antes do estoque: o que já subiu sai dele
     estoque = calcular_estoque(cfg)
     minimo = cfg["estoque"]["dias_minimos"]
     precisa = forcar or estoque["dias"] < minimo
-    print(f"\nEstoque: {estoque['longos']} longo(s) + {estoque['shorts']} Short(s) prontos = "
-          f"{estoque['dias']:.1f} dia(s) (mínimo {minimo}) → "
+    print(f"\nEstoque pronto: {_texto_estoque(estoque)} (mínimo {minimo}) → "
           f"{'processa 1 vídeo' if precisa else 'não processa hoje'}")
     na_fila = sum(1 for v in estado.values() if v.get("decisao") == "fila")
     print(f"{len(novos)} novo(s) pro Claude, {na_fila} na fila")
@@ -544,7 +604,7 @@ def _rodada(cfg: dict, dry_run: bool, sem_pipeline: bool, forcar: bool) -> int:
 
     agora = datetime.now().isoformat(timespec="seconds")
     rodada = {"quando": agora, "custo": 0.0, "estoque": estoque, "escolhidos": [],
-              "fila": [], "recusados": [], "processados": []}
+              "fila": [], "recusados": [], "processados": [], "aviso_canal": aviso_canal}
     if novos:
         from anthropic import Anthropic
         from dotenv import load_dotenv
