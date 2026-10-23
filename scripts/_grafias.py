@@ -1,7 +1,8 @@
 """Grafias oficiais dos personagens (config/grafias.json), usadas pelo editor, pelo revisor e
 pela colagem. Ex.: "Nikolas Ferreira", nunca "Nicolas".
 
-- corrigir(texto): troca as grafias erradas conhecidas pela oficial (mantém CAIXA ALTA)
+- corrigir(texto): troca as grafias erradas conhecidas pela oficial (mantém CAIXA ALTA),
+  sem tocar nas frases de "nao_trocar" (ex.: Nicolas Maduro), em qualquer caixa
 - para_prompt(): a lista em texto, pro editor e o revisor
 - citados(textos): nomes oficiais citados em tags/tema/título (casa nome, curto e erradas)
 - variantes(nome): todas as formas de um personagem (pra casar com o banco de fotos)
@@ -29,13 +30,27 @@ def _trocas(lista: list[dict]) -> list[tuple[str, str]]:
     return sorted(pares, key=lambda x: -len(x[0]))
 
 
+def _nao_trocar(lista: list[dict]) -> list[str]:
+    """Frases de outras pessoas com a grafia de um personagem ('Nicolas Maduro'), mais longas primeiro."""
+    return sorted({f for p in lista for f in p.get("nao_trocar", []) if f}, key=len, reverse=True)
+
+
 def corrigir(texto: str, lista: list[dict] | None = None) -> str:
-    """Troca grafia errada pela oficial. Palavra solta seguida de outro nome próprio (ex.:
-    'Nicolas Maduro') não é o personagem e fica como está, salvo em texto todo em maiúsculas."""
+    """Troca grafia errada pela oficial. Nunca toca nas frases de "nao_trocar" (ex.: 'Nicolas
+    Maduro'), em qualquer caixa — é o que protege o texto da thumb/Short, todo em maiúsculas.
+    Em texto misto, palavra solta seguida de outro nome próprio também fica como está."""
     if not texto:
         return texto
     lista = carregar() if lista is None else lista
     caixa_alta = texto.upper() == texto
+    guardados: list[str] = []
+
+    def guardar(m):
+        guardados.append(m.group(0))
+        return f"\x00{len(guardados) - 1}\x00"
+
+    for frase in _nao_trocar(lista):
+        texto = re.sub(rf"(?<!\w){re.escape(frase)}(?!\w)", guardar, texto, flags=re.I)
     for errada, oficial in _trocas(lista):
         padrao = re.compile(rf"(?<!\w){re.escape(errada)}(?!\w)", re.I)
 
@@ -47,7 +62,7 @@ def corrigir(texto: str, lista: list[dict] | None = None) -> str:
             return oficial.upper() if m.group(0).isupper() else oficial
 
         texto = padrao.sub(trocar, texto)
-    return texto
+    return re.sub(r"\x00(\d+)\x00", lambda m: guardados[int(m.group(1))], texto)
 
 
 def para_prompt(lista: list[dict] | None = None) -> str:
@@ -58,6 +73,8 @@ def para_prompt(lista: list[dict] | None = None) -> str:
         extra = f"curto: {p['curto']}" if p.get("curto") and p["curto"] != p["nome"] else ""
         if p.get("erradas"):
             extra += ("; " if extra else "") + "nunca: " + ", ".join(p["erradas"])
+        if p.get("nao_trocar"):
+            extra += ("; " if extra else "") + "outra pessoa, não trocar: " + ", ".join(p["nao_trocar"])
         linhas.append(f"- {p['nome']}" + (f" ({extra})" if extra else ""))
     return "\n".join(linhas)
 

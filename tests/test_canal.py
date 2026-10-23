@@ -82,6 +82,17 @@ def test_reconhece_short_pela_manchete_do_tema_ou_cortada(projeto):
         assert ca.casar(titulo_short, locais)["bloco"] == b["id"]
 
 
+def test_reconhece_short_pelo_titulo_manchete_barra_nome(projeto):
+    from _descricoes import titulo_short
+    pasta = projeto.video("renan_x", blocos=[1])
+    blocos = json.loads((pasta / "blocos.json").read_text(encoding="utf-8"))
+    blocos["blocos"][0].update(texto_thumb="NICOLAS SERÁ O REI?", speakers_principais=["Renan Santos"])
+    (pasta / "blocos.json").write_text(json.dumps(blocos), encoding="utf-8")
+    titulo = titulo_short(blocos["blocos"][0], "renan_x")
+    assert titulo == "NIKOLAS SERÁ O REI? | Renan Santos"
+    assert ca.casar(titulo, ca.titulos_locais(projeto.outputs))["bloco"] == 1
+
+
 def test_situacao():
     assert ca.situacao(_v("a", "x"))[0] == "publicado"
     st, quando = ca.situacao(_v("a", "x", "private", "2026-10-25T21:00:00Z"))

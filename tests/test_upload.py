@@ -456,11 +456,20 @@ def test_slots_shorts_respeita_antecedencia():
     assert (s[0].day, s[0].hour) == (21, 20)          # 12h já não dá 2h de antecedência
 
 
+def _quem_fala(pasta, nome="Speaker (Arthur do Val)"):
+    """speakers_principais em todos os blocos (o título do Short leva o nome de quem fala)."""
+    blocos = json.loads((pasta / "blocos.json").read_text(encoding="utf-8"))
+    for b in blocos["blocos"]:
+        b["speakers_principais"] = [nome]
+    (pasta / "blocos.json").write_text(json.dumps(blocos), encoding="utf-8")
+
+
 @pytest.fixture
 def shorts(cenario):
     """Shorts 01-03: longo 01 subiu pela API, 02 foi agendado à mão (só no banco), 03 não subiu."""
     from _eventos import upsert_bloco
     pasta, yt, banco = cenario
+    _quem_fala(pasta)
     (pasta / "shorts").mkdir()
     reg = {}
     for i in (1, 2, 3):
@@ -481,7 +490,7 @@ def test_shorts_sobem_depois_do_longo_com_link_e_manchete(shorts):
     assert a["status"] == {"privacyStatus": "private", "selfDeclaredMadeForKids": False,
                            "publishAt": "2026-10-22T23:00:00Z"}   # 22/10 20h, depois do longo
     assert b["status"]["publishAt"] == "2026-10-23T23:00:00Z"
-    assert a["snippet"]["title"] == "THUMB 1"                      # manchete, não o título do longo
+    assert a["snippet"]["title"] == "THUMB 1 | Arthur do Val"      # manchete | quem fala
     assert a["snippet"]["description"].startswith("▶️ Vídeo completo: https://youtu.be/L1\n\n")
     assert "Conteúdo original: https://youtu.be/fonte" in a["snippet"]["description"]
     feitos = json.loads((pasta / "youtube_shorts.json").read_text(encoding="utf-8"))
@@ -508,6 +517,7 @@ def test_shorts_todos_intercala_lives_nos_horarios_livres(shorts, projeto, monke
     pasta_a, yt, _ = shorts
     monkeypatch.setattr(_paths, "OUTPUTS", projeto.outputs)
     pasta_b = projeto.video("w", blocos=[1], finalizados=[1])
+    _quem_fala(pasta_b, "Renan Santos")
     (pasta_b / "descricoes.txt").write_text(_txt_descricoes({1: {"titulo": "Outro"}}), encoding="utf-8")
     (pasta_b / "shorts").mkdir()
     (pasta_b / "shorts" / "short_01_y.mp4").touch()
@@ -695,3 +705,10 @@ def test_slots_shorts_minimo_naive_vira_fuso_do_config():
     minimo = up._data("2026-10-23T18:00:00", CFG)
     s = up.slots_shorts([minimo], set(), CFG, datetime(2026, 10, 21, 9, 0, tzinfo=SP))
     assert (s[0].day, s[0].hour) == (23, 20)
+
+
+def test_short_sem_quem_fala_nao_sobe(shorts, capsys):
+    pasta, yt, _ = shorts
+    _quem_fala(pasta, "Speaker 1")                        # ninguém conhecido; stem "v" sem canal
+    up.main([str(pasta), "--shorts"])
+    assert not yt.uploads and "sem quem fala" in capsys.readouterr().out

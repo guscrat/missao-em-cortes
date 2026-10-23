@@ -39,6 +39,7 @@ import json
 import subprocess
 from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageFilter
 from _paths import achar_pasta, stem_de
+import _grafias
 import _thumb_rosto as tr
 
 ROOT = Path(__file__).parent.parent
@@ -154,7 +155,7 @@ def titulo_curto(bloco):
     if TITULO_OVERRIDE is not None:
         return TITULO_OVERRIDE.strip().upper()
     t = bloco.get("texto_thumb") or bloco.get("tema", "")
-    return t.split("|")[0].strip().upper()
+    return _grafias.corrigir(t.split("|")[0].strip().upper())   # grafia oficial, também em CAIXA ALTA
 
 def colar_frame(canvas, frame_path, rosto=None, overlays=()):
     """Cola o frame cobrindo a thumb inteira, rosto no terco direito. Overlay que sobrou no

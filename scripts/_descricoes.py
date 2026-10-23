@@ -1,11 +1,16 @@
 """Parser do descricoes.txt (formato do 08_descricao.py), compartilhado pelo 09 e pelo 11,
-e a manchete do Short (10 queima, 09 usa de título, 14 reconhece).
+e o texto do Short: manchete (10 queima) e título "manchete | quem fala" (09 sobe, 14 reconhece).
 
 Edição manual no txt vale: é o que vai pro YouTube, então é o que o revisor confere.
 """
+import json
 import re
+from pathlib import Path
 
-LIMITE_MANCHETE = 60   # chars: título do Short no YouTube
+import _grafias
+
+CANAIS = Path(__file__).parent.parent / "config" / "canais.json"
+LIMITE_MANCHETE = 60   # chars: manchete queimada e título do Short no YouTube
 
 _CABECALHO_BLOCO = re.compile(r"^=+\nVÍDEO (\d+) — [^\n]*\n=+\n", re.M)
 _TITULO = re.compile(r"^TÍTULO \(\d+ chars\):\n(.+)$", re.M)
@@ -28,17 +33,53 @@ def ler_descricoes(texto: str) -> dict[int, dict]:
     return saida
 
 
-def manchete(bloco: dict) -> str:
-    """Manchete do Short: texto_thumb (já passou pelo revisor), senão o tema; espaços
-    normalizados e, se passar de LIMITE_MANCHETE, cortada em palavra inteira. É o texto
-    queimado no topo (10), o título no YouTube (09) e uma chave de casamento do 14."""
-    texto = " ".join((bloco.get("texto_thumb") or bloco.get("tema") or "").split())
-    if len(texto) <= LIMITE_MANCHETE:
+def _cortar(texto: str, limite: int) -> str:
+    """Corta em palavra inteira pra caber em `limite` (palavra única gigante: corte seco)."""
+    if len(texto) <= limite:
         return texto
-    corte = texto[:LIMITE_MANCHETE + 1]
-    if " " not in corte:          # uma palavra só, gigante: corta seco
-        return texto[:LIMITE_MANCHETE]
+    corte = texto[:limite + 1]
+    if " " not in corte:
+        return texto[:limite]
     return corte.rsplit(" ", 1)[0].rstrip(" ,;:—-")
+
+
+def manchete(bloco: dict, limite: int = LIMITE_MANCHETE) -> str:
+    """Manchete do Short: texto_thumb (já passou pelo revisor), senão o tema, com as grafias
+    oficiais (também em CAIXA ALTA) e cortada em palavra inteira se passar de `limite`. É o
+    texto queimado no topo do Short (10)."""
+    texto = " ".join((bloco.get("texto_thumb") or bloco.get("tema") or "").split())
+    return _cortar(_grafias.corrigir(texto), limite)
+
+
+def _dono_do_canal(stem: str) -> str:
+    """Nome do canal pelo prefixo do stem em config/canais.json (ex.: 'Mamãefalei (Arthur do Val)')."""
+    try:
+        canais = json.loads(CANAIS.read_text(encoding="utf-8"))["canais"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return ""
+    prefixo = stem.split("_", 1)[0]
+    return next((c.get("nome", "") for c in canais if c.get("prefixo") == prefixo), "")
+
+
+def quem_fala(bloco: dict, stem: str = "") -> str:
+    """Nome oficial (grafias) de quem fala: o 1º de speakers_principais que é personagem
+    conhecido; senão o dono do canal (prefixo do stem). '' se não der pra saber."""
+    for fonte in [*(bloco.get("speakers_principais") or []), _dono_do_canal(stem)]:
+        nomes = _grafias.citados([fonte]) if fonte else []
+        if nomes:
+            return nomes[0]
+    return ""
+
+
+def titulo_short(bloco: dict, stem: str = "") -> str:
+    """Título do Short no YouTube: "MANCHETE | Nome de quem fala", até LIMITE_MANCHETE chars.
+    Se não couber, corta a manchete (nunca o nome). '' sem manchete ou sem quem fala."""
+    nome = quem_fala(bloco, stem)
+    if not nome:
+        return ""
+    sufixo = f" | {nome}"
+    m = manchete(bloco, LIMITE_MANCHETE - len(sufixo))
+    return f"{m}{sufixo}" if m else ""
 
 
 def adicionar_credito(texto: str, bloco_id: int, linha: str) -> str:

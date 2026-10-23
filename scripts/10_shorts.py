@@ -9,7 +9,7 @@ Pra cada bloco com cold_open no blocos.json:
   2. Acha o rosto (OpenCV, local, grátis) em frames a cada 0.5s e centraliza a janela
      9:16 nele. A janela fica SEMPRE dentro da área anti-overlay do config/zoom.json,
      então os overlays da live continuam fora (stem sem zoom: usa o quadro inteiro e avisa)
-  3. Queima: a manchete (_descricoes.manchete: texto_thumb, senão tema) no topo, legenda karaokê grande (words.json) e a
+  3. Queima: a manchete (_descricoes.manchete: texto_thumb, senão tema, com grafias) no topo, legenda karaokê grande (words.json) e a
      marca MISSÃO EM CORTES embaixo
 
 Saída: outputs/<pasta>/shorts/short_NN_<slug>.mp4 (1080x1920, 30fps, NVENC) + shorts.json
