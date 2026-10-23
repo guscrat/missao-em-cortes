@@ -43,5 +43,5 @@ Publicar no YouTube pela primeira vez numa feature nova · rodar upload real (se
 ## Onde está o detalhe
 
 - `references/upload.md` — 09: slots, idempotência, cota, upload de teste.
-- `references/metricas.md` — 12: regra com/sem legenda + **setup do projeto analytics passo a passo**.
+- `references/metricas.md` — 12: regra com/sem legenda + **setup do projeto analytics passo a passo**; 15: placar do canal pro YPP.
 - `references/canal-e-publicacao.md` — 14 (casamento por título, status) e `publicacao.txt`.
