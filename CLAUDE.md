@@ -43,7 +43,7 @@ tests/            pytest, tudo mockado
 
 Scripts (`scripts/`):
 - **Pipeline:** `pipeline.py` (orquestrador) · `01_baixar` · `02_transcribe` · `03_segmentar` · `04_cortar` · `04b_polir` · `04c_legendas` · `05_cards` · `06_montar` · `08_descricao`
-- **Off-pipeline:** `07_thumb` · `07b_colagem` · `09_upload` · `10_shorts` · `11_revisor` · `12_metricas` · `13_curador` · `14_canal` · `15_placar` · `calibrar_zoom` · `personagens` · `sincronizar_estado` · `tarefa` · `hook_agente`
+- **Off-pipeline:** `07_thumb` · `07b_colagem` · `09_upload` · `10_shorts` · `11_revisor` · `12_metricas` · `13_curador` · `14_canal` · `15_placar` · `dia_d` · `calibrar_zoom` · `personagens` · `sincronizar_estado` · `tarefa` · `hook_agente`
 - **Helpers (`_*.py`):** `_paths` (resolve pasta por stem, falha alto se ambíguo) · `_ffmpeg` (formato canônico) · `_eventos` (banco) · `_descricoes` · `_legenda` · `_grafias` · `_editor` · `_colagem` · `_thumb_rosto` · `_publicacao` · `_google` · `_youtube_leitura` · `_canal`
 
 ## Pipeline
@@ -66,7 +66,7 @@ Vídeo final: `[Cold open 15-30s] → [Intro 3s] → [Card 3s] → [Corte 5-7min
 
 Overlays da live saem por **zoom por fonte** (`config/zoom.json`); stem sem entrada roda sem zoom e avisa. Calibrar: `calibrar_zoom.py <video> --salvar=<stem>`, depois `pipeline.py <stem> --desde=4`. Detalhes em `docs/pipeline.md`.
 
-Agentes off-pipeline (detalhes nas skills): Curador 13 às 17h decide o que processar · revisor 11 aprova/quarentena/descarta · 10 gera Shorts · 09 sobe (**travado até a auditoria**) · 12/14/15 só leem o canal (15 = placar do YPP, 1x/dia pelo Curador).
+Agentes off-pipeline (detalhes nas skills): Curador 13 às 17h decide o que processar · revisor 11 aprova/quarentena/descarta · 10 gera Shorts · 09 sobe longos e Shorts (`--shorts`, **travado até a auditoria**; dia D: `dia_d.py` + skill) · 12/14/15 só leem o canal (15 = placar do YPP, 1x/dia pelo Curador).
 
 ## Regras transversais
 
