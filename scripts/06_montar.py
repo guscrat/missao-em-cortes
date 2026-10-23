@@ -211,7 +211,14 @@ for b in data["blocos"]:
     saida = OUT_DIR / f"video_{b['id']:02d}_{slug(b['tema'])}{sufixo}.mp4"
 
     # Cold open opcional
-    colds = list(CORTES_DIR.glob(f"cold_{b['id']:02d}_*.mp4"))
+    colds = sorted(CORTES_DIR.glob(f"cold_{b['id']:02d}_*.mp4"))
+    if USE_LEGENDADO:
+        # cold legendado (04c, estilo gancho); live antiga sem ele usa o cru
+        colds_leg = sorted((CORTES_DIR / "legendados").glob(f"cold_{b['id']:02d}_*.mp4"))
+        if colds_leg:
+            colds = colds_leg
+        elif colds:
+            print(f"  AVISO: bloco {b['id']}: cold open sem legenda (rode 04c_legendas.py) — usando o cru")
     cold  = colds[0] if colds else None
 
     print(f"\n[Bloco {b['id']}] {b['tema']}")
