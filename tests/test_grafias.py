@@ -97,8 +97,6 @@ def test_para_prompt_lista_nao_trocar():
     assert "não trocar: Nicolas Maduro" in g.para_prompt(LISTA)
 
 
-@pytest.mark.xfail(reason="BUG: texto com \\x00<n>\\x00 literal colide com o placeholder (IndexError)",
-                   strict=True)
 def test_corrigir_texto_com_placeholder_literal():
     assert g.corrigir("\x005\x00 nicolas maduro", LISTA) == "\x005\x00 nicolas maduro"
 

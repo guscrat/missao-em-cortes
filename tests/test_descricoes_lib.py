@@ -61,8 +61,6 @@ def test_titulo_short_corta_a_manchete_nunca_o_nome():
     assert d.manchete(b) != t.split(" | ")[0]          # o queimado continua a manchete inteira (até 60)
 
 
-@pytest.mark.xfail(reason="nome > 60 chars: limite negativo, título sai com 69 chars (irreal com nomes do config)",
-                   strict=True)
 def test_titulo_short_nome_gigante_nao_estoura_nem_corta_nome(monkeypatch):
     nome = ("Fulano " * 9).strip()               # 62 chars: não sobra espaço pra manchete
     monkeypatch.setattr(d, "quem_fala", lambda bloco, stem="": nome)

@@ -78,6 +78,8 @@ def titulo_short(bloco: dict, stem: str = "") -> str:
     if not nome:
         return ""
     sufixo = f" | {nome}"
+    if len(sufixo) >= LIMITE_MANCHETE:       # nome não deixa espaço pra manchete (nunca corta o nome)
+        return ""
     m = manchete(bloco, LIMITE_MANCHETE - len(sufixo))
     return f"{m}{sufixo}" if m else ""
 

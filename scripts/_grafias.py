@@ -44,10 +44,11 @@ def corrigir(texto: str, lista: list[dict] | None = None) -> str:
     lista = carregar() if lista is None else lista
     caixa_alta = texto.upper() == texto
     guardados: list[str] = []
+    marca = next(chr(c) for c in range(0xE000, 0xF900) if chr(c) not in texto)   # uso privado, fora do texto
 
     def guardar(m):
         guardados.append(m.group(0))
-        return f"\x00{len(guardados) - 1}\x00"
+        return f"{marca}{len(guardados) - 1}{marca}"
 
     for frase in _nao_trocar(lista):
         texto = re.sub(rf"(?<!\w){re.escape(frase)}(?!\w)", guardar, texto, flags=re.I)
@@ -62,7 +63,7 @@ def corrigir(texto: str, lista: list[dict] | None = None) -> str:
             return oficial.upper() if m.group(0).isupper() else oficial
 
         texto = padrao.sub(trocar, texto)
-    return re.sub(r"\x00(\d+)\x00", lambda m: guardados[int(m.group(1))], texto)
+    return re.sub(rf"{marca}(\d+){marca}", lambda m: guardados[int(m.group(1))], texto)
 
 
 def para_prompt(lista: list[dict] | None = None) -> str:
