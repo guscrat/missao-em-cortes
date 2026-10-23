@@ -80,6 +80,8 @@ uv run py scripts/09_upload.py todos --shorts
 - Cota: cada Short = 1.600; cabem ~6 por dia. O 09 para antes de estourar; rodar de novo no
   dia seguinte (zera ~4-5h de Brasília) e os que faltam pegam os horários livres.
 - Registro: `outputs/<pasta>/youtube_shorts.json` + `youtube_id`/`postado` no `shorts.json`.
+- Só Short subido pela API ocupa horário no plano: Short subido à mão (visto só pelo 14) não
+  sai do `todos --shorts` e pode colidir no horário. Depois do dia D, nada de Short à mão.
 
 **Vídeo relacionado** — a Data API **não tem** esse campo; é manual no Studio:
 
