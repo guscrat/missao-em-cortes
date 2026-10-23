@@ -6,7 +6,7 @@
 
 - **Editor** (`_editor.py`): recebe a lista no pedido e a saída dele passa pelo `corrigir` (título, texto da thumb, textos da colagem).
 - **Revisor** (11): recebe a lista e reprova grafia errada.
-- **08_descricao**: corrige o título.
+- **08_descricao**: corrige título, corpo (resumo e momentos), convidados e tags (as hashtags saem delas).
 - **Short** (`_descricoes.manchete`): a manchete queimada (10) e o título no YouTube (09) passam pelo `corrigir`; o nome de quem fala sai do `citados`.
 - **Colagem** (07b): casa a grafia errada das tags com a foto certa do banco, e as **pessoas citadas** no bloco (pelas grafias) orientam a escolha de cena.
 

@@ -176,6 +176,43 @@ def test_08_titulo_passa_pela_grafia():
     assert "Nikolas Ferreira detona" in texto and "Nicolas" not in texto
 
 
+def test_08_corpo_tags_e_hashtags_passam_pela_grafia_e_protegem_nao_trocar():
+    """Config real: o corpo da descrição e as tags também saem com a grafia oficial, mas
+    'Nicolas Maduro' (outra pessoa) fica como está."""
+    b = {"id": 1, "tema": "t", "titulo_sugerido": "T",
+         "resumo": "As campanhas de Nicolas, Pavanato e Flavio Bolsonaro; Nicolas Maduro fica.",
+         "ganchos": ["Pavanato e Nicolas ao lado de Senna"],
+         "tags": ["Nicolas Ferreira", "Nikolas Ferreira", "Lucas Pavanatto"],
+         "speakers_principais": ["Artur do Val"]}
+    texto = desc.bloco_para_texto(b, "https://youtube.com/watch?v=1")
+    assert "campanhas de Nikolas, Pavanato e Flávio Bolsonaro; Nicolas Maduro fica." in texto
+    assert "• Pavanato e Nikolas ao lado de Senna" in texto
+    assert "Convidado(s): Arthur do Val" in texto
+    assert "#NikolasFerreira" in texto and "#NicolasFerreira" not in texto   # hashtag = 2 primeiras tags
+    tags = texto.split("copiar pro YouTube Studio):\n" + "-" * 70 + "\n")[1].splitlines()[0]
+    assert tags.startswith("Nikolas Ferreira, Lucas Pavanato, ")      # sem duplicar o Nikolas
+    assert "Nicolas Ferreira" not in texto and "Pavanatto" not in texto
+
+
+def test_08_campos_ausentes_ou_vazios_nao_quebram():
+    """Sem resumo/ganchos/tags/speakers: não explode, sem seção de momentos nem convidados."""
+    b = {"id": 2, "tema": "t", "titulo_sugerido": "T"}
+    texto = desc.bloco_para_texto(b, "https://youtube.com/watch?v=1")
+    assert "Principais momentos" not in texto and "Convidado(s)" not in texto
+    vazio = dict(b, resumo="", ganchos=[], tags=[], speakers_principais=[])
+    assert desc.bloco_para_texto(vazio, "https://youtube.com/watch?v=1") == texto
+
+
+def test_08_ganchos_em_caixa_alta_e_hashtag_duplicada():
+    b = {"id": 3, "tema": "t", "titulo_sugerido": "T", "resumo": "R.",
+         "ganchos": ["NICOLAS FERREIRA ATACA"], "tags": ["Nicolas", "NIKOLAS", "Nicolas Ferreira"]}
+    texto = desc.bloco_para_texto(b, "u")
+    assert "• NIKOLAS FERREIRA ATACA" in texto and "NICOLAS" not in texto.upper().replace("NICOLAS MADURO", "")
+    tags = texto.split("copiar pro YouTube Studio):\n" + "-" * 70 + "\n")[1].splitlines()[0].split(", ")
+    assert [t.lower() for t in tags].count("nikolas") == 1      # duplicata pós-correção some
+    assert texto.count("#Nikolas") == 1
+
+
 def test_08_repor_creditos(tmp_path, monkeypatch):
     txt = _txt([1])
     reg = {"status": "ok", "creditos": ["Foto de Z (CC0) (fundo removido)"]}
