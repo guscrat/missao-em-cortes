@@ -1,8 +1,11 @@
-"""Parser do descricoes.txt (formato do 08_descricao.py), compartilhado pelo 09 e pelo 11.
+"""Parser do descricoes.txt (formato do 08_descricao.py), compartilhado pelo 09 e pelo 11,
+e a manchete do Short (10 queima, 09 usa de título, 14 reconhece).
 
 Edição manual no txt vale: é o que vai pro YouTube, então é o que o revisor confere.
 """
 import re
+
+LIMITE_MANCHETE = 60   # chars: título do Short no YouTube
 
 _CABECALHO_BLOCO = re.compile(r"^=+\nVÍDEO (\d+) — [^\n]*\n=+\n", re.M)
 _TITULO = re.compile(r"^TÍTULO \(\d+ chars\):\n(.+)$", re.M)
@@ -23,6 +26,16 @@ def ler_descricoes(texto: str) -> dict[int, dict]:
             "tags": [t.strip() for t in miolo.group(2).split(",") if t.strip()],
         }
     return saida
+
+
+def manchete(bloco: dict) -> str:
+    """Manchete do Short: texto_thumb (já passou pelo revisor), senão o tema; espaços
+    normalizados e, se passar de LIMITE_MANCHETE, cortada em palavra inteira. É o texto
+    queimado no topo (10), o título no YouTube (09) e uma chave de casamento do 14."""
+    texto = " ".join((bloco.get("texto_thumb") or bloco.get("tema") or "").split())
+    if len(texto) <= LIMITE_MANCHETE:
+        return texto
+    return texto[:LIMITE_MANCHETE + 1].rsplit(" ", 1)[0].rstrip(" ,;:—-")
 
 
 def adicionar_credito(texto: str, bloco_id: int, linha: str) -> str:

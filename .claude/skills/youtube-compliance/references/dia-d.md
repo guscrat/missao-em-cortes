@@ -76,7 +76,7 @@ uv run py scripts/09_upload.py todos --shorts
   as lives, cada Short no 1º horário livre **depois do longo dele ir ao ar**.
 - Só sobe Short de bloco cujo longo já está no YouTube (API ou à mão, via 14_canal), fora de
   quarentena/descartado/arquivado, com crédito da fonte e sem `revisar: true` (pouco rosto).
-- Título = **manchete do próprio Short** (o `texto_thumb` queimado no topo, senão o `tema`; até 60 chars, corta em palavra). O 14 reconhece Short pelo `texto_thumb` exato. Sem thumb (Short não tem).
+- Título = **manchete do próprio Short** (o `texto_thumb` queimado no topo, senão o `tema`; até 60 chars, corta em palavra). Regra única em `_descricoes.manchete` (o 10 queima a mesma; o 14 reconhece por ela, exato). Sem `texto_thumb`, o 09 avisa que usou o tema. Sem thumb (Short não tem).
 - Cota: cada Short = 1.600; cabem ~6 por dia. O 09 para antes de estourar; rodar de novo no
   dia seguinte (zera ~4-5h de Brasília) e os que faltam pegam os horários livres.
 - Registro: `outputs/<pasta>/youtube_shorts.json` + `youtube_id`/`postado` no `shorts.json`.

@@ -28,7 +28,7 @@ foi agendado à mão (_cobertura: canal.json do 14 + banco), então nada disputa
 Shorts (--shorts): sobe os shorts/short_NN_*.mp4 (do 10_shorts) como privados + publishAt
 nos "shorts_horarios" do config (2/dia), só de bloco cujo longo JÁ está no YouTube, no 1º
 horário livre a partir da ida do longo ao ar. "todos" = um plano só com todas as lives.
-Título = manchete do próprio Short (texto_thumb, até 60 chars; o 14 casa por ela),
+Título = manchete do Short (_descricoes.manchete, até 60 chars; o 14 casa por ela),
 descrição do longo com "Vídeo completo: youtu.be/<longo>" no topo. Registro em
 youtube_shorts.json e youtube_id/postado no shorts/shorts.json. Short com "revisar" (pouco
 rosto) não sobe. O "vídeo relacionado" do Short NÃO existe na API: é marcado à mão no
@@ -61,7 +61,7 @@ from googleapiclient.http import MediaFileUpload
 
 from _canal import eh_nosso_canal
 from _cobertura import agenda_canal
-from _descricoes import ler_descricoes
+from _descricoes import ler_descricoes, manchete
 from _eventos import evento, ler_bloco, upsert_bloco
 from _google import credenciais
 import _paths
@@ -83,7 +83,6 @@ DEFAULTS = {
 PLACEHOLDER_URL = "[COLAR URL DA LIVE AQUI]"
 TESTE_JSON = "youtube_teste.json"
 SHORTS_JSON = "youtube_shorts.json"
-LIMITE_TITULO_SHORT = 60               # manchete curta
 NAO_SOBE = {"quarentena", "descartado", "arquivado"}   # decisão do revisor/editor/curadoria
 PREFIXO_TESTE = "[TESTE] "
 MSG_TRAVA = ("[!] Upload TRAVADO: a auditoria da YouTube Data API ainda não foi aprovada "
@@ -535,17 +534,8 @@ def main(argv: list[str]) -> int:
 
 # ── Shorts ─────────────────────────────────────────────────────────────────
 
-def manchete(bloco: dict) -> str:
-    """A manchete queimada no topo do Short (mesma regra do 10_shorts: texto_thumb, senão o
-    tema), cortada em palavra inteira se passar de LIMITE_TITULO_SHORT."""
-    texto = " ".join((bloco.get("texto_thumb") or bloco.get("tema") or "").split())
-    if len(texto) <= LIMITE_TITULO_SHORT:
-        return texto
-    return texto[:LIMITE_TITULO_SHORT + 1].rsplit(" ", 1)[0].rstrip(" ,;:—-")
-
-
 def meta_short(meta: dict, longo_id: str, titulo: str) -> dict:
-    """Título = manchete do próprio Short (o 14 casa Short pelo texto_thumb exato) e a
+    """Título = manchete do próprio Short (_descricoes.manchete; o 14 casa por ela, exato) e a
     descrição do longo com o link dele no topo — o crédito da fonte vem junto."""
     descricao = f"▶️ Vídeo completo: https://youtu.be/{longo_id}\n\n{meta['descricao']}"
     return preparar_metadados({"titulo": titulo, "descricao": descricao, "tags": meta["tags"]})
@@ -577,6 +567,8 @@ def planejar_shorts(pasta: Path, cfg: dict, so_bloco: int | None) -> list[dict]:
         video = pasta / "shorts" / sh.get("arquivo", "")
         meta = descricoes.get(bid)
         titulo = manchete(blocos.get(bid, {}))
+        if titulo and not blocos.get(bid, {}).get("texto_thumb"):
+            print(f"   [aviso] {stem} {nn}: sem texto_thumb, título do Short vem do tema: '{titulo}'")
         problema = (f"bloco em {bloco['status']} no painel" if bloco.get("status") in NAO_SOBE else
                     "longo ainda não está no YouTube — o Short espera" if not longo_id else
                     "pouco rosto (revisar: true no shorts.json) — confira e libere à mão"

@@ -32,7 +32,7 @@ Quando a auditoria for aprovada, mude a flag pra `true` e o 09 passa a subir pri
 - Sobe `shorts/short_NN_*.mp4` (do 10) privado + `publishAt` nos `shorts_horarios` do config (`["12:00", "20:00"]` = 2/dia). `todos` faz **um plano só** com todas as lives que têm `shorts/shorts.json`.
 - Cada Short vai pro 1º horário livre (não ocupado por outro Short) **a partir da ida do longo ao ar**; só sobe se o longo do bloco já tem `youtube_id` (`youtube.json` ou banco, inclusive agendado à mão e marcado pelo 14).
 - Não sobe: bloco em quarentena/descartado/arquivado, `revisar: true` no `shorts.json` (pouco rosto), sem crédito da fonte.
-- Título = manchete do Short (`texto_thumb`, senão `tema`; até 60 chars, corta em palavra; o 14 casa Short pelo `texto_thumb` exato). Sem manchete, não sobe. Descrição do longo com `▶️ Vídeo completo: https://youtu.be/<longo>` no topo; sem thumb.
+- Título = manchete do Short (`texto_thumb`, senão `tema`; até 60 chars, corta em palavra; regra única em `_descricoes.manchete`, a mesma que o 10 queima e o 14 casa exato; usar o tema gera aviso). Sem manchete, não sobe. Descrição do longo com `▶️ Vídeo completo: https://youtu.be/<longo>` no topo; sem thumb.
 - Registro em `outputs/<pasta>/youtube_shorts.json` (com `longo_id` e `relacionado_ok`) + `youtube_id`/`postado` no `shorts.json` (tira do estoque e do `publicacao.txt`).
 - **Vídeo relacionado** não existe na Data API: marcado à mão no Studio; a lista sai de `dia_d.py relacionados`.
 
