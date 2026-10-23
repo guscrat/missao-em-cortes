@@ -1,5 +1,5 @@
 {
-  "_comment": "Canais que o agente Curador (scripts/13_curador.py) verifica 1x/dia. zoom = crop anti-overlay padrão do canal, copiado pro config/zoom.json do stem novo (null = sem zoom calibrado: processa e avisa no resumo). dias = idade máxima do vídeo novo; duracao_min/max em minutos; por_canal = itens recentes lidos por aba. estoque: só processa (1 vídeo, ~US$ 0,65) quando o pronto-pra-publicar cobre menos de dias_minimos, contando longos_por_dia longos + shorts_por_dia Shorts por dia.",
+  "_comment": "Canais que o agente Curador (scripts/13_curador.py) verifica 1x/dia. zoom = crop anti-overlay padrão do canal, copiado pro config/zoom.json do stem novo (null = sem zoom calibrado: processa e avisa no resumo). dias = idade máxima do vídeo novo; duracao_min/max em minutos; por_canal = itens recentes lidos por aba. estoque: só processa (1 vídeo, ~US$ 0,65) quando o canal está coberto por menos de dias_minimos = dias até o último longo agendado + longos aprovados / longos_por_dia (shorts_por_dia não entra na conta).",
   "dias": 3,
   "duracao_min": 20,
   "duracao_max": 240,

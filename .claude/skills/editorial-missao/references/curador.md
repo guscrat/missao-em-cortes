@@ -14,17 +14,18 @@ Os novos vão numa **única** chamada pro Claude (`claude-opus-5-5`, effort low,
 
 ## 3. Estoque
 
-Dias de estoque = min(longos prontos ÷ `longos_por_dia`, Shorts prontos ÷ `shorts_por_dia`).
+Estoque = **dias de canal coberto** (decisão do Gu, 22/10/2026):
 
-- Longo pronto = bloco `aprovado` (coluna "Pronto para publicar").
-- Short pronto = Short gerado de bloco aprovado/agendado/publicado e ainda não marcado como postado nem arquivado.
-- Só conta live dos últimos 15 dias (`DIAS_ARQUIVAR`).
-- Limites em `config/canais.json` → `estoque` (padrão: mínimo 2 dias, 1 longo + 2 Shorts por dia).
-- **Até a auditoria (`auditoria_aprovada: false` no `config/upload.json`) o estoque conta só os longos** (dias = longos ÷ `longos_por_dia`; os Shorts seguem sendo gerados e aparecem no resumo como "fora da conta"). Com a flag `true`, volta sozinho pra conta com Shorts. A flag é lida por `_paths.auditoria_aprovada()`.
+dias = (último longo agendado no canal − hoje) + longos prontos ÷ `longos_por_dia` → "canal coberto até DD/MM".
+
+- Último longo agendado = `_publicacao.ultimo_agendado()`: o maior entre `state/canal.json` (`ultimo_longo`, do 14_canal) e o `publish_at` dos blocos agendado/publicado no banco. Já passou (ou nada agendado) = 0.
+- Longo pronto = bloco `aprovado` (coluna "Pronto para publicar") de live dos últimos 15 dias (`DIAS_ARQUIVAR`).
+- **Shorts não entram nos dias** (com ou sem auditoria): só aparecem no resumo, "à parte".
+- Mínimo em `config/canais.json` → `estoque.dias_minimos` (padrão 2). O painel (aba Hoje) chama a mesma função e mostra "Canal coberto até DD/MM", com alerta abaixo do mínimo.
 
 ## 4. Processar
 
-Só se o estoque estiver **abaixo do mínimo** (ou com `--forcar`). Processa **1 vídeo**, o de maior prioridade da fila (empate: o mais recente):
+Só se a cobertura estiver **abaixo do mínimo** (ou com `--forcar`). Processa **1 vídeo**, o de maior prioridade da fila (empate: o mais recente):
 
 `01_baixar` → `pipeline.py --polir` → `11_revisor` → `10_shorts` (só dos aprovados, $0) → `publicacao.txt` → `07b_colagem` (modo `teste`, ~US$ 0,15, em `thumbs/colagem/`; no modo `padrao` roda com `--aplicar` **antes** do revisor).
 

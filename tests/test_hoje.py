@@ -1,7 +1,7 @@
 """Aba "Hoje" do painel: funções puras (tmp_path/mocks, nunca o state/ real) + smoke AppTest."""
 import json
 import os
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import pandas as pd
 import streamlit as st
@@ -206,6 +206,9 @@ def test_alertas_operacao():
     cheio = pd.DataFrame([{"x": 1}])
     r = hoje.alertas_operacao({"dias": 1.5, "minimo": 3}, vazio)
     assert [a[1] for a in r] == ["Estoque baixo", "Nada agendado pra amanhã"]
+    assert "nada agendado nem pronto" in r[0][2]
+    r = hoje.alertas_operacao({"dias": 1.5, "minimo": 3, "coberto_ate": date(2026, 10, 24)}, vazio)
+    assert "canal coberto só até 24/10" in r[0][2] and "1.5 dia(s), mínimo 3" in r[0][2]
     assert hoje.alertas_operacao({"dias": 3, "minimo": 3}, cheio) == []
     assert [a[1] for a in hoje.alertas_operacao(None, vazio)] == ["Nada agendado pra amanhã"]
 
@@ -259,7 +262,7 @@ def test_painel_aba_hoje(banco, monkeypatch, tmp_path):
     upsert_bloco("v", 2, status="quarentena", forcar_status=True, titulo="Em dúvida")
     for n in ("youtube_token.json", "analytics_token.json"):
         (tmp_path / n).write_text(json.dumps({"refresh_token": "r"}))
-    monkeypatch.setattr(hoje, "estoque", lambda: {"dias": 0.5, "minimo": 3})
+    monkeypatch.setattr(hoje, "estoque", lambda: {"dias": 0.5, "minimo": 3, "coberto_ate": date(2026, 10, 24)})
     monkeypatch.setattr(hoje, "STATE", tmp_path / "state_falso")
     monkeypatch.setattr(hoje, "SECRETS", tmp_path)
     monkeypatch.setattr(hoje, "UPLOAD_JSON", tmp_path / "upload_falso.json")
@@ -271,8 +274,9 @@ def test_painel_aba_hoje(banco, monkeypatch, tmp_path):
     assert [t.label for t in at.tabs][0] == "Hoje"
     metricas = {m.label: m.value for m in at.metric}
     assert metricas["Vai ao ar hoje"] == "0" and metricas["Amanhã"] == "1"
-    assert metricas["Estoque"] == "0.5 dias" and metricas["Auditoria YouTube"] == "pendente"
+    assert metricas["Canal coberto até"] == "24/10" and "Estoque" not in metricas and metricas["Auditoria YouTube"] == "pendente"
     textos = " ".join(m.value for m in at.markdown)
     assert "Estoque baixo" in textos and "Sai amanhã" in textos and "Quarentena · Em dúvida" in textos
+    assert "canal coberto só até 24/10" in textos
     assert "Nada agendado pra amanhã" not in textos
     st.cache_data.clear()

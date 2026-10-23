@@ -213,8 +213,10 @@ def alerta_cota(agora_utc: datetime | None = None, cota_path: Path | None = None
 def alertas_operacao(est: dict | None, amanha: pd.DataFrame) -> list[tuple[str, str, str]]:
     saida = []
     if est is not None and est["dias"] < est["minimo"]:
+        ate = est.get("coberto_ate")
         saida.append(("aviso", "Estoque baixo",
-                      f"{est['dias']:.1f} dia(s) pronto(s) pra publicar (mínimo {est['minimo']}): "
+                      (f"canal coberto só até {ate:%d/%m}" if ate else "nada agendado nem pronto")
+                      + f" ({est['dias']:.1f} dia(s), mínimo {est['minimo']}): "
                       "o Curador processa um vídeo novo na próxima rodada (17h)."))
     if amanha.empty:
         saida.append(("aviso", "Nada agendado pra amanhã",
@@ -341,12 +343,15 @@ def aba_hoje(blocos: pd.DataFrame, tarefas: pd.DataFrame, est: dict | None, cust
         m[2].caption("não consegui calcular (veja o terminal do painel)")
     else:
         baixo = est["dias"] < est["minimo"]
-        m[2].metric("Estoque", f"{est['dias']:.1f} dias",
-                    delta=f"abaixo do mínimo ({est['minimo']})" if baixo else f"mínimo {est['minimo']}",
+        ate = est.get("coberto_ate")
+        dias = f"{est['dias']:.1f} dia(s)".replace(".", ",")
+        m[2].metric("Canal coberto até", f"{ate:%d/%m}" if ate else "—",
+                    delta=f"{dias} · abaixo do mínimo ({est['minimo']})" if baixo
+                    else f"{dias} · mínimo {est['minimo']}",
                     delta_color="inverse" if baixo else "off", delta_arrow="off",
-                    help="O mesmo cálculo do Curador: longos aprovados que ainda não foram pro "
-                         "YouTube ÷ longos por dia" + ("" if auditoria else
-                                                       " (Shorts fora da conta até a auditoria)"))
+                    help="O mesmo cálculo do Curador: dias até o último longo agendado no canal "
+                         "+ longos prontos pra publicar (1 por dia). Abaixo do mínimo o Curador "
+                         "processa um vídeo novo.")
     m[3].metric("Auditoria YouTube", "aprovada" if auditoria else "pendente",
                 delta="upload e Shorts liberados" if auditoria else "upload e Shorts travados",
                 delta_color="normal" if auditoria else "off", delta_arrow="off")
