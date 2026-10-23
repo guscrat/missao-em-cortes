@@ -146,3 +146,77 @@ def test_candidato_sem_credito_nao_serve(projeto, monkeypatch):
 def test_main_comando_invalido():
     with pytest.raises(SystemExit):
         dia_d.main(["publicar"])
+
+
+# ── checar ponta a ponta (subprocess mockado) ──────────────────────────────
+
+@pytest.fixture
+def checar_cenario(projeto, monkeypatch, tmp_path):
+    monkeypatch.setattr(_paths, "OUTPUTS", projeto.outputs)
+    monkeypatch.setattr(dia_d, "SECRETS", _secrets(tmp_path))
+    monkeypatch.setattr(dia_d.up, "COTA_PATH", tmp_path / "state" / "cota.json")
+    chamadas = []
+
+    def rodar(*args):
+        chamadas.append(args)
+        return 0
+    monkeypatch.setattr(dia_d, "_rodar_09", rodar)
+    return projeto, chamadas
+
+
+def test_checar_com_candidato_roda_os_dois_dry_runs(checar_cenario, capsys, banco):
+    projeto, chamadas = checar_cenario
+    _aprovado(projeto, "v")
+    assert dia_d.checar() == 0
+    assert chamadas == [("v", "--bloco=1", "--max=1", "--dry-run", "--como-aprovada"),
+                        ("todos", "--shorts", "--dry-run", "--como-aprovada")]
+    assert "PRONTO pro dia D" in capsys.readouterr().out
+    assert banco("SELECT status FROM eventos WHERE etapa='dia_d'")[0]["status"] == "ok"
+
+
+def test_checar_sem_candidato_testa_com_o_primeiro_short(checar_cenario, capsys):
+    _, chamadas = checar_cenario
+    assert dia_d.checar() == 0
+    assert chamadas[0] == ("todos", "--shorts", "--max=1", "--dry-run", "--como-aprovada")
+    assert "o teste é o 1º Short da fila" in capsys.readouterr().out
+
+
+def test_checar_bloqueia_se_dry_run_falha(checar_cenario, monkeypatch, capsys, banco):
+    projeto, _ = checar_cenario
+    _aprovado(projeto, "v")
+    monkeypatch.setattr(dia_d, "_rodar_09", lambda *a: 1 if "--shorts" in a else 0)
+    assert dia_d.checar() == 1
+    assert "NÃO PRONTO: dry-run dos Shorts falhou" in capsys.readouterr().out
+    assert banco("SELECT status FROM eventos WHERE etapa='dia_d'")[0]["status"] == "aviso"
+
+
+def test_checar_bloqueia_sem_client_secret(checar_cenario, monkeypatch, tmp_path, capsys):
+    vazio = tmp_path / "vazio"
+    vazio.mkdir()
+    monkeypatch.setattr(dia_d, "SECRETS", vazio)
+    assert dia_d.checar() == 1
+    assert "falta youtube_client_secret.json" in capsys.readouterr().out
+
+
+def test_rodar_09_usa_subprocess_mockado(monkeypatch):
+    visto = {}
+
+    class _R:
+        returncode = 3
+    monkeypatch.setattr(dia_d.subprocess, "run", lambda cmd, cwd: visto.update(cmd=cmd) or _R())
+    assert dia_d._rodar_09("todos", "--shorts") == 3
+    assert visto["cmd"][1].endswith("09_upload.py") and visto["cmd"][-2:] == ["todos", "--shorts"]
+
+
+def test_main_despacha_checar_verificar_e_relacionados(monkeypatch):
+    monkeypatch.setattr(dia_d, "checar", lambda: 7)
+    monkeypatch.setattr(dia_d, "verificar", lambda ids: ids)
+    monkeypatch.setattr(dia_d, "relacionados", lambda feitos=None: feitos)
+    assert dia_d.main([]) == 7 and dia_d.main(["checar"]) == 7
+    assert dia_d.main(["verificar", "A", "B"]) == ["A", "B"]
+    assert dia_d.main(["relacionados", "--feito=S1,S2"]) == {"S1", "S2"}
+
+
+def test_verificar_sem_ids_sai():
+    with pytest.raises(SystemExit):
+        dia_d.verificar([])

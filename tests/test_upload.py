@@ -558,3 +558,102 @@ def test_como_aprovada_simula_sem_subir(shorts, monkeypatch, capsys):
 def test_meta_short_nao_estoura_titulo():
     meta = up.meta_short({"titulo": "x" * 95, "descricao": "d", "tags": []}, "L")
     assert meta["titulo"] == "x" * 95
+
+
+# ── Shorts: falhas, cota, arquivos ilegíveis ───────────────────────────────
+
+def _insert_falhando(yt, erros):
+    """Os primeiros uploads levantam os erros da lista; os seguintes funcionam."""
+    original = yt.videos().insert
+
+    class _V:
+        def insert(self, part, body, media_body):
+            if erros:
+                erro = erros.pop(0)
+                yt.uploads.append(body)
+
+                class _Req:
+                    def next_chunk(self):
+                        raise erro
+                return _Req()
+            return original(part, body, media_body)
+    yt.videos = lambda: _V()
+
+
+def test_short_http_falha_nao_registra_e_segue_pro_proximo(shorts):
+    pasta, yt, banco = shorts
+    _insert_falhando(yt, [up.HttpError(_Resp(500), b"erro")])
+    assert up.main([str(pasta), "--shorts"]) == 1            # houve falha
+    feitos = json.loads((pasta / "youtube_shorts.json").read_text(encoding="utf-8"))
+    assert list(feitos) == ["02"]                            # o 01 falhou: nada registrado, o 02 subiu
+    sh = json.loads((pasta / "shorts" / "shorts.json").read_text(encoding="utf-8"))
+    assert "youtube_id" not in sh["01"] and "youtube_id" in sh["02"]
+    assert len(banco("SELECT 1 FROM eventos WHERE etapa='09_upload' AND status='falha'")) == 1
+    assert json.loads(up.COTA_PATH.read_text())["usadas"] == 2 * up.DEFAULTS["cota_upload"]  # cobra mesmo falhando
+
+
+def test_short_quota_exceeded_para_o_loop_e_trava_a_cota(shorts):
+    pasta, yt, _ = shorts
+    _insert_falhando(yt, [up.HttpError(_Resp(403), b'{"error":{"errors":[{"reason":"quotaExceeded"}]}}')])
+    assert up.main([str(pasta), "--shorts"]) == 1
+    assert len(yt.uploads) == 1                              # não tentou o 2º
+    assert not (pasta / "youtube_shorts.json").exists()
+    assert json.loads(up.COTA_PATH.read_text())["usadas"] == up.DEFAULTS["cota_limite_dia"]
+
+
+def test_shorts_param_antes_de_estourar_a_cota(shorts):
+    pasta, yt, _ = shorts
+    cota = up.Cota(up.DEFAULTS["cota_limite_dia"])
+    cota.usadas = cota.limite - up.DEFAULTS["cota_upload"]   # cabe exatamente 1 upload
+    cota._salvar()
+    assert up.main([str(pasta), "--shorts"]) == 0
+    assert len(yt.uploads) == 1
+    feitos = json.loads((pasta / "youtube_shorts.json").read_text(encoding="utf-8"))
+    assert list(feitos) == ["01"]                            # o 02 fica pra amanhã
+
+
+def test_shorts_json_ilegivel_pula_a_live(shorts, capsys):
+    pasta, yt, _ = shorts
+    (pasta / "shorts" / "shorts.json").write_text("{quebrado", encoding="utf-8")
+    assert up.main([str(pasta), "--shorts"]) == 0
+    assert yt.uploads == [] and "pulando" in capsys.readouterr().out
+
+
+def test_short_sem_arquivo_nao_sobe(shorts, capsys):
+    pasta, yt, _ = shorts
+    (pasta / "shorts" / "short_01_x.mp4").unlink()
+    up.main([str(pasta), "--shorts"])
+    assert len(yt.uploads) == 1 and "arquivo do Short não existe" in capsys.readouterr().out
+
+
+def test_falha_ao_gravar_shorts_json_nao_derruba_o_registro(shorts, monkeypatch):
+    """Se o shorts.json não puder ser atualizado, o youtube_shorts.json (idempotência) já está salvo."""
+    from pathlib import Path
+    pasta, yt, _ = shorts
+    orig = Path.write_text
+
+    def falha_no_shorts_json(self, *a, **k):
+        if self.name == "shorts.json":
+            raise OSError("disco cheio")
+        return orig(self, *a, **k)
+    monkeypatch.setattr(Path, "write_text", falha_no_shorts_json)
+    assert up.main([str(pasta), "--shorts"]) == 0
+    assert set(json.loads((pasta / "youtube_shorts.json").read_text(encoding="utf-8"))) == {"01", "02"}
+
+
+def test_shorts_ocupados_le_naive_ignora_ilegivel_e_sem_data(tmp_path):
+    for nome, conteudo in {"a": {"01": {"publish_at": "2026-10-22T20:00:00"},   # naive = fuso do config
+                                 "02": {}},
+                           "b": "{quebrado",
+                           "c": [1, 2]}.items():
+        (tmp_path / nome).mkdir()
+        (tmp_path / nome / up.SHORTS_JSON).write_text(
+            conteudo if isinstance(conteudo, str) else json.dumps(conteudo), encoding="utf-8")
+    assert up.shorts_ocupados(tmp_path, CFG) == {datetime(2026, 10, 22, 20, 0, tzinfo=SP)}
+
+
+def test_slots_shorts_minimo_naive_vira_fuso_do_config():
+    """publish_at sem fuso assume o fuso do config (18h SP, não UTC)."""
+    minimo = up._data("2026-10-23T18:00:00", CFG)
+    s = up.slots_shorts([minimo], set(), CFG, datetime(2026, 10, 21, 9, 0, tzinfo=SP))
+    assert (s[0].day, s[0].hour) == (23, 20)
