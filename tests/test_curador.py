@@ -526,8 +526,9 @@ def _pasta_com_blocos(raiz, nome, stem, status_por_bloco, shorts=None):
 
 
 def _sem_agendado(monkeypatch, ultimo=None):
-    import _publicacao
-    monkeypatch.setattr(_publicacao, "ultimo_agendado", lambda: ultimo)
+    import _cobertura
+    monkeypatch.setattr(_cobertura, "agenda_canal",
+                        lambda agora=None: {"ultimo": ultimo, "futuros": 0})
 
 
 def test_calcular_estoque_conta_longos_aprovados_e_shorts_nao_postados(raiz, monkeypatch):
@@ -541,7 +542,8 @@ def test_calcular_estoque_conta_longos_aprovados_e_shorts_nao_postados(raiz, mon
     est = cu.calcular_estoque({"estoque": {"longos_por_dia": 1, "shorts_por_dia": 2}}, hoje)
     # longos: blocos 1 e 4; shorts: 1 e 2 (3 descartado, 4 já postado)
     assert est == {"longos": 2, "shorts": 2, "dias_agendados": 0, "dias": 2.0,
-                   "coberto_ate": date(2026, 10, 24)}
+                   "coberto_ate": date(2026, 10, 24), "ultimo_agendado": None,
+                   "agendados_futuros": 0}
 
 
 def test_estoque_so_agendados(raiz, monkeypatch):
@@ -581,7 +583,8 @@ def test_estoque_longos_por_dia_divide_prontos(raiz, monkeypatch):
 def test_estoque_sem_nada_coberto_ate_none(raiz, monkeypatch):
     _sem_agendado(monkeypatch)
     est = cu.calcular_estoque(CFG_EST, date(2026, 10, 22))
-    assert est == {"longos": 0, "shorts": 0, "dias_agendados": 0, "dias": 0.0, "coberto_ate": None}
+    assert est == {"longos": 0, "shorts": 0, "dias_agendados": 0, "dias": 0.0, "coberto_ate": None,
+                   "ultimo_agendado": None, "agendados_futuros": 0}
 
 
 def test_estoque_shorts_nao_afetam_dias(raiz, monkeypatch):

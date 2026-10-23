@@ -28,6 +28,7 @@
 ## Aba "Hoje" (tela inicial do PO)
 
 - `painel/hoje.py`: no ar hoje/amanhã (`publish_at` dos blocos agendado/publicado), fila no YouTube, "canal coberto até DD/MM" (chama o próprio `13_curador.calcular_estoque`: dias até o último longo agendado + prontos; bate com o que o Curador vê às 17h), decisões pendentes (tarefas + quarentena), status da auditoria, custo do mês x orçamento e placar do canal.
+- O painel fica dias no ar e o Streamlit só recarrega `painel/`: `hoje.scripts_frescos()` recarrega `_cobertura` → `_publicacao` → `13_curador` quando o arquivo muda no disco. Módulo novo de `scripts/` que o painel chame entra em `MODULOS_SCRIPTS` (em ordem de dependência).
 - **Faixa de alertas** acima das abas: falha do Curador (evento `falha` sem `ok` depois, Traceback no `state/curador.log` ou log parado depois das 18h), erro de download (`01_baixar` na mensagem da falha), token ausente/sem `refresh_token`/`invalid_grant`, cota (`state/cota_youtube.json` ≥ `cota_alerta_pct`), estoque abaixo do mínimo e nada agendado pra amanhã.
 - Orçamento e limiar de cota em `config/painel.json` (`orcamento_mensal_usd`, padrão 10; `cota_alerta_pct`, padrão 80). O custo do mês soma `custo_usd` de todos os eventos desde o dia 1º, por agente.
 - **Placar do canal:** o Analista grava `state/placar.json` = `{"atualizado": ISO, "inscritos": int, "horas_12m": float, "views_shorts_90d": int}`. Sem o arquivo a seção mostra "—" (metas do YPP: 1.000 inscritos + 4.000 h ou 10 mi de views em Shorts).

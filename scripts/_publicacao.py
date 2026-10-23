@@ -16,10 +16,10 @@ import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+from _cobertura import agenda_canal
 from _descricoes import ler_descricoes
 from _paths import auditoria_aprovada
 
-CANAL_JSON = Path(__file__).parent.parent / "state" / "canal.json"
 DIAS_SEMANA = ["seg", "ter", "qua", "qui", "sex", "sáb", "dom"]
 HORA = "18h"
 CORTE_HOJE = 16          # processou antes das 16h: o 1º já pode sair hoje às 18h
@@ -72,34 +72,9 @@ def aprovados(pasta: Path) -> list[dict]:
 
 
 def ultimo_agendado() -> date | None:
-    """Dia do último longo agendado/publicado: o maior entre o que o 14_canal viu no canal
-    (state/canal.json) e o publish_at dos blocos no banco."""
-    datas = []
-    try:
-        ultimo = json.loads(CANAL_JSON.read_text(encoding="utf-8")).get("ultimo_longo")
-        if ultimo:
-            datas.append(ultimo[:10])
-    except (OSError, ValueError, AttributeError):
-        pass
-    try:
-        from _eventos import conectar
-        con = conectar()
-        try:
-            r = con.execute("SELECT MAX(publish_at) FROM blocos WHERE publish_at IS NOT NULL "
-                            "AND status IN ('agendado', 'publicado')").fetchone()
-        finally:
-            con.close()
-        if r and r[0]:
-            datas.append(r[0][:10])
-    except Exception:  # noqa: BLE001 — banco é best-effort
-        pass
-    validas = []
-    for d in datas:
-        try:
-            validas.append(date.fromisoformat(d))
-        except ValueError:
-            continue
-    return max(validas, default=None)
+    """Dia do último longo agendado/publicado (_cobertura.agenda_canal: canal.json do
+    14_canal + publish_at do banco), a mesma fonte do Curador e do painel."""
+    return agenda_canal()["ultimo"]
 
 
 def agenda(n: int, agora: datetime | None = None, depois_de: date | None = None) -> list[date]:
