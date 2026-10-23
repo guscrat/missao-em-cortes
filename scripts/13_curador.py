@@ -14,11 +14,10 @@ Fluxo:
      state/curadoria.json).
   2. Busca título original (pt) e data exata dos que passaram e manda pro Claude
      (claude-opus-5-5, effort low, ~US$ 0,02-0,05/rodada): vale a pena? prioridade? motivo?
-  3. Todo vídeo que vale entra na FILA (state/curadoria.json). Só processa quando o
-     ESTOQUE pronto pra publicar cai abaixo de estoque.dias_minimos (config): dias de
-     estoque = min(longos aprovados / longos_por_dia, Shorts prontos / shorts_por_dia).
-     Enquanto config/upload.json → auditoria_aprovada for false, os Shorts não sobem e
-     o estoque conta só os longos (longos / longos_por_dia). Virou true: volta sozinho.
+  3. Todo vídeo que vale entra na FILA (state/curadoria.json). Só processa quando a
+     COBERTURA do canal cai abaixo de estoque.dias_minimos (config): dias cobertos = de
+     hoje até o último longo agendado no canal + longos aprovados / longos_por_dia
+     ("canal coberto até DD/MM"). Shorts não entram na conta.
      Aí processa 1 vídeo só, o de maior prioridade (empate: o mais recente):
      01_baixar → pipeline.py --polir → 11_revisor → 10_shorts (aprovados) → publicacao.txt.
      ~US$ 0,65 por vídeo. Fila com mais de DIAS_ARQUIVAR dias expira.
@@ -31,6 +30,7 @@ Canal com zoom no config: o zoom é copiado pro config/zoom.json do stem novo (c
 calibrar_zoom --salvar). Canal sem zoom: processa sem e o resumo pede pra calibrar.
 """
 import json
+import math
 import os
 import re
 import subprocess
@@ -40,7 +40,6 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from _eventos import evento, upsert_video, conectar
-from _paths import auditoria_aprovada
 from sincronizar_estado import DIAS_ARQUIVAR    # janela do conteúdo antigo (15 dias)
 
 ROOT = Path(__file__).parent.parent
@@ -303,12 +302,13 @@ def ler_shorts(pasta: Path) -> dict:
 
 
 def calcular_estoque(cfg: dict, hoje: date | None = None) -> dict:
-    """O que está pronto e ainda não foi pro ar, de lives dos últimos DIAS_ARQUIVAR dias.
-    Longo = bloco 'aprovado' (coluna "Pronto para publicar"). Short = short_NN gerado de
-    bloco aprovado/agendado/publicado que ainda não foi marcado como postado
-    (pelo 14_canal, que lê o canal) nem arquivado (live velha, pelo sincronizar_estado).
-    Sem auditoria aprovada os Shorts não sobem: aparecem na conta, mas os dias de estoque
-    saem só dos longos (so_longos=True)."""
+    """Dias de canal COBERTO: de hoje até o último longo agendado no canal
+    (_publicacao.ultimo_agendado: state/canal.json do 14_canal + publish_at do banco) e
+    mais os prontos pra publicar, a longos_por_dia por dia. coberto_ate = o último dia com
+    vídeo garantido. Pronto = bloco 'aprovado' (coluna "Pronto para publicar") de live dos
+    últimos DIAS_ARQUIVAR dias. Shorts (short_NN de bloco aprovado/agendado/publicado, não
+    postado nem arquivado) só aparecem no resumo: não entram nos dias."""
+    from _publicacao import ultimo_agendado
     hoje = hoje or date.today()
     try:
         con = conectar()
@@ -338,19 +338,19 @@ def calcular_estoque(cfg: dict, hoje: date | None = None) -> dict:
         if sh and sh.get("arquivo") and not sh.get("postado") and not sh.get("arquivado") and \
                 (pasta / "shorts" / sh["arquivo"]).exists():
             shorts += 1
-    est = cfg["estoque"]
-    so_longos = not auditoria_aprovada()
-    dias = longos / est["longos_por_dia"]
-    if not so_longos:
-        dias = min(dias, shorts / est["shorts_por_dia"])
-    return {"longos": longos, "shorts": shorts, "dias": dias, "so_longos": so_longos}
+    ultimo = ultimo_agendado()
+    dias_agendados = max((ultimo - hoje).days, 0) if ultimo else 0
+    prontos = longos / cfg["estoque"]["longos_por_dia"]
+    dias = dias_agendados + prontos
+    return {"longos": longos, "shorts": shorts, "dias_agendados": dias_agendados, "dias": dias,
+            "coberto_ate": hoje + timedelta(days=math.ceil(dias)) if dias else None}
 
 
 def _texto_estoque(est: dict) -> str:
-    if est.get("so_longos"):
-        return (f"{est['longos']} longo(s) = {est['dias']:.1f} dia(s) "
-                f"(+ {est['shorts']} Short(s) fora da conta até a auditoria)")
-    return f"{est['longos']} longo(s) + {est['shorts']} Short(s) = {est['dias']:.1f} dia(s)"
+    ate = est.get("coberto_ate")
+    cobertura = f"canal coberto até {ate:%d/%m}" if ate else "nada agendado nem pronto"
+    return (f"{cobertura} = {est['dias']:.1f} dia(s) ({est.get('dias_agendados', 0)} dia(s) já "
+            f"agendado(s) + {est['longos']} longo(s) pronto(s); {est['shorts']} Short(s) à parte)")
 
 
 # --- processamento ------------------------------------------------------------------------
