@@ -97,6 +97,8 @@ def citados(textos: list[str], excluir: str = "", lista: list[dict] | None = Non
     'Bolsonaro' (Jair), nem 'Fábio Luís Lula da Silva' como 'Lula'."""
     lista = carregar() if lista is None else lista
     juntos = " ".join(_norm(t) for t in textos if t)
+    for frase in _nao_trocar(lista):          # 'Nicolas Maduro' não é o Nikolas
+        juntos = juntos.replace(_norm(frase), " | ")
     fora = _norm(excluir) if excluir else ""
     formas = sorted(((_norm(f), p["nome"]) for p in lista for f in variantes(p["nome"], lista)),
                     key=lambda x: -len(x[0]))

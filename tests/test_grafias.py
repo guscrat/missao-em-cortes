@@ -362,3 +362,9 @@ def test_voltar_template_falha_nao_mexe_na_descricao(tmp_path, runs):
     (p / "descricoes.txt").write_text(_txt([1], {1: [cred]}), encoding="utf-8")
     assert _editor.voltar_template(p, 1) is False
     assert cred in (p / "descricoes.txt").read_text(encoding="utf-8")
+
+
+def test_citados_ignora_nao_trocar():
+    assert g.citados(["Nicolas Maduro discursou"], lista=LISTA) == []
+    assert g.citados(["NICOLÁS MADURO e Nicolas Ferreira"], lista=LISTA + [
+        {"nome": "X", "erradas": [], "nao_trocar": ["Nicolás Maduro"]}]) == ["Nikolas Ferreira"]
