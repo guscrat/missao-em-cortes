@@ -29,7 +29,7 @@ desc = importlib.import_module("08_descricao")
 
 LISTA = [
     {"nome": "Nikolas Ferreira", "curto": "Nikolas",
-     "erradas": ["Nicolas Ferreira", "Nicolas", "Nicholas"]},
+     "erradas": ["Nicolas Ferreira", "Nicolas", "Nicholas"], "nao_trocar": ["Nicolas Maduro"]},
     {"nome": "Flávio Bolsonaro", "curto": "Flávio", "erradas": ["Flavio Bolsonaro"]},
     {"nome": "Jair Bolsonaro", "curto": "Bolsonaro", "erradas": []},
     {"nome": "Luiz Inácio Lula da Silva", "curto": "Lula", "erradas": []},
@@ -62,7 +62,43 @@ def test_corrigir_nome_completo_e_caixa_alta():
 
 def test_corrigir_palavra_solta_seguida_de_nome_proprio():
     assert g.corrigir("Nicolas Maduro caiu", LISTA) == "Nicolas Maduro caiu"
-    assert g.corrigir("NICOLAS MADURO CAIU", LISTA) == "NIKOLAS MADURO CAIU"
+    assert g.corrigir("Nicolas Sarkozy caiu", LISTA) == "Nicolas Sarkozy caiu"   # misto: inicial maiúscula
+
+
+def test_corrigir_caixa_alta_troca_o_personagem_e_protege_nao_trocar():
+    """Texto da thumb/Short é todo em maiúsculas: troca o Nikolas, nunca o Maduro."""
+    assert g.corrigir("NICOLAS SERÁ O REI?", LISTA) == "NIKOLAS SERÁ O REI?"
+    assert g.corrigir("NICOLAS MADURO CAIU", LISTA) == "NICOLAS MADURO CAIU"
+    assert g.corrigir("nicolas maduro caiu", LISTA) == "nicolas maduro caiu"
+    assert g.corrigir("NICOLAS E NICOLAS MADURO", LISTA) == "NIKOLAS E NICOLAS MADURO"
+    assert g.corrigir("NICOLAS FERREIRA X NICOLAS MADURO", LISTA) == "NIKOLAS FERREIRA X NICOLAS MADURO"
+
+
+def test_config_real_protege_maduro_em_caixa_alta():
+    assert g.corrigir("NICOLAS MADURO") == "NICOLAS MADURO"
+    assert g.corrigir("NICOLAS SERÁ O REI?") == "NIKOLAS SERÁ O REI?"
+
+
+def test_nao_trocar_acento_caixa_mista_e_limites():
+    lista = [{"nome": "Nikolas Ferreira", "curto": "Nikolas", "erradas": ["Nicolas"], "nao_trocar": ["Nicolás Maduro"]}]
+    assert g.corrigir("NICOLÁS MADURO e NICOLAS", lista) == "NICOLÁS MADURO e NIKOLAS"
+    assert g.corrigir("nIcOlÁs mAdUrO", lista) == "nIcOlÁs mAdUrO"          # caixa original preservada
+    assert g.corrigir("NICOLÁS MADUROS", lista) == "NICOLÁS MADUROS"         # sem fronteira: não casa a frase
+    assert g.corrigir("Nicolas Maduro", lista) == "Nicolas Maduro"           # sem acento: misto + nome próprio
+
+
+def test_nao_trocar_varias_ocorrencias_e_digitos_depois():
+    assert g.corrigir("NICOLAS MADURO, NICOLAS MADURO 2 E NICOLAS 10", LISTA) == \
+        "NICOLAS MADURO, NICOLAS MADURO 2 E NIKOLAS 10"
+    assert g.corrigir("NICOLAS MADURO 0 1 E NICOLAS", LISTA) == "NICOLAS MADURO 0 1 E NIKOLAS"
+
+
+def test_para_prompt_lista_nao_trocar():
+    assert "não trocar: Nicolas Maduro" in g.para_prompt(LISTA)
+
+
+def test_corrigir_texto_com_placeholder_literal():
+    assert g.corrigir("\x005\x00 nicolas maduro", LISTA) == "\x005\x00 nicolas maduro"
 
 
 def test_corrigir_nao_mexe_em_palavra_parecida():
@@ -72,7 +108,8 @@ def test_corrigir_nao_mexe_em_palavra_parecida():
 
 def test_para_prompt_e_variantes():
     p = g.para_prompt(LISTA)
-    assert "- Nikolas Ferreira (curto: Nikolas; nunca: Nicolas Ferreira, Nicolas, Nicholas)" in p
+    assert ("- Nikolas Ferreira (curto: Nikolas; nunca: Nicolas Ferreira, Nicolas, Nicholas; "
+            "outra pessoa, não trocar: Nicolas Maduro)") in p
     assert "- Jair Bolsonaro (curto: Bolsonaro)" in p
     assert g.variantes("nikolas ferreira", LISTA)[:2] == ["Nikolas Ferreira", "Nikolas"]
     assert "Nicolas" in g.variantes("Nikolas Ferreira", LISTA)
@@ -137,6 +174,43 @@ BLOCO = {"id": 1, "tema": "tema", "titulo_sugerido": "Nicolas Ferreira detona", 
 def test_08_titulo_passa_pela_grafia():
     texto = desc.bloco_para_texto(BLOCO, "https://youtube.com/watch?v=1")
     assert "Nikolas Ferreira detona" in texto and "Nicolas" not in texto
+
+
+def test_08_corpo_tags_e_hashtags_passam_pela_grafia_e_protegem_nao_trocar():
+    """Config real: o corpo da descrição e as tags também saem com a grafia oficial, mas
+    'Nicolas Maduro' (outra pessoa) fica como está."""
+    b = {"id": 1, "tema": "t", "titulo_sugerido": "T",
+         "resumo": "As campanhas de Nicolas, Pavanato e Flavio Bolsonaro; Nicolas Maduro fica.",
+         "ganchos": ["Pavanato e Nicolas ao lado de Senna"],
+         "tags": ["Nicolas Ferreira", "Nikolas Ferreira", "Lucas Pavanatto"],
+         "speakers_principais": ["Artur do Val"]}
+    texto = desc.bloco_para_texto(b, "https://youtube.com/watch?v=1")
+    assert "campanhas de Nikolas, Pavanato e Flávio Bolsonaro; Nicolas Maduro fica." in texto
+    assert "• Pavanato e Nikolas ao lado de Senna" in texto
+    assert "Convidado(s): Arthur do Val" in texto
+    assert "#NikolasFerreira" in texto and "#NicolasFerreira" not in texto   # hashtag = 2 primeiras tags
+    tags = texto.split("copiar pro YouTube Studio):\n" + "-" * 70 + "\n")[1].splitlines()[0]
+    assert tags.startswith("Nikolas Ferreira, Lucas Pavanato, ")      # sem duplicar o Nikolas
+    assert "Nicolas Ferreira" not in texto and "Pavanatto" not in texto
+
+
+def test_08_campos_ausentes_ou_vazios_nao_quebram():
+    """Sem resumo/ganchos/tags/speakers: não explode, sem seção de momentos nem convidados."""
+    b = {"id": 2, "tema": "t", "titulo_sugerido": "T"}
+    texto = desc.bloco_para_texto(b, "https://youtube.com/watch?v=1")
+    assert "Principais momentos" not in texto and "Convidado(s)" not in texto
+    vazio = dict(b, resumo="", ganchos=[], tags=[], speakers_principais=[])
+    assert desc.bloco_para_texto(vazio, "https://youtube.com/watch?v=1") == texto
+
+
+def test_08_ganchos_em_caixa_alta_e_hashtag_duplicada():
+    b = {"id": 3, "tema": "t", "titulo_sugerido": "T", "resumo": "R.",
+         "ganchos": ["NICOLAS FERREIRA ATACA"], "tags": ["Nicolas", "NIKOLAS", "Nicolas Ferreira"]}
+    texto = desc.bloco_para_texto(b, "u")
+    assert "• NIKOLAS FERREIRA ATACA" in texto and "NICOLAS" not in texto.upper().replace("NICOLAS MADURO", "")
+    tags = texto.split("copiar pro YouTube Studio):\n" + "-" * 70 + "\n")[1].splitlines()[0].split(", ")
+    assert [t.lower() for t in tags].count("nikolas") == 1      # duplicata pós-correção some
+    assert texto.count("#Nikolas") == 1
 
 
 def test_08_repor_creditos(tmp_path, monkeypatch):
@@ -347,3 +421,9 @@ def test_voltar_template_falha_nao_mexe_na_descricao(tmp_path, runs):
     (p / "descricoes.txt").write_text(_txt([1], {1: [cred]}), encoding="utf-8")
     assert _editor.voltar_template(p, 1) is False
     assert cred in (p / "descricoes.txt").read_text(encoding="utf-8")
+
+
+def test_citados_ignora_nao_trocar():
+    assert g.citados(["Nicolas Maduro discursou"], lista=LISTA) == []
+    assert g.citados(["NICOLÁS MADURO e Nicolas Ferreira"], lista=LISTA + [
+        {"nome": "X", "erradas": [], "nao_trocar": ["Nicolás Maduro"]}]) == ["Nikolas Ferreira"]

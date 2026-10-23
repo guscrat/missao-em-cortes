@@ -28,7 +28,7 @@ foi agendado à mão (_cobertura: canal.json do 14 + banco), então nada disputa
 Shorts (--shorts): sobe os shorts/short_NN_*.mp4 (do 10_shorts) como privados + publishAt
 nos "shorts_horarios" do config (2/dia), só de bloco cujo longo JÁ está no YouTube, no 1º
 horário livre a partir da ida do longo ao ar. "todos" = um plano só com todas as lives.
-Título = manchete do Short (_descricoes.manchete, até 60 chars; o 14 casa por ela),
+Título = "MANCHETE | quem fala" (_descricoes.titulo_short, até 60 chars; o 14 casa por ele),
 descrição do longo com "Vídeo completo: youtu.be/<longo>" no topo. Registro em
 youtube_shorts.json e youtube_id/postado no shorts/shorts.json. Short com "revisar" (pouco
 rosto) não sobe. O "vídeo relacionado" do Short NÃO existe na API: é marcado à mão no
@@ -61,7 +61,7 @@ from googleapiclient.http import MediaFileUpload
 
 from _canal import eh_nosso_canal
 from _cobertura import agenda_canal
-from _descricoes import ler_descricoes, manchete
+from _descricoes import ler_descricoes, manchete, titulo_short
 from _eventos import evento, ler_bloco, upsert_bloco
 from _google import credenciais
 import _paths
@@ -535,7 +535,7 @@ def main(argv: list[str]) -> int:
 # ── Shorts ─────────────────────────────────────────────────────────────────
 
 def meta_short(meta: dict, longo_id: str, titulo: str) -> dict:
-    """Título = manchete do próprio Short (_descricoes.manchete; o 14 casa por ela, exato) e a
+    """Título = manchete do próprio Short (_descricoes.titulo_short; o 14 casa por ele, exato) e a
     descrição do longo com o link dele no topo — o crédito da fonte vem junto."""
     descricao = f"▶️ Vídeo completo: https://youtu.be/{longo_id}\n\n{meta['descricao']}"
     return preparar_metadados({"titulo": titulo, "descricao": descricao, "tags": meta["tags"]})
@@ -566,7 +566,7 @@ def planejar_shorts(pasta: Path, cfg: dict, so_bloco: int | None) -> list[dict]:
         publish_at = longo.get("publish_at") or bloco.get("publish_at")
         video = pasta / "shorts" / sh.get("arquivo", "")
         meta = descricoes.get(bid)
-        titulo = manchete(blocos.get(bid, {}))
+        titulo = titulo_short(blocos.get(bid, {}), stem)
         if titulo and not blocos.get(bid, {}).get("texto_thumb"):
             print(f"   [aviso] {stem} {nn}: sem texto_thumb, título do Short vem do tema: '{titulo}'")
         problema = (f"bloco em {bloco['status']} no painel" if bloco.get("status") in NAO_SOBE else
@@ -575,7 +575,9 @@ def planejar_shorts(pasta: Path, cfg: dict, so_bloco: int | None) -> list[dict]:
                     if sh.get("revisar") else
                     "arquivo do Short não existe" if not sh.get("arquivo") or not video.exists() else
                     "sem entrada no descricoes.txt" if not meta else
-                    "sem manchete (texto_thumb/tema) no blocos.json" if not titulo else
+                    "sem manchete (texto_thumb/tema) no blocos.json"
+                    if not manchete(blocos.get(bid, {})) else
+                    "sem quem fala (speakers_principais/canal) pro título" if not titulo else
                     problema_credito(meta["descricao"]))
         if problema:
             print(f"   [!] {stem} {nn}: {problema} — não sobe")
