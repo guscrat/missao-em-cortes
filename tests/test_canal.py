@@ -66,6 +66,22 @@ def test_texto_da_thumb_so_casa_exato(local):
     assert ca.casar("ATÉ TEU PAI AGORA", locais) is None
 
 
+def test_reconhece_short_pela_manchete_do_tema_ou_cortada(projeto):
+    """Título do Short subido pelo 09 = _descricoes.manchete: vem do tema sem texto_thumb e é
+    cortado acima de 60 chars. O 14 tem que reconhecer os dois (exato)."""
+    from _descricoes import manchete
+    pasta = projeto.video("live_x", blocos=[1, 2])
+    blocos = json.loads((pasta / "blocos.json").read_text(encoding="utf-8"))
+    blocos["blocos"][0].update(texto_thumb="", tema="Renan explica a virada do segundo turno")
+    blocos["blocos"][1].update(texto_thumb="PALAVRA " * 10)                 # 80 chars
+    (pasta / "blocos.json").write_text(json.dumps(blocos), encoding="utf-8")
+    locais = ca.titulos_locais(projeto.outputs)
+    for b in blocos["blocos"]:
+        titulo_short = manchete(b)
+        assert len(titulo_short) <= 60
+        assert ca.casar(titulo_short, locais)["bloco"] == b["id"]
+
+
 def test_situacao():
     assert ca.situacao(_v("a", "x"))[0] == "publicado"
     st, quando = ca.situacao(_v("a", "x", "private", "2026-10-25T21:00:00Z"))

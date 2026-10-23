@@ -473,7 +473,7 @@ def shorts(cenario):
     return pasta, yt, banco
 
 
-def test_shorts_sobem_depois_do_longo_com_link_e_mesmo_titulo(shorts):
+def test_shorts_sobem_depois_do_longo_com_link_e_manchete(shorts):
     pasta, yt, banco = shorts
     assert up.main([str(pasta), "--shorts"]) == 0
     assert len(yt.uploads) == 2                                   # 03 espera o longo
@@ -481,7 +481,7 @@ def test_shorts_sobem_depois_do_longo_com_link_e_mesmo_titulo(shorts):
     assert a["status"] == {"privacyStatus": "private", "selfDeclaredMadeForKids": False,
                            "publishAt": "2026-10-22T23:00:00Z"}   # 22/10 20h, depois do longo
     assert b["status"]["publishAt"] == "2026-10-23T23:00:00Z"
-    assert a["snippet"]["title"] == "Título 1 #shorts"
+    assert a["snippet"]["title"] == "THUMB 1"                      # manchete, não o título do longo
     assert a["snippet"]["description"].startswith("▶️ Vídeo completo: https://youtu.be/L1\n\n")
     assert "Conteúdo original: https://youtu.be/fonte" in a["snippet"]["description"]
     feitos = json.loads((pasta / "youtube_shorts.json").read_text(encoding="utf-8"))
@@ -516,10 +516,11 @@ def test_shorts_todos_intercala_lives_nos_horarios_livres(shorts, projeto, monke
     upsert_bloco("w", 1, status="agendado", forcar_status=True, youtube_id="W1",
                  publish_at="2026-10-22T12:00:00-03:00")
     assert up.main(["todos", "--shorts"]) == 0
-    quando = {u["snippet"]["title"]: u["status"]["publishAt"] for u in yt.uploads}
-    assert quando == {"Outro #shorts": "2026-10-22T15:00:00Z",        # 22/10 12h
-                      "Título 1 #shorts": "2026-10-22T23:00:00Z",     # 22/10 20h
-                      "Título 2 #shorts": "2026-10-23T23:00:00Z"}     # 23/10 20h
+    quando = {u["snippet"]["description"].splitlines()[0][-2:]: u["status"]["publishAt"]
+              for u in yt.uploads}                                    # chave = id do longo
+    assert quando == {"W1": "2026-10-22T15:00:00Z",                   # 22/10 12h
+                      "L1": "2026-10-22T23:00:00Z",                   # 22/10 20h
+                      "L2": "2026-10-23T23:00:00Z"}                   # 23/10 20h
     assert (pasta_a / "youtube_shorts.json").exists() and (pasta_b / "youtube_shorts.json").exists()
     with pytest.raises(SystemExit):
         up.main(["todos", "--shorts", "--bloco=1"])
@@ -555,9 +556,46 @@ def test_como_aprovada_simula_sem_subir(shorts, monkeypatch, capsys):
         up.main([str(pasta), "--shorts", "--como-aprovada"])   # sem --dry-run: recusa
 
 
-def test_meta_short_nao_estoura_titulo():
-    meta = up.meta_short({"titulo": "x" * 95, "descricao": "d", "tags": []}, "L")
-    assert meta["titulo"] == "x" * 95
+def test_meta_short_usa_a_manchete():
+    meta = up.meta_short({"titulo": "Título longo do vídeo", "descricao": "d", "tags": ["a"]},
+                         "L", "ATÉ TEU PAI")
+    assert meta["titulo"] == "ATÉ TEU PAI" and meta["descricao"].startswith("▶️ Vídeo completo: https://youtu.be/L")
+
+
+def test_manchete_texto_thumb_senao_tema_e_corta_em_palavra():
+    assert up.manchete({"texto_thumb": "ZERO  PROPOSTA", "tema": "t"}) == "ZERO PROPOSTA"
+    assert up.manchete({"texto_thumb": "", "tema": "tema do bloco"}) == "tema do bloco"
+    longo = "palavra " * 12                                       # 96 chars
+    m = up.manchete({"tema": longo})
+    assert len(m) <= 60 and not m.endswith(" ") and longo.startswith(m)
+    assert up.manchete({}) == ""
+
+
+def test_manchete_limites_de_60_chars():
+    exata = "a" * 29 + " " + "b" * 30                              # 60 chars: não corta
+    assert len(exata) == 60 and up.manchete({"texto_thumb": exata}) == exata
+    # 61 chars com o espaço na posição 60: corta na palavra inteira
+    assert up.manchete({"tema": "a" * 60 + " b"}) == "a" * 60
+
+
+def test_manchete_palavra_unica_gigante_respeita_60():
+    assert len(up.manchete({"tema": "x" * 80})) <= 60
+
+
+def test_short_blocos_json_ilegivel_pula_a_live(shorts, capsys):
+    pasta, yt, _ = shorts
+    (pasta / "blocos.json").write_text("{quebrado", encoding="utf-8")
+    assert up.main([str(pasta), "--shorts"]) == 0
+    assert yt.uploads == [] and "blocos.json" in capsys.readouterr().out
+
+
+def test_short_sem_manchete_nao_sobe(shorts, capsys):
+    pasta, yt, _ = shorts
+    blocos = json.loads((pasta / "blocos.json").read_text(encoding="utf-8"))
+    blocos["blocos"][0].update(texto_thumb="", tema="")
+    (pasta / "blocos.json").write_text(json.dumps(blocos), encoding="utf-8")
+    up.main([str(pasta), "--shorts"])
+    assert len(yt.uploads) == 1 and "sem manchete" in capsys.readouterr().out
 
 
 # ── Shorts: falhas, cota, arquivos ilegíveis ───────────────────────────────

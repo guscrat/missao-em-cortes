@@ -27,7 +27,8 @@ foi agendado à mão (_cobertura: canal.json do 14 + banco), então nada disputa
 
 Shorts (--shorts): sobe os shorts/short_NN_*.mp4 (do 10_shorts) como privados + publishAt
 nos "shorts_horarios" do config (2/dia), só de bloco cujo longo JÁ está no YouTube, no 1º
-horário livre a partir da ida do longo ao ar. "todos" = um plano só com todas as lives. Mesmo título do longo + " #shorts" (é pelo título que o 14 casa),
+horário livre a partir da ida do longo ao ar. "todos" = um plano só com todas as lives.
+Título = manchete do Short (_descricoes.manchete, até 60 chars; o 14 casa por ela),
 descrição do longo com "Vídeo completo: youtu.be/<longo>" no topo. Registro em
 youtube_shorts.json e youtube_id/postado no shorts/shorts.json. Short com "revisar" (pouco
 rosto) não sobe. O "vídeo relacionado" do Short NÃO existe na API: é marcado à mão no
@@ -60,7 +61,7 @@ from googleapiclient.http import MediaFileUpload
 
 from _canal import eh_nosso_canal
 from _cobertura import agenda_canal
-from _descricoes import ler_descricoes
+from _descricoes import ler_descricoes, manchete
 from _eventos import evento, ler_bloco, upsert_bloco
 from _google import credenciais
 import _paths
@@ -82,7 +83,6 @@ DEFAULTS = {
 PLACEHOLDER_URL = "[COLAR URL DA LIVE AQUI]"
 TESTE_JSON = "youtube_teste.json"
 SHORTS_JSON = "youtube_shorts.json"
-SUFIXO_SHORT = " #shorts"
 NAO_SOBE = {"quarentena", "descartado", "arquivado"}   # decisão do revisor/editor/curadoria
 PREFIXO_TESTE = "[TESTE] "
 MSG_TRAVA = ("[!] Upload TRAVADO: a auditoria da YouTube Data API ainda não foi aprovada "
@@ -534,11 +534,9 @@ def main(argv: list[str]) -> int:
 
 # ── Shorts ─────────────────────────────────────────────────────────────────
 
-def meta_short(meta: dict, longo_id: str) -> dict:
-    """Mesmo título do longo (+ #shorts se couber) e a descrição dele com o link do longo
-    no topo — o crédito da fonte vem junto."""
-    titulo = meta["titulo"] + (SUFIXO_SHORT if len(meta["titulo"] + SUFIXO_SHORT) <= LIMITE_TITULO
-                               else "")
+def meta_short(meta: dict, longo_id: str, titulo: str) -> dict:
+    """Título = manchete do próprio Short (_descricoes.manchete; o 14 casa por ela, exato) e a
+    descrição do longo com o link dele no topo — o crédito da fonte vem junto."""
     descricao = f"▶️ Vídeo completo: https://youtu.be/{longo_id}\n\n{meta['descricao']}"
     return preparar_metadados({"titulo": titulo, "descricao": descricao, "tags": meta["tags"]})
 
@@ -549,8 +547,10 @@ def planejar_shorts(pasta: Path, cfg: dict, so_bloco: int | None) -> list[dict]:
     try:
         shorts = json.loads((pasta / "shorts" / "shorts.json").read_text(encoding="utf-8"))
         descricoes = ler_descricoes((pasta / "descricoes.txt").read_text(encoding="utf-8"))
-    except (OSError, ValueError) as e:
-        print(f"   [!] {stem}: sem shorts.json/descricoes.txt legível ({e}) — pulando")
+        blocos = {b["id"]: b for b in json.loads(
+            (pasta / "blocos.json").read_text(encoding="utf-8"))["blocos"]}
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        print(f"   [!] {stem}: sem shorts.json/descricoes.txt/blocos.json legível ({e}) — pulando")
         return []
     longos, feitos = ler_registro(pasta), ler_registro(pasta, SHORTS_JSON)
     itens = []
@@ -566,12 +566,16 @@ def planejar_shorts(pasta: Path, cfg: dict, so_bloco: int | None) -> list[dict]:
         publish_at = longo.get("publish_at") or bloco.get("publish_at")
         video = pasta / "shorts" / sh.get("arquivo", "")
         meta = descricoes.get(bid)
+        titulo = manchete(blocos.get(bid, {}))
+        if titulo and not blocos.get(bid, {}).get("texto_thumb"):
+            print(f"   [aviso] {stem} {nn}: sem texto_thumb, título do Short vem do tema: '{titulo}'")
         problema = (f"bloco em {bloco['status']} no painel" if bloco.get("status") in NAO_SOBE else
                     "longo ainda não está no YouTube — o Short espera" if not longo_id else
                     "pouco rosto (revisar: true no shorts.json) — confira e libere à mão"
                     if sh.get("revisar") else
                     "arquivo do Short não existe" if not sh.get("arquivo") or not video.exists() else
                     "sem entrada no descricoes.txt" if not meta else
+                    "sem manchete (texto_thumb/tema) no blocos.json" if not titulo else
                     problema_credito(meta["descricao"]))
         if problema:
             print(f"   [!] {stem} {nn}: {problema} — não sobe")
@@ -579,7 +583,7 @@ def planejar_shorts(pasta: Path, cfg: dict, so_bloco: int | None) -> list[dict]:
         itens.append({"pasta": pasta, "stem": stem, "bid": bid, "nn": nn, "video": video,
                       "longo_id": longo_id,
                       "minimo": _data(publish_at, cfg) if publish_at else None,
-                      "meta": meta_short(meta, longo_id)})
+                      "meta": meta_short(meta, longo_id, titulo)})
     return itens
 
 

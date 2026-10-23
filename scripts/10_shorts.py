@@ -9,7 +9,7 @@ Pra cada bloco com cold_open no blocos.json:
   2. Acha o rosto (OpenCV, local, grátis) em frames a cada 0.5s e centraliza a janela
      9:16 nele. A janela fica SEMPRE dentro da área anti-overlay do config/zoom.json,
      então os overlays da live continuam fora (stem sem zoom: usa o quadro inteiro e avisa)
-  3. Queima: texto_thumb como manchete no topo, legenda karaokê grande (words.json) e a
+  3. Queima: a manchete (_descricoes.manchete: texto_thumb, senão tema) no topo, legenda karaokê grande (words.json) e a
      marca MISSÃO EM CORTES embaixo
 
 Saída: outputs/<pasta>/shorts/short_NN_<slug>.mp4 (1080x1920, 30fps, NVENC) + shorts.json
@@ -26,6 +26,7 @@ import unicodedata
 sys.stdout.reconfigure(encoding='utf-8')
 from pathlib import Path
 
+from _descricoes import manchete
 from _ffmpeg import AENC, VENC
 from _legenda import (AMARELO_14, PRETO, agrupar_linhas, cabecalho_ass, dialogo, estilo,
                       eventos_karaoke, filtro_ass, hhmmss_para_segundos, limpar,
@@ -245,7 +246,7 @@ def main(argv: list[str]) -> int:
 
         ass = out_dir / f"short_{nn}.ass"
         palavras = palavras_na_janela(todas, ini, fim)
-        ass.write_text(gerar_ass_short(palavras, b.get("texto_thumb") or b["tema"], dur),
+        ass.write_text(gerar_ass_short(palavras, manchete(b), dur),
                        encoding="utf-8")
         saida = out_dir / f"short_{nn}_{slug(b['tema'])}.mp4"
         cmd, cwd = cmd_short(video, ini, dur, crop, ass, saida)
