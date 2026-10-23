@@ -571,6 +571,25 @@ def test_manchete_texto_thumb_senao_tema_e_corta_em_palavra():
     assert up.manchete({}) == ""
 
 
+def test_manchete_limites_de_60_chars():
+    exata = "a" * 29 + " " + "b" * 30                              # 60 chars: não corta
+    assert len(exata) == 60 and up.manchete({"texto_thumb": exata}) == exata
+    # 61 chars com o espaço na posição 60: corta na palavra inteira
+    assert up.manchete({"tema": "a" * 60 + " b"}) == "a" * 60
+
+
+@pytest.mark.xfail(strict=True, reason="BUG: palavra única > 60 chars sai com 61 (rsplit sem espaço)")
+def test_manchete_palavra_unica_gigante_respeita_60():
+    assert len(up.manchete({"tema": "x" * 80})) <= 60
+
+
+def test_short_blocos_json_ilegivel_pula_a_live(shorts, capsys):
+    pasta, yt, _ = shorts
+    (pasta / "blocos.json").write_text("{quebrado", encoding="utf-8")
+    assert up.main([str(pasta), "--shorts"]) == 0
+    assert yt.uploads == [] and "blocos.json" in capsys.readouterr().out
+
+
 def test_short_sem_manchete_nao_sobe(shorts, capsys):
     pasta, yt, _ = shorts
     blocos = json.loads((pasta / "blocos.json").read_text(encoding="utf-8"))
