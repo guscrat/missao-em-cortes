@@ -120,7 +120,7 @@ def test_gerar_lista_short_quando_existe(tmp_path, monkeypatch):
         json.dumps({"01": {"arquivo": "short_01_x.mp4"}}), encoding="utf-8")
     caminho, _ = pub.gerar(pasta, datetime(2026, 10, 22, 9))
     texto = caminho.read_text(encoding="utf-8")
-    assert "SHORT:   shorts/short_01_x.mp4" in texto and "SHORT:   (sem Short)" in texto
+    assert "SHORT:   shorts/short_01_x.mp4 (sobe pela API)" in texto and "SHORT:   (sem Short)" in texto
 
 
 def test_agenda_continua_depois_do_ultimo_agendado():
@@ -152,7 +152,7 @@ def test_gerar_sem_auditoria_omite_short_e_avisa(tmp_path, monkeypatch):
     caminho, _ = pub.gerar(pasta, datetime(2026, 10, 22, 9))
     texto = caminho.read_text(encoding="utf-8")
     assert "SHORT:" not in texto and "short_01_x.mp4" not in texto
-    assert "Só os vídeos LONGOS" in texto and "MESMO título" not in texto
+    assert "Só os vídeos LONGOS" in texto and "sobem pela API (09" not in texto
     assert "ARQUIVO: finalizados/video_01_a.mp4" in texto
 
 
@@ -160,5 +160,5 @@ def test_gerar_com_auditoria_mantem_cabecalho_do_short(tmp_path, monkeypatch):
     monkeypatch.setattr(pub, "auditoria_aprovada", lambda: True)
     pasta = _pasta(tmp_path, {"01": {"status": "aprovado"}}, [_bloco(1, 8)], ["video_01_a.mp4"])
     texto = pub.gerar(pasta, datetime(2026, 10, 22, 9))[0].read_text(encoding="utf-8")
-    assert "MESMO título" in texto and "SHORT:   (sem Short)" in texto
+    assert "NÃO suba à mão" in texto and "SHORT:   (sem Short)" in texto
     assert "Só os vídeos LONGOS" not in texto

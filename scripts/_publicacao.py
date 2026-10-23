@@ -6,7 +6,7 @@ e uma sugestão de dia: 1 por dia, ou 2 por dia quando há 3+ aprovados (conteú
 envelhece rápido). As datas continuam DEPOIS do último longo agendado/publicado no canal
 (state/canal.json do 14_canal + publish_at do banco), pra não brigar com o que já está na
 fila do YouTube. Enquanto config/upload.json → auditoria_aprovada for false, a lista
-mostra só os longos (os Shorts esperam a auditoria pra subir pela API). Usado pelo
+mostra só os longos; depois os Shorts aparecem marcados "sobe pela API" (09 --shorts). Usado pelo
 Curador (13) no fim de cada vídeo; dá pra rodar à mão:
 
   uv run py scripts/_publicacao.py <stem>
@@ -99,15 +99,16 @@ def gerar(pasta: Path, agora: datetime | None = None) -> tuple[Path | None, list
               f"# {len(lista)} corte(s) aprovado(s) pelo revisor, em ordem de score.",
               "# Thumb: a metade direita preta é o espaço do collage no Canva."]
     if com_shorts:
-        linhas += ["# Short: suba com o MESMO título do vídeo (pode pôr #shorts). É pelo título",
-                   "# que o 14_canal reconhece sozinho o que já foi publicado/agendado.", ""]
+        linhas += ["# Shorts sobem pela API (09_upload.py <stem> --shorts, 2/dia, depois do longo):",
+                   "# NÃO suba à mão. O vídeo relacionado é marcado no Studio (dia_d.py relacionados).", ""]
     else:
         linhas += ["# Só os vídeos LONGOS: os Shorts ficam prontos e sobem pela API quando a",
                    "# auditoria for aprovada (config/upload.json → auditoria_aprovada).", ""]
     for x, dia in zip(lista, dias):
         short = []
         if com_shorts:
-            short = [f"SHORT:   shorts/{x['short'].name}" if x["short"] else "SHORT:   (sem Short)"]
+            short = [f"SHORT:   shorts/{x['short'].name} (sobe pela API)" if x["short"]
+                     else "SHORT:   (sem Short)"]
         linhas +=["=" * 70,
                    f"{DIAS_SEMANA[dia.weekday()]} {dia:%d/%m} {HORA} · VÍDEO {x['id']:02d} · "
                    f"score {x['score']} · {x['duracao']} min",
