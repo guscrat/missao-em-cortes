@@ -489,6 +489,8 @@ def escrever_resumo(rodada: dict) -> str:
     avisos = [a for p in rodada["processados"] for a in p["avisos"]]
     if rodada.get("aviso_canal"):
         avisos.insert(0, rodada["aviso_canal"])
+    if rodada.get("aviso_placar"):
+        avisos.append(rodada["aviso_placar"])
     if rodada.get("falha_llm"):
         avisos.insert(0, f"avaliação dos vídeos novos falhou ({rodada['falha_llm']}); "
                          "eles voltam amanhã")
@@ -561,6 +563,19 @@ def sincronizar_canal(dry_run: bool = False) -> str | None:
     return None
 
 
+def atualizar_placar() -> str | None:
+    """Placar do canal (15_placar → state/placar.json, aba Hoje do painel), 1x/dia junto com
+    a rodada. Nunca abre o navegador e nunca derruba a rodada: devolve o aviso."""
+    try:
+        import importlib
+        importlib.import_module("15_placar").atualizar(interativo=False)
+    except Exception as e:  # noqa: BLE001 — placar é só leitura pro painel
+        evento(None, "15_placar", "falha", agente="analista", mensagem=str(e)[:300])
+        print(f"[aviso] não atualizei o placar do canal ({e})", file=sys.stderr)
+        return f"placar do canal não atualizado ({str(e)[:200]}); rode `uv run py scripts/15_placar.py`"
+    return None
+
+
 def _rodada(cfg: dict, dry_run: bool, sem_pipeline: bool, forcar: bool) -> int:
     hoje = date.today()
     estado = ler_estado()
@@ -595,9 +610,11 @@ def _rodada(cfg: dict, dry_run: bool, sem_pipeline: bool, forcar: bool) -> int:
         print("(dry-run: nada foi enviado nem baixado)")
         return 0
 
+    aviso_placar = atualizar_placar()
     agora = datetime.now().isoformat(timespec="seconds")
     rodada = {"quando": agora, "custo": 0.0, "estoque": estoque, "escolhidos": [],
-              "fila": [], "recusados": [], "processados": [], "aviso_canal": aviso_canal}
+              "fila": [], "recusados": [], "processados": [], "aviso_canal": aviso_canal,
+              "aviso_placar": aviso_placar}
     if novos:
         from anthropic import Anthropic
         from dotenv import load_dotenv
