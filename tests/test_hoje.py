@@ -44,14 +44,36 @@ def test_no_ar_vazio_ou_sem_coluna():
     assert hoje.no_ar(pd.DataFrame([{"status": "agendado"}]), DIA).empty
 
 
-def test_fila_youtube():
-    df = _blocos(("agendado", "2026-10-22T08:00:00-03:00"),     # já saiu
-                 ("agendado", "2026-10-25T18:00:00-03:00"),
-                 ("agendado", "2026-10-24T18:00:00-03:00"),
-                 ("publicado", "2026-10-30T18:00:00-03:00"))
-    n, ultimo = hoje.fila_youtube(df, AGORA.to_pydatetime())
-    assert n == 2 and ultimo == datetime(2026, 10, 25, 18)
-    assert hoje.fila_youtube(pd.DataFrame(), AGORA.to_pydatetime()) == (0, None)
+def test_scripts_frescos_recarrega_quando_o_arquivo_muda(tmp_path, monkeypatch):
+    """Módulos falsos em tmp: mudou o arquivo (mtime) → o painel passa a usar a versão nova,
+    e quem depende do recarregado também recarrega."""
+    import sys
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    base, dep = scripts / "zz_base.py", scripts / "zz_dep.py"
+    base.write_text("V = 1\n", encoding="utf-8")
+    dep.write_text("import zz_base\nV = zz_base.V * 10\n", encoding="utf-8")
+    (scripts / "13_curador.py").write_text("V = 0\n", encoding="utf-8")
+    monkeypatch.delitem(sys.modules, "13_curador", raising=False)
+    monkeypatch.syspath_prepend(str(scripts))
+    monkeypatch.setattr(hoje, "ROOT", tmp_path)
+    monkeypatch.setattr(hoje, "MODULOS_SCRIPTS", ["zz_base", "zz_dep", "13_curador"])
+    monkeypatch.setattr(hoje, "_MTIMES", {})
+    try:
+        hoje.scripts_frescos()
+        assert sys.modules["zz_dep"].V == 10
+        sys.modules["zz_dep"].MARCA = True           # sem mudança no disco: não recarrega
+        hoje.scripts_frescos()
+        assert getattr(sys.modules["zz_dep"], "MARCA", False)
+        base.write_text("V = 2\n", encoding="utf-8")  # muda só a base
+        st_ = base.stat()
+        os.utime(base, (st_.st_atime, st_.st_mtime + 10))
+        hoje.scripts_frescos()
+        assert sys.modules["zz_base"].V == 2
+        assert sys.modules["zz_dep"].V == 20          # dependente recarregou
+    finally:
+        for n in ("zz_base", "zz_dep", "13_curador"):
+            sys.modules.pop(n, None)
 
 
 # ── decisoes ───────────────────────────────────────────────────────────────

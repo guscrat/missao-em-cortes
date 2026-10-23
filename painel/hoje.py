@@ -46,6 +46,8 @@ RE_TOKEN = re.compile(r"invalid_grant|RefreshError|token.*(expir|venc|revog|inv[
                       r"unauthorized", re.I)
 YPP = {"inscritos": 1000, "horas_12m": 4000, "views_shorts_90d": 10_000_000}
 DIAS_SEMANA = ["seg", "ter", "qua", "qui", "sex", "sáb", "dom"]
+MODULOS_SCRIPTS = ["_cobertura", "_publicacao", "13_curador"]
+_MTIMES: dict[str, float] = {}
 PADRAO = {"orcamento_mensal_usd": 10.0, "cota_alerta_pct": 80}
 
 
@@ -82,19 +84,28 @@ def no_ar(blocos: pd.DataFrame, dia: date) -> pd.DataFrame:
     return df.sort_values("quando")
 
 
-def fila_youtube(blocos: pd.DataFrame, agora: datetime) -> tuple[int, datetime | None]:
-    """(quantos agendados ainda não saíram, data do último) — o que já está garantido no ar."""
-    if blocos.empty or "publish_at" not in blocos:
-        return 0, None
-    datas = [q for q in blocos.loc[blocos["status"] == "agendado", "publish_at"].map(_local)
-             if q is not None and q > agora]
-    return len(datas), max(datas, default=None)
+def scripts_frescos() -> object:
+    """13_curador com a versão do disco. O painel fica dias no ar e o Streamlit só recarrega
+    o que muda em painel/: sem isto, depois de um merge o Curador das 17h (processo novo)
+    e o painel (módulo antigo na memória) passam a contar diferente. Ordem = dependência."""
+    mudou = False
+    for nome in MODULOS_SCRIPTS:
+        mtime = (ROOT / "scripts" / f"{nome}.py").stat().st_mtime
+        modulo = sys.modules.get(nome)
+        if modulo is None:
+            importlib.import_module(nome)
+        elif mudou or _MTIMES.get(nome) != mtime:
+            importlib.reload(modulo)
+            mudou = True               # quem importa o módulo recarregado recarrega também
+        _MTIMES[nome] = mtime
+    return sys.modules["13_curador"]
 
 
 def estoque() -> dict | None:
-    """O mesmo estoque que o Curador usa às 17h (13_curador.calcular_estoque) + o mínimo."""
+    """O mesmo estoque que o Curador usa às 17h (13_curador.calcular_estoque → _cobertura)
+    + o mínimo. Traz também a fila do YouTube (agendados_futuros, ultimo_agendado)."""
     try:
-        curador = importlib.import_module("13_curador")
+        curador = scripts_frescos()
         cfg = curador.carregar_config()
         est = curador.calcular_estoque(cfg)
         return {**est, "minimo": cfg["estoque"]["dias_minimos"]}
@@ -356,10 +367,12 @@ def aba_hoje(blocos: pd.DataFrame, tarefas: pd.DataFrame, est: dict | None, cust
                 delta="upload e Shorts liberados" if auditoria else "upload e Shorts travados",
                 delta_color="normal" if auditoria else "off", delta_arrow="off")
 
-    n_fila, ultimo = fila_youtube(blocos, agora.to_pydatetime())
+    n_fila = est.get("agendados_futuros", 0) if est else 0
+    ultimo = est.get("ultimo_agendado") if est else None
     fila = (f"<div class='hj-vazio'>Fila no YouTube: {n_fila} agendado(s), até "
-            f"{DIAS_SEMANA[ultimo.weekday()]} {ultimo:%d/%m}</div>" if n_fila
-            else "<div class='hj-vazio'>Fila no YouTube vazia</div>")
+            f"{DIAS_SEMANA[ultimo.weekday()]} {ultimo:%d/%m}</div>" if n_fila and ultimo
+            else "<div class='hj-vazio'>Fila no YouTube vazia</div>" if est
+            else "<div class='hj-vazio'>Fila no YouTube indisponível</div>")
     c1, c2 = st.columns([3, 2])
     with c1:
         st.markdown("<h3>No ar</h3>" + fila

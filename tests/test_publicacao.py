@@ -4,13 +4,14 @@ from datetime import date, datetime
 
 import pytest
 
+import _cobertura
 import _publicacao as pub
 
 
 @pytest.fixture(autouse=True)
 def _isolado(tmp_path, monkeypatch, banco):
     """Nunca lê o state/ real: canal.json e banco falsos (vazios)."""
-    monkeypatch.setattr(pub, "CANAL_JSON", tmp_path / "canal.json")
+    monkeypatch.setattr(_cobertura, "CANAL_JSON", tmp_path / "canal.json")
 
 
 def _pasta(tmp_path, revisao, blocos, finais):
@@ -131,7 +132,7 @@ def test_agenda_continua_depois_do_ultimo_agendado():
 def test_ultimo_agendado_pega_o_maior_entre_canal_e_banco(tmp_path, monkeypatch, banco):
     from _eventos import upsert_bloco
     canal = tmp_path / "canal.json"
-    monkeypatch.setattr(pub, "CANAL_JSON", canal)
+    monkeypatch.setattr(_cobertura, "CANAL_JSON", canal)
     assert pub.ultimo_agendado() is None
     canal.write_text('{"ultimo_longo": "2026-10-25T18:00:00-03:00"}', encoding="utf-8")
     assert pub.ultimo_agendado() == date(2026, 10, 25)
