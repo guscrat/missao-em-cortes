@@ -30,7 +30,6 @@ Canal com zoom no config: o zoom é copiado pro config/zoom.json do stem novo (c
 calibrar_zoom --salvar). Canal sem zoom: processa sem e o resumo pede pra calibrar.
 """
 import json
-import math
 import os
 import re
 import subprocess
@@ -302,13 +301,12 @@ def ler_shorts(pasta: Path) -> dict:
 
 
 def calcular_estoque(cfg: dict, hoje: date | None = None) -> dict:
-    """Dias de canal COBERTO: de hoje até o último longo agendado no canal
-    (_publicacao.ultimo_agendado: state/canal.json do 14_canal + publish_at do banco) e
-    mais os prontos pra publicar, a longos_por_dia por dia. coberto_ate = o último dia com
-    vídeo garantido. Pronto = bloco 'aprovado' (coluna "Pronto para publicar") de live dos
+    """Dias de canal COBERTO (_cobertura.cobertura, a mesma conta do painel): de hoje até o
+    último longo agendado no canal e mais os prontos pra publicar, a longos_por_dia por
+    dia. coberto_ate = o último dia com vídeo garantido. Pronto = bloco 'aprovado' (coluna "Pronto para publicar") de live dos
     últimos DIAS_ARQUIVAR dias. Shorts (short_NN de bloco aprovado/agendado/publicado, não
     postado nem arquivado) só aparecem no resumo: não entram nos dias."""
-    from _publicacao import ultimo_agendado
+    from _cobertura import cobertura
     hoje = hoje or date.today()
     try:
         con = conectar()
@@ -338,13 +336,8 @@ def calcular_estoque(cfg: dict, hoje: date | None = None) -> dict:
         if sh and sh.get("arquivo") and not sh.get("postado") and not sh.get("arquivado") and \
                 (pasta / "shorts" / sh["arquivo"]).exists():
             shorts += 1
-    ultimo = ultimo_agendado()
-    dias_agendados = max((ultimo - hoje).days, 0) if ultimo else 0
-    prontos = longos / cfg["estoque"]["longos_por_dia"]
-    dias = dias_agendados + prontos
-    return {"longos": longos, "shorts": shorts, "dias_agendados": dias_agendados, "dias": dias,
-            "coberto_ate": hoje + timedelta(days=math.ceil(dias))
-            if dias or (ultimo and ultimo >= hoje) else None}
+    return {"longos": longos, "shorts": shorts,
+            **cobertura(longos, cfg["estoque"]["longos_por_dia"], hoje)}
 
 
 def _texto_estoque(est: dict) -> str:
