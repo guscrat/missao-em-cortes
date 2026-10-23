@@ -18,7 +18,8 @@ Estoque = **dias de canal coberto** (decisão do Gu, 22/10/2026):
 
 dias = (último longo agendado no canal − hoje) + longos prontos ÷ `longos_por_dia` → "canal coberto até DD/MM".
 
-- Último longo agendado = `_publicacao.ultimo_agendado()`: o maior entre `state/canal.json` (`ultimo_longo`, do 14_canal) e o `publish_at` dos blocos agendado/publicado no banco. Já passou (ou nada agendado) = 0.
+- **Fonte única: `scripts/_cobertura.py`** (`agenda_canal()` + `cobertura()`), usada pelo Curador, pelo `_publicacao` e pelo painel ("Canal coberto até" e "Fila no YouTube"). Se dois deles discordarem, o bug está lá.
+- Último longo agendado = `agenda_canal()["ultimo"]`: o maior entre `state/canal.json` (`ultimo_longo`, do 14_canal) e o `publish_at` dos blocos agendado/publicado no banco. Já passou (ou nada agendado) = 0.
 - Longo pronto = bloco `aprovado` (coluna "Pronto para publicar") de live dos últimos 15 dias (`DIAS_ARQUIVAR`).
 - **Shorts não entram nos dias** (com ou sem auditoria): só aparecem no resumo, "à parte".
 - Mínimo em `config/canais.json` → `estoque.dias_minimos` (padrão 2). O painel (aba Hoje) chama a mesma função e mostra "Canal coberto até DD/MM", com alerta abaixo do mínimo.
