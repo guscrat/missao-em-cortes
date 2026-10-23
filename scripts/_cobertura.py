@@ -34,7 +34,7 @@ def _local(valor: str | None) -> datetime | None:
 def agenda_canal(agora: datetime | None = None) -> dict:
     """{"ultimo": date | None, "futuros": int}: dia do último longo agendado/publicado (o
     maior entre canal.json e banco) e quantos blocos agendados ainda não saíram."""
-    agora = agora or datetime.now()
+    agora = agora or datetime.now(FUSO).replace(tzinfo=None)
     datas, futuros = [], 0
     try:
         ultimo = _local(json.loads(CANAL_JSON.read_text(encoding="utf-8")).get("ultimo_longo"))

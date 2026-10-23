@@ -371,7 +371,8 @@ def aba_hoje(blocos: pd.DataFrame, tarefas: pd.DataFrame, est: dict | None, cust
     ultimo = est.get("ultimo_agendado") if est else None
     fila = (f"<div class='hj-vazio'>Fila no YouTube: {n_fila} agendado(s), até "
             f"{DIAS_SEMANA[ultimo.weekday()]} {ultimo:%d/%m}</div>" if n_fila and ultimo
-            else "<div class='hj-vazio'>Fila no YouTube vazia</div>")
+            else "<div class='hj-vazio'>Fila no YouTube vazia</div>" if est
+            else "<div class='hj-vazio'>Fila no YouTube indisponível</div>")
     c1, c2 = st.columns([3, 2])
     with c1:
         st.markdown("<h3>No ar</h3>" + fila
