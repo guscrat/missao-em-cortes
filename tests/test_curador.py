@@ -194,6 +194,10 @@ def rodada(raiz, monkeypatch):
                         lambda cfg, hoje=None: reg["canal"].append("estoque") or dict(reg["estoque"]))
     monkeypatch.setattr(cu, "sincronizar_canal",
                         lambda dry=False: reg["canal"].append(("sync", dry)) or reg["aviso_canal"])
+    reg["placar"] = []
+    reg["aviso_placar"] = None
+    monkeypatch.setattr(cu, "atualizar_placar",
+                        lambda: reg["placar"].append(1) or reg["aviso_placar"])
     monkeypatch.setattr(cu, "listar_canal", lambda canal, n: reg["listar"].get(canal["prefixo"], []))
     monkeypatch.setattr(cu, "detalhar", lambda item: item)
 
@@ -248,9 +252,50 @@ def test_rodada_seguinte_usa_fila_sem_llm_e_nao_reavalia(raiz, rodada):
     assert rodada["processados"] == ["renan_live_alfa"]
 
 
+def test_rodada_normal_atualiza_placar(raiz, rodada):
+    assert cu.main([]) == 0
+    assert rodada["placar"] == [1]
+
+
+def test_falha_do_placar_vira_aviso_e_nao_derruba_a_rodada(raiz, rodada):
+    rodada["aviso_placar"] = "placar do canal não atualizado (boom)"
+    rodada["listar"] = {"renan": [_item("a", "Live Alfa")]}
+    rodada["avaliacoes"] = {"a": _av(True, 6)}
+    assert cu.main([]) == 0
+    assert rodada["processados"] == ["renan_live_alfa"]
+    assert "placar do canal não atualizado (boom)" in cu.RESUMO.read_text(encoding="utf-8")
+
+
+def test_atualizar_placar_real_captura_excecao(monkeypatch, banco):
+    import importlib
+    import types
+    falso = types.ModuleType("15_placar")
+
+    def quebra(interativo=True):
+        assert interativo is False
+        raise RuntimeError("sem token")
+    falso.atualizar = quebra
+    monkeypatch.setitem(importlib.sys.modules, "15_placar", falso)
+    aviso = cu.atualizar_placar()
+    assert "sem token" in aviso
+    ev = banco("SELECT status, agente FROM eventos WHERE etapa='15_placar'")
+    assert ev == [{"status": "falha", "agente": "analista"}]
+
+
+def test_atualizar_placar_real_ok_devolve_none(monkeypatch):
+    import importlib
+    import types
+    chamadas = []
+    falso = types.ModuleType("15_placar")
+    falso.atualizar = lambda interativo=True: chamadas.append(interativo)
+    monkeypatch.setitem(importlib.sys.modules, "15_placar", falso)
+    assert cu.atualizar_placar() is None and chamadas == [False]
+
+
 def test_dry_run_nao_chama_llm_nem_processa(raiz, rodada):
     rodada["listar"] = {"renan": [_item("a")]}
     assert cu.main(["--dry-run"]) == 0
+    assert rodada["placar"] == []
     assert rodada["llm"] == 0 and rodada["processados"] == []
     assert not cu.ESTADO.exists()
 

@@ -12,6 +12,15 @@ Compara a **retenção** (% média assistida, a do Studio) dos vídeos **com** l
 - Retenção do grupo = média **ponderada por views**.
 - Saída no terminal + `state/metricas_retencao.json`.
 
+## Step 15 — placar do canal (15_placar.py)
+
+`uv run py scripts/15_placar.py` — `agente="analista"`, US$ 0, mesmo projeto/token do 12. O **Curador chama 1x/dia** no começo da rodada das 17h (sem navegador; falha vira aviso no resumo e evento `falha`, e o `placar.json` anterior fica).
+
+- Grava `state/placar.json` = `{atualizado, inscritos, horas_12m, views_shorts_90d}`, lido pela aba Hoje do painel ("Placar do canal", metas do YPP: 1.000 inscritos + 4.000 h ou 10 mi de views em Shorts).
+- `inscritos`: Data API `channels.list statistics`. `horas_12m`: Analytics `estimatedMinutesWatched` dos últimos 365 dias **sem Shorts**. `views_shorts_90d`: Analytics `views` dos últimos 90 dias só de Shorts.
+- Separação por `creatorContentType`. A API devolve em camelCase (`shorts`, `videoOnDemand`), não como na doc (`SHORTS`): `e_short()` compara sem caixa nem `_`.
+- Aproximação: o YPP conta só o público e válido, o que a Analytics não separa; o número pode ficar um pouco acima do Studio, e ela atrasa ~2 dias.
+
 ## Setup do projeto de métricas (uma vez, feito pelo Gu no console)
 
 1. [console.cloud.google.com](https://console.cloud.google.com) → seletor de projeto → **Novo projeto** → nome `missao-em-cortes-analytics` (não mexer no `missao-em-cortes-publisher`).
