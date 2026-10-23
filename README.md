@@ -60,4 +60,4 @@ Kanban por responsabilidade (curadoria → edição → revisão → quarentena 
 
 ## Documentação
 
-Contexto completo do projeto — decisões técnicas, identidade visual, formato canônico, roadmap e estado atual — em [`CLAUDE.md`](CLAUDE.md).
+Contexto completo do projeto — decisões técnicas, identidade visual, formato canônico, roadmap e estado atual — em [`CLAUDE.md`](CLAUDE.md), com o detalhe por área nas skills de [`.claude/skills/`](.claude/skills/) e em [`docs/`](docs/).

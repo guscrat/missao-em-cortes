@@ -6,7 +6,7 @@ Uso:
 
 Projeto do Google SEPARADO do upload (missao-em-cortes-analytics), com credencial e token
 próprios em secrets/ (fora do Git): o projeto do upload (publisher) está em auditoria
-declarando só upload e NÃO pode ganhar a Analytics API. Passo a passo no CLAUDE.md.
+declarando só upload e NÃO pode ganhar a Analytics API. Passo a passo em .claude/skills/youtube-compliance/references/metricas.md.
 
 Lê (só leitura):
   - YouTube Data API (youtube.readonly): vídeos do canal com título, data e duração
