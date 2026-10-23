@@ -578,7 +578,6 @@ def test_manchete_limites_de_60_chars():
     assert up.manchete({"tema": "a" * 60 + " b"}) == "a" * 60
 
 
-@pytest.mark.xfail(strict=True, reason="BUG: palavra única > 60 chars sai com 61 (rsplit sem espaço)")
 def test_manchete_palavra_unica_gigante_respeita_60():
     assert len(up.manchete({"tema": "x" * 80})) <= 60
 

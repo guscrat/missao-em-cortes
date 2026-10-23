@@ -35,7 +35,10 @@ def manchete(bloco: dict) -> str:
     texto = " ".join((bloco.get("texto_thumb") or bloco.get("tema") or "").split())
     if len(texto) <= LIMITE_MANCHETE:
         return texto
-    return texto[:LIMITE_MANCHETE + 1].rsplit(" ", 1)[0].rstrip(" ,;:—-")
+    corte = texto[:LIMITE_MANCHETE + 1]
+    if " " not in corte:          # uma palavra só, gigante: corta seco
+        return texto[:LIMITE_MANCHETE]
+    return corte.rsplit(" ", 1)[0].rstrip(" ,;:—-")
 
 
 def adicionar_credito(texto: str, bloco_id: int, linha: str) -> str:
