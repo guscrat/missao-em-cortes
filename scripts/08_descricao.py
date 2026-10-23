@@ -15,7 +15,7 @@ import json
 import re
 from _canal import CANAL_URL, eh_nosso_canal
 from _descricoes import trocar_creditos
-from _grafias import corrigir as corrigir_grafia
+from _grafias import carregar as carregar_grafias, corrigir as corrigir_grafia
 from _paths import achar_pasta, stem_de
 
 ROOT = Path(__file__).parent.parent
@@ -50,11 +50,12 @@ def ler_url_fonte(stem, inputs=None):
 
 def bloco_para_texto(b, url_fonte=""):
     # grafia oficial em tudo que vai pro YouTube (título, corpo, convidados, tags/hashtags)
-    titulo = corrigir_grafia(b.get("titulo_sugerido", b["tema"]))
-    resumo = corrigir_grafia(b.get("resumo", "").strip())
-    ganchos = [corrigir_grafia(g) for g in b.get("ganchos", [])]
-    tags_bloco = [corrigir_grafia(t) for t in b.get("tags", [])]
-    speakers = [corrigir_grafia(s) for s in b.get("speakers_principais", [])]
+    grafias = carregar_grafias()   # lê o config uma vez por bloco, não por campo
+    titulo = corrigir_grafia(b.get("titulo_sugerido", b["tema"]), grafias)
+    resumo = corrigir_grafia(b.get("resumo", "").strip(), grafias)
+    ganchos = [corrigir_grafia(g, grafias) for g in b.get("ganchos", [])]
+    tags_bloco = [corrigir_grafia(t, grafias) for t in b.get("tags", [])]
+    speakers = [corrigir_grafia(s, grafias) for s in b.get("speakers_principais", [])]
 
     # Tags combinadas (sem duplicar, mantem ordem)
     tags_final = []
