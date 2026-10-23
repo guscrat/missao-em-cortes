@@ -1,6 +1,8 @@
 """_descricoes: trocar_titulo (só o bloco pedido) e o texto do Short (manchete, título)."""
 import json
 
+import pytest
+
 import _descricoes as d
 from _descricoes import ler_descricoes, trocar_titulo
 
@@ -57,6 +59,24 @@ def test_titulo_short_corta_a_manchete_nunca_o_nome():
     t = d.titulo_short(b)
     assert len(t) <= 60 and t.endswith(" | Amanda Vettorazzo") and t.startswith("PALAVRA")
     assert d.manchete(b) != t.split(" | ")[0]          # o queimado continua a manchete inteira (até 60)
+
+
+@pytest.mark.xfail(reason="nome > 60 chars: limite negativo, título sai com 69 chars (irreal com nomes do config)",
+                   strict=True)
+def test_titulo_short_nome_gigante_nao_estoura_nem_corta_nome(monkeypatch):
+    nome = ("Fulano " * 9).strip()               # 62 chars: não sobra espaço pra manchete
+    monkeypatch.setattr(d, "quem_fala", lambda bloco, stem="": nome)
+    t = d.titulo_short({"texto_thumb": "ALGO ACONTECEU"})
+    assert t == "" or (len(t) <= 60 and t.endswith(nome))
+
+
+def test_titulo_short_palavra_gigante_corta_seco():
+    b = {"texto_thumb": "X" * 80, "speakers_principais": ["Amanda Vettorazzo"]}
+    assert d.titulo_short(b) == "X" * 40 + " | Amanda Vettorazzo"
+
+
+def test_manchete_limite_customizado_e_grafia_antes_do_corte():
+    assert d.manchete({"texto_thumb": "NICOLAS FALOU DEMAIS HOJE"}, 15) == "NIKOLAS FALOU"
 
 
 def test_titulo_short_vazio_sem_nome_ou_manchete():
