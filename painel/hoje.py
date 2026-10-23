@@ -43,7 +43,7 @@ JANELA_FALHA = timedelta(hours=48)
 JANELA_TOKEN = timedelta(days=7)
 TOKENS = [("YouTube (publicar)", "youtube_token.json"), ("YouTube Analytics", "analytics_token.json")]
 RE_TOKEN = re.compile(r"invalid_grant|RefreshError|token.*(expir|venc|revog|inv[aá]lid)|"
-                      r"unauthorized|\b401\b", re.I)
+                      r"unauthorized", re.I)
 YPP = {"inscritos": 1000, "horas_12m": 4000, "views_shorts_90d": 10_000_000}
 DIAS_SEMANA = ["seg", "ter", "qua", "qui", "sex", "sáb", "dom"]
 PADRAO = {"orcamento_mensal_usd": 10.0, "cota_alerta_pct": 80}
@@ -158,9 +158,11 @@ def alertas_curador(eventos: pd.DataFrame, agora: pd.Timestamp,
             saida.append(("erro", "Curador falhou", f"{msg or f.etapa}{alvo} ({quando})"))
     try:
         rodou = datetime.fromtimestamp(log.stat().st_mtime)
-        cauda = log.read_text(encoding="utf-8", errors="replace").splitlines()[-40:]
+        linhas = log.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return saida
+    inicios = [i for i, linha in enumerate(linhas) if linha.startswith("Curador · ")]
+    cauda = linhas[inicios[-1]:] if inicios else linhas[-40:]   # só a última rodada
     hora_hoje = datetime.combine(agora.date(), HORA_CURADOR)
     if agora >= hora_hoje + FOLGA_CURADOR and rodou < hora_hoje - timedelta(minutes=5):
         saida.append(("erro", "Curador não rodou hoje",
@@ -204,7 +206,7 @@ def alerta_cota(agora_utc: datetime | None = None, cota_path: Path | None = None
     if pct < pct_alerta:
         return []
     return [("erro" if pct >= 100 else "aviso", "Cota do YouTube perto do limite",
-             f"{usadas:,} de {limite:,} unidades hoje ({pct:.0f}%). Zera às 4h/5h de Brasília."
+             f"{usadas:,} de {limite:,} unidades hoje ({pct:.0f}%). Zera à meia-noite do Pacífico."
              .replace(",", "."))]
 
 
@@ -336,6 +338,7 @@ def aba_hoje(blocos: pd.DataFrame, tarefas: pd.DataFrame, est: dict | None, cust
     m[1].metric("Amanhã", len(df_amanha))
     if est is None:
         m[2].metric("Estoque", "—")
+        m[2].caption("não consegui calcular (veja o terminal do painel)")
     else:
         baixo = est["dias"] < est["minimo"]
         m[2].metric("Estoque", f"{est['dias']:.1f} dias",

@@ -123,6 +123,16 @@ def test_curador_traceback_nas_ultimas_40_linhas(tmp_path):
     assert hoje.alertas_curador(pd.DataFrame(), pd.Timestamp("2026-10-22 18:30:00"), log=log) == []
 
 
+def test_curador_traceback_so_da_ultima_rodada(tmp_path):
+    agora = pd.Timestamp("2026-10-22 18:30:00")
+    quebrou = "Curador · 4 canais\nTraceback (most recent call last):\nErro\n"
+    rodada_boa = "Curador · 4 canais\nEstoque pronto: 4 longo(s)\n"
+    log = _log(tmp_path, quebrou + rodada_boa, datetime(2026, 10, 22, 17, 2))
+    assert hoje.alertas_curador(pd.DataFrame(), agora, log=log) == []
+    log = _log(tmp_path, rodada_boa + quebrou, datetime(2026, 10, 22, 17, 2))
+    assert hoje.alertas_curador(pd.DataFrame(), agora, log=log)[0][1] == "Curador quebrou na última rodada"
+
+
 # ── tokens ─────────────────────────────────────────────────────────────────
 
 def test_token_ausente_e_sem_refresh(tmp_path):
