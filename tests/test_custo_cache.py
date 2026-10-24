@@ -28,6 +28,25 @@ def _resp(modelo="claude-opus-5-5", i=0, o=0, esc=None, lei=None, **extra):
 
 # ── _custo ─────────────────────────────────────────────────────────────────
 
+def test_sem_cache_usd_reprecifica_escrita_e_leitura():
+    # opus: 1M lidos (0.20) + 1M escritos (5.00) custaram 5.20; sem cache seriam 8.00
+    ev = {"mensagem": "claude-opus-5-5 (thumb)", "custo_usd": 5.20,
+          "cache_escrita": 1_000_000, "cache_leitura": 1_000_000}
+    assert _custo.sem_cache_usd(ev) == pytest.approx(8.0)
+    assert _custo.sem_cache_usd({"mensagem": "", "custo_usd": 0.3, "cache_leitura": 10}) == 0.3
+
+
+def test_economia_por_etapa_e_total():
+    evs = [{"etapa": "11_revisor", "mensagem": "claude-opus-5-5", "custo_usd": 0.20,
+            "tokens_in": 2_000_000, "cache_escrita": 0, "cache_leitura": 1_000_000},
+           {"etapa": "04b_polir", "mensagem": None, "custo_usd": 0.10, "tokens_in": 1000}]
+    e = _custo.economia(evs)
+    assert e["11_revisor"]["sem_cache"] == pytest.approx(4.0)
+    assert e["11_revisor"]["taxa"] == pytest.approx(0.5)
+    assert e["_total"]["chamadas"] == 2
+    assert e["_total"]["sem_cache"] - e["_total"]["custo"] == pytest.approx(3.8)
+
+
 def test_uso_sem_cache_opus():
     u = _custo.uso(_resp(i=1_000_000, o=100_000), "claude-opus-5-5")
     assert u["custo_usd"] == pytest.approx(4.0 + 2.0)
