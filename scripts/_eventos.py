@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS blocos (
     thumb_path    TEXT,
     publish_at    TEXT,
     youtube_id    TEXT,
+    titulo_youtube TEXT,              -- título real no canal (14_canal); o painel prefere ele
     atualizado_em TEXT NOT NULL,
     PRIMARY KEY (stem, bloco_id)
 );
@@ -115,12 +116,13 @@ def conectar(db_path: Path | None = None) -> sqlite3.Connection:
     con.execute("PRAGMA journal_mode=WAL")   # painel lê enquanto o pipeline escreve
     con.execute("PRAGMA foreign_keys=ON")
     con.executescript(SCHEMA)
-    # migração: bancos criados antes da coluna tarefa_id
-    if "tarefa_id" not in {r["name"] for r in con.execute("PRAGMA table_info(eventos)")}:
-        try:
-            con.execute("ALTER TABLE eventos ADD COLUMN tarefa_id INTEGER")
-        except sqlite3.OperationalError:   # outro processo migrou no mesmo instante
-            pass
+    # migração: bancos criados antes das colunas tarefa_id e titulo_youtube
+    for tabela, coluna in (("eventos", "tarefa_id INTEGER"), ("blocos", "titulo_youtube TEXT")):
+        if coluna.split()[0] not in {r["name"] for r in con.execute(f"PRAGMA table_info({tabela})")}:
+            try:
+                con.execute(f"ALTER TABLE {tabela} ADD COLUMN {coluna}")
+            except sqlite3.OperationalError:   # outro processo migrou no mesmo instante
+                pass
     return con
 
 
@@ -181,7 +183,7 @@ def upsert_bloco(stem: str, bloco_id: int, *, forcar_status: bool = False, **cam
     """Cria/atualiza um bloco. `status` só sobrescreve status AUTO, a não ser que
     forcar_status=True (agentes de decisão usam isso)."""
     permitidos = {"tema", "titulo", "texto_thumb", "score", "duracao_min", "status",
-                  "motivo", "video_path", "thumb_path", "publish_at", "youtube_id"}
+                  "motivo", "video_path", "thumb_path", "publish_at", "youtube_id", "titulo_youtube"}
     invalidos = set(campos) - permitidos
     if invalidos:
         raise ValueError(f"campos inválidos pra bloco: {invalidos}")

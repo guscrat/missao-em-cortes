@@ -92,7 +92,7 @@ def card_bloco(b: pd.Series) -> None:
     with st.container(border=True):
         if isinstance(b.thumb_path, str) and (ROOT / b.thumb_path).exists():
             st.image(str(ROOT / b.thumb_path), width="stretch")
-        st.markdown(f"<div class='tit'>{b.titulo or b.tema or f'Bloco {b.bloco_id}'}</div>",
+        st.markdown(f"<div class='tit'>{hoje._nome(b)}</div>",
                     unsafe_allow_html=True)
         partes = [f"{b.stem} · #{int(b.bloco_id)}"]
         if pd.notna(b.score):
