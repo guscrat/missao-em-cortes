@@ -9,6 +9,7 @@ Preços em US$ por 1M tokens, conferidos em 24/10/2026 em
 https://platform.claude.com/docs/en/about-claude/pricing (não confiar na memória: conferir lá
 ao trocar de modelo).
 """
+import sys
 
 # modelo: (input, escrita 5 min, leitura, output)
 PRECOS = {
@@ -34,6 +35,10 @@ def uso(resp, modelo: str) -> dict:
         _n(u, "cache_read_input_tokens")
     tout = _n(u, "output_tokens")
     modelo = getattr(resp, "model", None) if getattr(resp, "model", None) in PRECOS else modelo
+    if modelo not in PRECOS:   # custo é best-effort: não derruba o pipeline
+        print(f"[aviso] _custo: {modelo} fora da tabela de preços; usando o do Opus 5.5",
+              file=sys.stderr)
+        modelo = "claude-opus-5-5"
     p_in, p_escrita, p_leitura, p_out = PRECOS[modelo]
     total_in = sem_cache + escrita + leitura
     if modelo == "claude-haiku-5-5" and total_in > HAIKU_LONGO:

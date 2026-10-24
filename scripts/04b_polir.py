@@ -432,4 +432,4 @@ else:
         uso = _custo.somar(usos)
         print(f"Custo total: input {uso['tokens_in']:,} tok · output {uso['tokens_out']:,} tok "
               f"(~${uso['custo_usd']:.2f}){_custo.resumo(uso)}")
-        evento(stem, "04b_polir", "llm", agente="editor", **uso)
+        evento(stem, "04b_polir", "llm", agente="editor", **uso, mensagem=MODELO)

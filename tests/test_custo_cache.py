@@ -28,6 +28,12 @@ def _resp(modelo="claude-opus-5-5", i=0, o=0, esc=None, lei=None, **extra):
 
 # ── _custo ─────────────────────────────────────────────────────────────────
 
+def test_modelo_fora_da_tabela_avisa_e_usa_opus(capsys):
+    u = _custo.uso(_resp(modelo="claude-novo", i=1_000_000), "claude-novo")
+    assert u["custo_usd"] == pytest.approx(4.0)
+    assert "fora da tabela" in capsys.readouterr().err
+
+
 def test_sem_cache_usd_reprecifica_escrita_e_leitura():
     # opus: 1M lidos (0.20) + 1M escritos (5.00) custaram 5.20; sem cache seriam 8.00
     ev = {"mensagem": "claude-opus-5-5 (thumb)", "custo_usd": 5.20,
