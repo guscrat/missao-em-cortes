@@ -5,6 +5,7 @@ espera decisão, se a auditoria do YouTube saiu, quanto do orçamento do mês j�
 placar do canal rumo ao YPP. Só LÊ: banco, config/ e state/.
 
 Alertas (faixa acima das abas, aparece em qualquer aba):
+  - Curador rodando agora (desde HH:MM — etapa X) ou parado no meio (processo sumiu)
   - falha do Curador (evento de falha, Traceback no state/curador.log ou não rodou às 17h)
   - erro de download (01_baixar falhou dentro do Curador)
   - token do YouTube/Analytics ausente, sem refresh_token ou recusado (invalid_grant)
@@ -18,6 +19,7 @@ Placar do canal: o Analista grava state/placar.json; até lá a seção fica com
 import html
 import importlib
 import json
+import os
 import re
 import sys
 from datetime import date, datetime, time, timedelta
@@ -186,6 +188,57 @@ def alertas_curador(eventos: pd.DataFrame, agora: pd.Timestamp,
     return saida
 
 
+def _pid_vivo(pid) -> bool:
+    """O processo do Curador ainda existe? Sem como saber, assume que sim (não alarma à toa)."""
+    if not isinstance(pid, int) or pid <= 0:
+        return True
+    if sys.platform == "win32":
+        import ctypes
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.OpenProcess.restype = ctypes.c_void_p      # handle 64 bits não trunca
+        k32.GetExitCodeProcess.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
+        k32.CloseHandle.argtypes = [ctypes.c_void_p]
+        h = k32.OpenProcess(0x1000, False, pid)        # PROCESS_QUERY_LIMITED_INFORMATION
+        if not h:
+            return ctypes.get_last_error() == 5        # acesso negado = existe
+        try:
+            codigo = ctypes.c_ulong()
+            return bool(k32.GetExitCodeProcess(h, ctypes.byref(codigo))) and codigo.value == 259
+        finally:                                       # 259 = STILL_ACTIVE
+            k32.CloseHandle(h)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
+def curador_rodando(eventos: pd.DataFrame, agora: pd.Timestamp, path: Path | None = None,
+                    vivo=_pid_vivo) -> list[tuple[str, str, str]]:
+    """"Curador rodando desde 17:00 — etapa X" (state/curador_progresso.json, gravado pelo 13).
+    Marcado como rodando mas o processo sumiu (PC desligou no meio) = erro."""
+    prog = ler_json(path or STATE / "curador_progresso.json")
+    desde = _local(prog.get("desde"))
+    if not prog.get("rodando") or desde is None:
+        return []
+    etapa, stem = prog.get("etapa") or "?", prog.get("stem")
+    if not vivo(prog.get("pid")):
+        return [("erro", "Curador parou no meio",
+                 f"etapa \"{etapa}\", rodando desde {desde:%d/%m %Hh%M}, e o processo sumiu "
+                 f"(PC desligou?). Veja o fim do state/curador.log; a próxima rodada retoma.")]
+    if etapa == "pipeline" and stem and not eventos.empty:   # o pipeline grava o step dele
+        ev = eventos[(eventos["agente"] == "pipeline") & (eventos["stem"] == stem)
+                     & (eventos["status"] == "inicio") & (eventos["ts"] >= pd.Timestamp(desde))]
+        if not ev.empty:
+            etapa = f"pipeline · {ev.sort_values('ts')['etapa'].iloc[-1]}"
+    quando = f"{desde:%H:%M}" if desde.date() == agora.date() else f"{desde:%d/%m %H:%M}"
+    atualizado = _local(prog.get("atualizado"))
+    detalhe = " · ".join(x for x in (stem, atualizado and f"atualizado {atualizado:%H:%M}") if x)
+    return [("info", f"Curador rodando desde {quando} — etapa {etapa}", detalhe or "sem janela")]
+
+
 def alertas_token(eventos: pd.DataFrame, agora: pd.Timestamp,
                   secrets: Path | None = None) -> list[tuple[str, str, str]]:
     secrets = secrets or SECRETS
@@ -277,6 +330,7 @@ CSS = """<style>
 .al b {font-family:'Anton','Impact',sans-serif; font-weight:400; letter-spacing:.03em;}
 .al.erro {background:var(--erro-bg); color:var(--erro-tx); border-left:4px solid var(--erro-borda);}
 .al.aviso {background:var(--acento-bg); color:var(--acento-tx); border-left:4px solid var(--acento);}
+.al.info {background:var(--card); color:var(--tx); border-left:4px solid var(--mudo);}
 .hj-sec {background:var(--card); border:1px solid var(--borda); border-radius:14px;
          padding:.4rem 1.2rem 1rem; margin-bottom:1rem;}
 .hj-item {display:flex; gap:.8rem; align-items:baseline; padding:.4rem 0;
