@@ -41,7 +41,8 @@ def raiz(tmp_path, monkeypatch, banco):
                         ("INPUTS", tmp_path / "inputs"), ("OUTPUTS", tmp_path / "outputs"),
                         ("ESTADO", tmp_path / "state" / "curadoria.json"),
                         ("RESUMO", tmp_path / "state" / "curador_resumo.md"),
-                        ("TRAVA", tmp_path / "state" / "curador.lock")):
+                        ("TRAVA", tmp_path / "state" / "curador.lock"),
+                        ("PROGRESSO", tmp_path / "state" / "curador_progresso.json")):
         monkeypatch.setattr(cu, nome, valor)
     return tmp_path
 
@@ -348,7 +349,7 @@ def test_minimo_vem_do_config(raiz, rodada):
 def test_trava_impede_rodada_dupla(raiz, rodada):
     cu.TRAVA.parent.mkdir(parents=True, exist_ok=True)
     cu.TRAVA.write_text("123", encoding="utf-8")
-    assert cu.main([]) == 1
+    assert cu.main([]) == cu.SAIDA_TRAVADO
     assert cu.TRAVA.exists()                                        # não solta a trava alheia
 
 
