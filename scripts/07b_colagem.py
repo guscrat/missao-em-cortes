@@ -32,6 +32,7 @@ from pathlib import Path
 sys.stdout.reconfigure(encoding="utf-8")
 
 import _colagem as col
+import _custo
 import _editor
 import _grafias
 import _thumb_rosto as tr
@@ -98,7 +99,8 @@ def textos(client, stem, b, titulo, transcricao, finais, sem_llm,
         return [reserva] * 3, 0.0
     tin, tout, usd = _editor.custo(resp)
     evento(stem, "07b_colagem", "llm", agente="editor", bloco_id=b["id"], tokens_in=tin,
-           tokens_out=tout, custo_usd=usd, mensagem=f"{resp.model} (texto colagem)")
+           tokens_out=tout, custo_usd=usd, mensagem=f"{resp.model} (texto colagem)",
+           **_custo.cache(resp))
     if not opcoes:
         print("  [aviso] editor sem opção válida: usando o texto_thumb")
         opcoes = [reserva]
@@ -116,7 +118,8 @@ def escolher_imagens(client, stem, bid, rostos, cenas, tema, sem_llm,
         return col.escolha_sem_llm(len(rostos), len(cenas)), 0.0
     tin, tout, usd = col.custo(resp)
     evento(stem, "07b_colagem", "llm", agente="editor", bloco_id=bid, tokens_in=tin,
-           tokens_out=tout, custo_usd=usd, mensagem=f"{resp.model} (expressão + cenas)")
+           tokens_out=tout, custo_usd=usd, mensagem=f"{resp.model} (expressão + cenas)",
+           **_custo.cache(resp))
     return escolha or col.escolha_sem_llm(len(rostos), len(cenas)), usd
 
 

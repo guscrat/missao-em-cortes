@@ -17,11 +17,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+import _custo
 import _grafias
 from _descricoes import trocar_creditos, trocar_titulo
 
 MODELO = "claude-opus-5-5"
-PRECO_IN, PRECO_OUT = 4.0, 20.0        # US$ por 1M tokens (opus 5.5)
 CUSTO_ESTIMADO = 0.01                  # só pro --dry-run
 MAX_RODADAS = 2
 MAX_TITULO = 70
@@ -177,8 +177,8 @@ def texto_colagem(client, pedido: str) -> tuple[list[list[str]] | None, object]:
 
 
 def custo(resp) -> tuple[int, int, float]:
-    tin, tout = resp.usage.input_tokens, resp.usage.output_tokens
-    return tin, tout, tin / 1e6 * PRECO_IN + tout / 1e6 * PRECO_OUT
+    u = _custo.uso(resp, MODELO)
+    return u["tokens_in"], u["tokens_out"], u["custo_usd"]
 
 
 def gravar_texto(pasta: Path, bid: int, titulo: str, texto_thumb: str) -> None:
