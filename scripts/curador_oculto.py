@@ -8,19 +8,25 @@ O progresso aparece no painel (state/curador_progresso.json, gravado pelo própr
 Curador morrer no meio ou nem começar, registra falha no banco → alerta no painel.
 """
 import importlib
+import os
 import shutil
 import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
 
-if sys.stdout:   # pythonw: sem stdout
-    sys.stdout.reconfigure(encoding="utf-8")
-
-from _eventos import evento
-
 ROOT = Path(__file__).parent.parent
-LOG = ROOT / "state" / "curador.log"
+LOG = Path(os.environ.get("MISSAO_CURADOR_LOG") or ROOT / "state" / "curador.log")
+
+# pythonw não tem stdout/stderr (None): os imports abaixo fazem sys.stdout.reconfigure e
+# quebravam antes de tudo. Manda os dois pro log: erro do próprio lançador vira Traceback
+# lá (alerta "Curador quebrou" no painel) em vez de sumir.
+if sys.stdout is None or sys.stderr is None:
+    LOG.parent.mkdir(parents=True, exist_ok=True)
+    sys.stdout = sys.stderr = open(LOG, "a", encoding="utf-8", buffering=1)
+sys.stdout.reconfigure(encoding="utf-8")
+
+from _eventos import evento  # noqa: E402 — depois do stdout acima
 CREATE_NO_WINDOW = 0x08000000
 curador = importlib.import_module("13_curador")
 
