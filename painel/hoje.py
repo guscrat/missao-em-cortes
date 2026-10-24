@@ -312,6 +312,16 @@ def custo_mes(eventos_mes: pd.DataFrame, orcamento: float, agora: pd.Timestamp) 
             "projecao": projecao, "por_agente": por_agente[por_agente > 0]}
 
 
+def custo_cache(eventos: pd.DataFrame) -> dict:
+    """Prompt cache nos eventos llm: tokens_in já é o input total (sem cache + escrita +
+    leitura). taxa = parte do input lida do cache (0-1). Banco anterior às colunas → zeros."""
+    llm = eventos[eventos["tokens_in"] > 0] if not eventos.empty else eventos
+    soma = lambda c: int(llm[c].sum()) if c in llm and not llm.empty else 0   # noqa: E731
+    total, leitura, escrita = soma("tokens_in"), soma("cache_leitura"), soma("cache_escrita")
+    return {"tokens_in": total, "leitura": leitura, "escrita": escrita,
+            "taxa": leitura / total if total else 0.0}
+
+
 # ── placar do canal ────────────────────────────────────────────────────────
 
 def placar(path: Path | None = None) -> dict:

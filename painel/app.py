@@ -159,11 +159,28 @@ def aba_agentes(eventos: pd.DataFrame) -> None:
     dias = st.segmented_control("Período", [7, 30, 90], default=7,
                                 format_func=lambda d: f"{d} dias")
     recorte = eventos[eventos["ts"] >= pd.Timestamp.now() - pd.Timedelta(days=dias or 7)]
+    for col in ("cache_leitura", "cache_escrita"):   # banco anterior às colunas de cache
+        if col not in recorte:
+            recorte = recorte.assign(**{col: 0})
     por_agente = (recorte.groupby("agente")
                   .agg(tokens_in=("tokens_in", "sum"), tokens_out=("tokens_out", "sum"),
+                       cache_leitura=("cache_leitura", "sum"),
                        custo_usd=("custo_usd", "sum"), eventos=("id", "count"),
                        falhas=("status", lambda s: (s == "falha").sum()))
                   .sort_values("custo_usd", ascending=False))
+    por_agente["acerto_cache"] = (por_agente["cache_leitura"]
+                                  / por_agente["tokens_in"].where(por_agente["tokens_in"] > 0)).fillna(0)
+    cache = hoje.custo_cache(recorte)
+    visual.grade([
+        visual.cartao("Custo no período", f"${recorte['custo_usd'].sum():.2f}",
+                      f"últimos {dias or 7} dias"),
+        visual.cartao("Acerto do prompt cache", f"{cache['taxa']:.0%}",
+                      f"{cache['leitura']:,} de {cache['tokens_in']:,} tokens de input lidos do cache"
+                      .replace(",", "."),
+                      ajuda="Parte do input das chamadas de API servida do cache (custa 5-10% do "
+                            "preço cheio). Só revisor e escolha de imagens da colagem usam cache.",
+                      medidor=cache["taxa"]),
+    ])
     c1, c2 = st.columns([3, 2])
     with c1:
         st.markdown("<h3>Custo por agente (US$)</h3>", unsafe_allow_html=True)
@@ -173,7 +190,11 @@ def aba_agentes(eventos: pd.DataFrame) -> None:
         st.dataframe(por_agente, width="stretch",
                      column_config={"custo_usd": st.column_config.NumberColumn(format="$%.2f"),
                                     "tokens_in": st.column_config.NumberColumn(format="%d"),
-                                    "tokens_out": st.column_config.NumberColumn(format="%d")})
+                                    "tokens_out": st.column_config.NumberColumn(format="%d"),
+                                    "cache_leitura": st.column_config.NumberColumn(format="%d"),
+                                    "acerto_cache": st.column_config.ProgressColumn(
+                                        "acerto do cache", format="percent", min_value=0,
+                                        max_value=1)})
 
     st.markdown("<h3>Tempo por etapa (média, min)</h3>", unsafe_allow_html=True)
     ok = recorte[(recorte["status"] == "ok") & recorte["duracao_s"].notna()]

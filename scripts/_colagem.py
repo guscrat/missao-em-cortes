@@ -23,6 +23,7 @@ from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
+import _custo
 import _grafias
 import _thumb_rosto as tr
 
@@ -62,7 +63,6 @@ DIF_ESTUDIO = 30.0         # frame sem rosto mais parecido que isso com o estúd
 LARGURA_LLM = 384
 
 MODELO_VISAO = "claude-haiku-5-5"
-PRECO_IN, PRECO_OUT = 0.10, 0.50   # US$ por 1M tokens (haiku 5.5)
 
 _SESSAO_REMBG = None
 
@@ -436,11 +436,13 @@ def escolha_sem_llm(n_rostos: int, n_cenas: int) -> dict:
 
 def escolher(client, rostos: list[Image.Image], cenas: list[Image.Image], tema: str,
              pessoas: list[str] = ()):
-    """(escolha validada ou None se recusou, resposta). Haiku, effort low."""
+    """(escolha validada ou None se recusou, resposta). Haiku, effort low. As instruções
+    (~760 tokens, mínimo do Haiku 5.5 = 512) vão pro prompt cache: as thumbs saem em
+    sequência; rostos e cenas, que mudam por bloco, vêm depois do breakpoint."""
     resp = client.messages.create(
         model=MODELO_VISAO,
         max_tokens=4000,
-        system=SISTEMA_VISAO,
+        system=[{"type": "text", "text": SISTEMA_VISAO, "cache_control": {"type": "ephemeral"}}],
         messages=[{"role": "user", "content": montar_conteudo_visao(rostos, cenas, tema, pessoas)}],
         output_config={"effort": "low", "format": {"type": "json_schema", "schema": SCHEMA_VISAO}},
     )
@@ -453,8 +455,8 @@ def escolher(client, rostos: list[Image.Image], cenas: list[Image.Image], tema: 
 
 
 def custo(resp) -> tuple[int, int, float]:
-    tin, tout = resp.usage.input_tokens, resp.usage.output_tokens
-    return tin, tout, tin / 1e6 * PRECO_IN + tout / 1e6 * PRECO_OUT
+    u = _custo.uso(resp, MODELO_VISAO)
+    return u["tokens_in"], u["tokens_out"], u["custo_usd"]
 
 
 # ── layout ──────────────────────────────────────────────────────────────────

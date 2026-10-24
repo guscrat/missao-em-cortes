@@ -38,6 +38,7 @@ import unicodedata
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+import _custo
 from _eventos import evento, upsert_video, conectar
 from sincronizar_estado import DIAS_ARQUIVAR    # janela do conteúdo antigo (15 dias)
 
@@ -56,7 +57,6 @@ PROGRESSO = ROOT / "state" / "curador_progresso.json"   # painel: "rodando desde
 MAX_TENTATIVAS = 3           # falhou antes de baixar: volta pra fila até isso, depois desiste
 
 MODELO = "claude-opus-5-5"
-PRECO_IN, PRECO_OUT = 4.0, 20.0        # US$ por 1M tokens (opus 5.5)
 CUSTO_POR_VIDEO = 0.65                 # segmentação + polimento + revisor, só pra estimativa
 AO_VIVO = {"is_live", "is_upcoming"}
 
@@ -313,8 +313,8 @@ def avaliar(client, itens: list[dict]) -> tuple[dict[str, dict], tuple[int, int,
         betas=["server-side-fallback-2026-07-01"],
         extra_body={"fallbacks": "default"},
     )
-    tin, tout = resp.usage.input_tokens, resp.usage.output_tokens
-    custo = (tin, tout, tin / 1e6 * PRECO_IN + tout / 1e6 * PRECO_OUT)
+    u = _custo.uso(resp, MODELO)
+    custo = (u["tokens_in"], u["tokens_out"], u["custo_usd"])
     if resp.stop_reason == "refusal":
         return {}, custo
     texto = next((b.text for b in resp.content if b.type == "text"), None)

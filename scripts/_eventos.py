@@ -83,6 +83,8 @@ CREATE TABLE IF NOT EXISTS eventos (
     tokens_in   INTEGER DEFAULT 0,
     tokens_out  INTEGER DEFAULT 0,
     custo_usd   REAL DEFAULT 0,
+    cache_escrita INTEGER DEFAULT 0,  -- tokens do input escritos no prompt cache (já em tokens_in)
+    cache_leitura INTEGER DEFAULT 0,  -- tokens do input lidos do prompt cache (já em tokens_in)
     duracao_s   REAL,
     tarefa_id   INTEGER                -- tarefa de dev em andamento (custo por tarefa no painel)
 );
@@ -116,8 +118,10 @@ def conectar(db_path: Path | None = None) -> sqlite3.Connection:
     con.execute("PRAGMA journal_mode=WAL")   # painel lê enquanto o pipeline escreve
     con.execute("PRAGMA foreign_keys=ON")
     con.executescript(SCHEMA)
-    # migração: bancos criados antes das colunas tarefa_id e titulo_youtube
-    for tabela, coluna in (("eventos", "tarefa_id INTEGER"), ("blocos", "titulo_youtube TEXT")):
+    # migração: bancos criados antes das colunas tarefa_id, titulo_youtube e cache_*
+    for tabela, coluna in (("eventos", "tarefa_id INTEGER"), ("blocos", "titulo_youtube TEXT"),
+                           ("eventos", "cache_escrita INTEGER DEFAULT 0"),
+                           ("eventos", "cache_leitura INTEGER DEFAULT 0")):
         if coluna.split()[0] not in {r["name"] for r in con.execute(f"PRAGMA table_info({tabela})")}:
             try:
                 con.execute(f"ALTER TABLE {tabela} ADD COLUMN {coluna}")
@@ -245,7 +249,7 @@ def ler_bloco(stem: str, bloco_id: int) -> dict | None:
 def evento(stem: str | None, etapa: str, status: str, *, agente: str = "pipeline",
            bloco_id: int | None = None, mensagem: str = "", tokens_in: int = 0,
            tokens_out: int = 0, custo_usd: float = 0.0, duracao_s: float | None = None,
-           tarefa_id: int | None = None) -> None:
+           tarefa_id: int | None = None, cache_escrita: int = 0, cache_leitura: int = 0) -> None:
     """tarefa_id: tarefa de dev a que o evento pertence. Sem ele, usa a env MISSAO_TAREFA
     (ex: rodar um script real com API paga dentro de uma tarefa → custo cai nela)."""
     if tarefa_id is None and os.environ.get("MISSAO_TAREFA", "").isdigit():
@@ -253,10 +257,11 @@ def evento(stem: str | None, etapa: str, status: str, *, agente: str = "pipeline
     with _seguro(f"registrar evento {etapa}") as con:
         con.execute(
             """INSERT INTO eventos (ts, stem, bloco_id, agente, etapa, status, mensagem,
-                                    tokens_in, tokens_out, custo_usd, duracao_s, tarefa_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                    tokens_in, tokens_out, custo_usd, duracao_s, tarefa_id,
+                                    cache_escrita, cache_leitura)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (_agora(), stem, bloco_id, agente, etapa, status, mensagem,
-             tokens_in, tokens_out, custo_usd, duracao_s, tarefa_id),
+             tokens_in, tokens_out, custo_usd, duracao_s, tarefa_id, cache_escrita, cache_leitura),
         )
 
 
