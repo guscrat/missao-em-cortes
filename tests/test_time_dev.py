@@ -163,7 +163,7 @@ def test_descrever_mensagem_nan_ou_none():
         assert time_dev.descrever(ev) == "corte · ok"
 
 
-def test_kanban_separa_pronto_de_agendado_e_esconde_arquivado(banco, monkeypatch):
+def test_kanban_separa_pronto_de_agendado_e_esconde_arquivado(banco, monkeypatch, cartoes):
     import _eventos
     from _eventos import upsert_bloco
     upsert_bloco("v", 1, status="aprovado", forcar_status=True, titulo="Pronto A")
@@ -176,8 +176,25 @@ def test_kanban_separa_pronto_de_agendado_e_esconde_arquivado(banco, monkeypatch
     st.cache_data.clear()   # o carregar() é cacheado no processo: senão lê o banco do teste anterior
     at = AppTest.from_file("../painel/app.py", default_timeout=60).run()
     assert not at.exception
-    metricas = {m.label: m.value for m in at.metric}
-    assert metricas["Prontos p/ publicar"] == "2" and metricas["Agendados"] == "1"
+    c = cartoes(at)
+    assert c["Prontos p/ publicar"][0] == "2" and c["Agendados"][0] == "1"
     textos = " ".join(m.value for m in at.markdown)
     assert "Pronto para publicar · 2" in textos and "Agendado · 1" in textos
     assert "Velho D" not in textos and "arquivado" not in textos
+
+
+def test_kanban_esteira_conta_por_etapa(banco, monkeypatch, cartoes):
+    import _eventos
+    from _eventos import evento, upsert_bloco
+    for i, s in enumerate(["segmentado", "cortado", "montado", "quarentena", "aprovado", "agendado"], 1):
+        upsert_bloco("v", i, status=s, forcar_status=True, titulo=f"T{i}")
+    evento("v", "painel", "ok", agente="revisor", custo_usd=0.25)
+    monkeypatch.setenv("MISSAO_DB", str(_eventos.DB_PATH))
+    st.cache_data.clear()
+    at = AppTest.from_file("../painel/app.py", default_timeout=60).run()
+    assert not at.exception
+    c = cartoes(at)
+    assert c["Na edição"][0] == "2" and c["Aguardando revisão"][0] == "1"
+    assert c["Quarentena"][0] == "1" and c["Prontos p/ publicar"][0] == "1"
+    assert c["Agendados"][0] == "1" and c["Custo 7 dias"][0] == "$0.25"
+    assert "<div class='ct alerta'><div class='ct-r'>Quarentena" in " ".join(m.value for m in at.markdown)
