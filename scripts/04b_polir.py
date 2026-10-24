@@ -67,7 +67,8 @@ DEBUG_DIR = ROOT / "outputs" / "_debug"
 PADDING_INICIO_S = 1.0
 PADDING_FIM_S    = 2.0
 
-MODELO = "claude-sonnet-4-6"
+MODELO = "claude-sonnet-5-5"
+EFFORT = "low"   # tarefa simples; o Sonnet 5.5 pensa por padrão (adaptive)
 
 PROMPT_SISTEMA = """Você é um editor de vídeo do canal Missão em Cortes.
 
@@ -256,14 +257,17 @@ def chamar_claude(palavras, duracao, bloco_id):
         f"Transcrição word-level:\n{texto}\n\n"
         "Identifique intervalos pra remover seguindo os critérios do sistema."
     )
-    # Sem prompt cache: as instruções têm ~680 tokens e o mínimo do Sonnet 4.6 é 1024
+    # Instruções (fixas) no prompt cache: os blocos são polidos em sequência, < 5 min entre um
+    # e outro. O thinking conta no max_tokens.
     response = get_client().messages.create(
         model=MODELO,
-        max_tokens=4000,
-        system=PROMPT_SISTEMA,
+        max_tokens=16000,
+        output_config={"effort": EFFORT},
+        system=[{"type": "text", "text": PROMPT_SISTEMA, "cache_control": {"type": "ephemeral"}}],
         messages=[{"role": "user", "content": user_msg}],
     )
-    raw = response.content[0].text.strip()
+    # o primeiro bloco pode ser thinking: pega o texto
+    raw = next((b.text for b in response.content if b.type == "text"), "").strip()
     if raw.startswith("```"):
         raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
         raw = raw.rsplit("```", 1)[0].strip()

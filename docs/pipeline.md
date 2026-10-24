@@ -53,6 +53,7 @@ Pra cada `corte_NN_*.mp4` ele: (1) reaproveita os word-level timestamps do `word
 - Os intervalos ficam em `polimento.json` (re-runs não duplicam blocos); `--reaplicar` re-aplica os intervalos salvos aos cortes sem chamar o LLM (útil após re-cortar, ex: mudou o zoom).
 - Cold opens **não** são polidos. Pra usar os polidos na montagem: `06_montar.py <stem> --polido` (gera `video_NN_<slug>_polido.mp4`).
 - Whisper cai pra CPU se CUDA indisponível (02/04b).
+- LLM: `claude-sonnet-5-5`, effort `low`, instruções no prompt cache (~920 tokens; mínimo do modelo 512). Teste de 24/10 na renan_lula_vire: mesmos intervalos do Sonnet 4.6, US$ 0.18 contra 0.25. O 03 continua no Sonnet 4.6: o 5.5 (low/medium/high) achou menos blocos e perdeu cortes de score 8-9.
 
 ## Step 4c — Legenda karaokê
 
