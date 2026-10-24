@@ -1,10 +1,22 @@
-# Tema do painel na identidade do canal (preto onça + amarelo 14)
+# Tema do painel na identidade do canal (amarelo 14 de destaque).
+# Dois temas: grafite (escuro) e creme (claro). O seletor da barra lateral e o menu ⋮ → Settings
+# trocam entre eles; sem escolha, segue o sistema. Cores do HTML próprio: painel/visual.py (TOKENS).
 [theme]
-base = "dark"
 primaryColor = "#F5C518"
-backgroundColor = "#0A0A0A"
-secondaryBackgroundColor = "#161616"
-textColor = "#F2F2F2"
+
+[theme.dark]
+primaryColor = "#F5C518"
+backgroundColor = "#1B1C20"
+secondaryBackgroundColor = "#25272C"
+textColor = "#ECEDEF"
+borderColor = "#363940"
+
+[theme.light]
+primaryColor = "#F5C518"
+backgroundColor = "#F3EFE6"
+secondaryBackgroundColor = "#E9E3D6"
+textColor = "#1E1E1E"
+borderColor = "#DCD4C4"
 
 [server]
 headless = true

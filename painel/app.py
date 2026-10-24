@@ -5,7 +5,6 @@ Uso: uv run streamlit run painel/app.py      (abre em http://localhost:8501)
 Só LÊ o banco (state/pipeline.db). Quem escreve são os scripts e agentes via
 scripts/_eventos.py. O botão "Sincronizar" roda o scripts/sincronizar_estado.py.
 """
-import base64
 import os
 import sqlite3
 import subprocess
@@ -16,11 +15,11 @@ import pandas as pd
 import streamlit as st
 
 import hoje
+import visual
 from time_dev import aba_time_dev, faixa_decisoes
 
 ROOT = Path(__file__).parent.parent
 DB_PATH = Path(os.environ.get("MISSAO_DB") or ROOT / "state" / "pipeline.db")
-FONTE_ANTON = ROOT / "assets" / "fonts" / "Anton-Regular.ttf"
 
 # Colunas do kanban = responsabilidades. Cada status de bloco cai em UMA coluna,
 # menos "arquivado" (conteúdo antigo que não vai sair): fica fora do kanban e das métricas.
@@ -36,33 +35,6 @@ COLUNAS = [
 ]
 
 st.set_page_config(page_title="Missão em Cortes · painel", page_icon="✂️", layout="wide")
-
-
-def _css() -> None:
-    fonte = ""
-    if FONTE_ANTON.exists():
-        b64 = base64.b64encode(FONTE_ANTON.read_bytes()).decode()
-        fonte = f"@font-face{{font-family:'Anton';src:url(data:font/ttf;base64,{b64});}}"
-    st.markdown(f"""<style>
-    {fonte}
-    h1, h2, h3, .anton {{ font-family: 'Anton', 'Impact', sans-serif !important;
-                         letter-spacing: .02em; font-weight: 400 !important; }}
-    .marca {{ font-family:'Anton','Impact',sans-serif; font-size:2.6rem; line-height:1;
-              color:#F5C518; margin:0; }}
-    .marca span {{ color:#F2F2F2; }}
-    .sub {{ color:#9a9a9a; margin:.2rem 0 1.2rem; }}
-    .col-h {{ font-family:'Anton','Impact',sans-serif; font-size:1.15rem; color:#F2F2F2;
-              border-bottom:2px solid #F5C518; padding-bottom:.2rem; margin-bottom:.1rem; }}
-    .col-dono {{ color:#9a9a9a; font-size:.8rem; margin-bottom:.6rem; }}
-    .tit {{ font-weight:600; font-size:.88rem; line-height:1.25; margin:.2rem 0; }}
-    .meta {{ color:#9a9a9a; font-size:.75rem; }}
-    .pill {{ display:inline-block; font-size:.7rem; padding:1px 8px; border-radius:99px;
-             margin-top:.3rem; background:#262626; color:#d0d0d0; }}
-    .pill.quarentena {{ background:#3a1414; color:#ff8a8a; }}
-    .pill.agendado, .pill.aprovado {{ background:#3a3210; color:#F5C518; }}
-    .pill.publicado {{ background:#12301f; color:#7fdca4; }}
-    .motivo {{ color:#ffb0b0; font-size:.75rem; margin-top:.25rem; }}
-    </style>""", unsafe_allow_html=True)
 
 
 @st.cache_data(ttl=5)
@@ -142,6 +114,23 @@ def card_video(v: pd.Series) -> None:
                     f"<span class='pill'>{v.status}</span>", unsafe_allow_html=True)
 
 
+def esteira(blocos: pd.DataFrame, eventos: pd.DataFrame) -> None:
+    """Contagem por etapa em cartões pequenos, em cima do kanban."""
+    semana = eventos[eventos["ts"] >= pd.Timestamp.now() - pd.Timedelta(days=7)] \
+        if not eventos.empty else eventos
+    contar = lambda sts: int(blocos["status"].isin(sts).sum()) if not blocos.empty else 0  # noqa: E731
+    visual.grade([
+        visual.cartao("Na edição", contar({"segmentado", "cortado"}), "segmentados e cortados"),
+        visual.cartao("Aguardando revisão", contar({"montado", "revisao"}), "montados, falta o revisor"),
+        visual.cartao("Quarentena", contar({"quarentena"}), "esperando você",
+                      tom="alerta" if contar({"quarentena"}) else ""),
+        visual.cartao("Prontos p/ publicar", contar({"aprovado"}), "aprovados, fora do YouTube"),
+        visual.cartao("Agendados", contar({"agendado"}), "no YouTube com data"),
+        visual.cartao("Custo 7 dias", f"${semana['custo_usd'].sum():.2f}" if not semana.empty else "$0.00",
+                      "todos os agentes"),
+    ])
+
+
 def kanban(videos: pd.DataFrame, blocos: pd.DataFrame) -> None:
     cols = st.columns(len(COLUNAS))
     com_blocos = set(blocos["stem"]) if not blocos.empty else set()
@@ -177,7 +166,7 @@ def aba_agentes(eventos: pd.DataFrame) -> None:
     c1, c2 = st.columns([3, 2])
     with c1:
         st.markdown("<h3>Custo por agente (US$)</h3>", unsafe_allow_html=True)
-        st.bar_chart(por_agente["custo_usd"], color="#F5C518", horizontal=True)
+        visual.barras(por_agente["custo_usd"], formato=lambda v: f"US$ {v:.2f}", nome="custo")
     with c2:
         st.markdown("<h3>Resumo</h3>", unsafe_allow_html=True)
         st.dataframe(por_agente, width="stretch",
@@ -190,7 +179,8 @@ def aba_agentes(eventos: pd.DataFrame) -> None:
     if ok.empty:
         st.caption("Sem etapas concluídas no período.")
     else:
-        st.bar_chart((ok.groupby("etapa")["duracao_s"].mean() / 60).round(1), color="#F5C518")
+        visual.barras(ok.groupby("etapa")["duracao_s"].mean() / 60,
+                      formato=lambda v: f"{v:.1f} min".replace(".", ","), nome="média")
 
 
 def aba_timeline(eventos: pd.DataFrame) -> None:
@@ -213,7 +203,7 @@ def aba_timeline(eventos: pd.DataFrame) -> None:
 
 
 # ── Página ─────────────────────────────────────────────────────────────────
-_css()
+visual.css()
 st.markdown("<p class='marca'>MISSÃO EM CORTES <span>· painel</span></p>"
             "<p class='sub'>Cada coluna é uma responsabilidade. Os cards andam sozinhos "
             "conforme os agentes trabalham.</p>", unsafe_allow_html=True)
@@ -223,6 +213,7 @@ with st.sidebar:
     if st.button("Sincronizar com outputs/", width="stretch"):
         sincronizar()
     auto = st.toggle("Atualizar a cada 10s", value=True)
+    visual.seletor_tema()
     st.caption(f"Banco: `{DB_PATH.relative_to(ROOT) if DB_PATH.is_relative_to(ROOT) else DB_PATH}`")
 
 
@@ -242,17 +233,6 @@ def corpo() -> None:
                    "pra importar os vídeos que você já processou.")
         return
 
-    semana = eventos[eventos["ts"] >= pd.Timestamp.now() - pd.Timedelta(days=7)] \
-        if not eventos.empty else eventos
-    contar = lambda sts: int(blocos["status"].isin(sts).sum()) if not blocos.empty else 0  # noqa: E731
-    m = st.columns(6)
-    m[0].metric("Na edição", contar({"segmentado", "cortado"}))
-    m[1].metric("Aguardando revisão", contar({"montado", "revisao"}))
-    m[2].metric("Quarentena", contar({"quarentena"}))
-    m[3].metric("Prontos p/ publicar", contar({"aprovado"}))
-    m[4].metric("Agendados", contar({"agendado"}))
-    m[5].metric("Custo 7 dias", f"${semana['custo_usd'].sum():.2f}" if not semana.empty else "$0.00")
-
     aba_h, aba_k, aba_a, aba_t, aba_d = st.tabs(["Hoje", "Kanban", "Agentes e custo",
                                                  "Linha do tempo", "Time de dev"])
     with aba_h:
@@ -260,6 +240,7 @@ def corpo() -> None:
                                cfg["orcamento_mensal_usd"], agora)
         hoje.aba_hoje(blocos, tarefas, est, custo, agora)
     with aba_k:
+        esteira(blocos, eventos)
         kanban(videos, blocos)
     with aba_a:
         aba_agentes(eventos)
