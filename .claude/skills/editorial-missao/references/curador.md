@@ -42,13 +42,18 @@ Custa ~US$ 0,65 por vídeo (+0,15 da colagem). O resto continua na fila; item co
 
 ## Agendamento (Agendador de Tarefas do Windows)
 
-Todo dia às 17:00; se o PC estiver desligado, roda assim que ligar (`-StartWhenAvailable`). Registrar uma vez, no PowerShell, apontando pra **pasta principal**:
+Todo dia às 17:00; se o PC estiver desligado, roda assim que ligar (`-StartWhenAvailable`). Roda **sem janela**: o Agendador chama o `pythonw.exe` da venv com `scripts/curador_oculto.py`, que dispara o `uv run py scripts/13_curador.py` com console invisível (ffmpeg/yt-dlp herdam, nada pisca) e joga a saída no `state/curador.log`. Registrar uma vez, no PowerShell, apontando pra **pasta principal**:
 
 ```powershell
-$a = New-ScheduledTaskAction -Execute "cmd.exe" -Argument '/c cd /d "C:\Users\gusta\Downloads\projetos\missao-em-cortes" && "C:\Users\gusta\.local\bin\uv.exe" run py scripts\13_curador.py >> state\curador.log 2>&1'
+$raiz = "C:\Users\gusta\Downloads\projetos\missao-em-cortes"
+$a = New-ScheduledTaskAction -Execute "$raiz\.venv\Scripts\pythonw.exe" -Argument "scripts\curador_oculto.py" -WorkingDirectory $raiz
 $t = New-ScheduledTaskTrigger -Daily -At 17:00
 $s = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 6) -DontStopIfGoingOnBatteries -AllowStartIfOnBatteries
-Register-ScheduledTask -TaskName "MissaoEmCortes-Curador" -Action $a -Trigger $t -Settings $s -Description "Missão em Cortes: agente Curador (13_curador.py)"
+Register-ScheduledTask -TaskName "MissaoEmCortes-Curador" -Action $a -Trigger $t -Settings $s -Description "Missão em Cortes: agente Curador (13_curador.py, sem janela)"
 ```
+
+Tarefa já registrada com o `cmd.exe` antigo (janela preta): `Set-ScheduledTask -TaskName "MissaoEmCortes-Curador" -Action $a`.
+
+**Progresso no painel:** o 13 grava `state/curador_progresso.json` (`rodando`, `pid`, `desde`, `etapa`, `stem`, `atualizado`) a cada etapa, e a faixa do painel mostra "Curador rodando desde 17:00 — etapa X" (na etapa `pipeline`, junta o step do pipeline daquele vídeo). Falhas viram alerta: rodada que quebrou (evento `curador_rodada` `falha`, gravado pelo 13 ou pelo `curador_oculto` quando o processo morre ou nem começa) e progresso "rodando" com o processo sumido (PC desligou no meio). Trava ocupada sai com código 75 e não conta como falha.
 
 Conferir: `Get-ScheduledTask -TaskName "MissaoEmCortes-Curador" | Get-ScheduledTaskInfo`. Rodar agora: `Start-ScheduledTask -TaskName "MissaoEmCortes-Curador"`. Remover: `Unregister-ScheduledTask -TaskName "MissaoEmCortes-Curador" -Confirm:$false`.
