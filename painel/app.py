@@ -178,7 +178,7 @@ def aba_agentes(eventos: pd.DataFrame) -> None:
                       f"{cache['leitura']:,} de {cache['tokens_in']:,} tokens de input lidos do cache"
                       .replace(",", "."),
                       ajuda="Parte do input das chamadas de API servida do cache (custa 5-10% do "
-                            "preço cheio). Só revisor e escolha de imagens da colagem usam cache.",
+                            "preço cheio). Revisor, polimento 04b e escolha de imagens da colagem usam cache.",
                       medidor=cache["taxa"]),
     ])
     c1, c2 = st.columns([3, 2])

@@ -24,7 +24,7 @@ Docs: `docs/pipeline.md` (detalhes dos steps 4/4b/4c/5/6/10, zoom anti-overlay, 
 
 ## Stack
 
-Python 3.10+ com **uv** · **faster-whisper** `medium` (GPU CUDA, cai pra CPU) · **Anthropic API** (segmentação `claude-sonnet-4-6`; revisor/editor/Curador `claude-opus-5-5`; visão da colagem `claude-haiku-5-5`) · **ffmpeg** com NVENC · **Pillow** · **yt-dlp** (sempre `uv run yt-dlp`, com solver JS) · **OpenCV** headless (rosto, Haar) · **rembg** (recorte da colagem) · **Canva** (intro/outro, fora do pipeline) · **Streamlit** (painel).
+Python 3.10+ com **uv** · **faster-whisper** `medium` (GPU CUDA, cai pra CPU) · **Anthropic API** (segmentação `claude-sonnet-4-6`; polimento 04b `claude-sonnet-5-5`; revisor/editor/Curador `claude-opus-5-5`; visão da colagem `claude-haiku-5-5`) · **ffmpeg** com NVENC · **Pillow** · **yt-dlp** (sempre `uv run yt-dlp`, com solver JS) · **OpenCV** headless (rosto, Haar) · **rembg** (recorte da colagem) · **Canva** (intro/outro, fora do pipeline) · **Streamlit** (painel).
 
 ## Estrutura
 
@@ -54,7 +54,7 @@ Scripts (`scripts/`):
 | 2 | Transcrição | `uv run py scripts/02_transcribe.py inputs/<stem>.mp4` | grátis (local, ~6-12min) |
 | 3 | Segmentação | `uv run py scripts/03_segmentar.py <stem>` | ~$0.20 |
 | 4 | Cortes (+ cold open) | `uv run py scripts/04_cortar.py <stem>` | grátis |
-| 4b* | Polimento (jump cut) | `uv run py scripts/04b_polir.py <stem> [--sem-llm]` | ~$0.20 / $0 |
+| 4b* | Polimento (jump cut) | `uv run py scripts/04b_polir.py <stem> [--sem-llm]` | ~$0.18 / $0 |
 | 4c | Legenda karaokê (padrão) | `uv run py scripts/04c_legendas.py <stem> [--polido]` | grátis |
 | 5 | Cards de contexto | `uv run py scripts/05_cards.py <stem>` | grátis |
 | 6 | Montagem final | `uv run py scripts/06_montar.py <stem> [--polido] [--legendado]` | grátis |
