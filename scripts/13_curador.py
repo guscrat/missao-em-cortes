@@ -51,6 +51,8 @@ ESTADO = ROOT / "state" / "curadoria.json"
 RESUMO = ROOT / "state" / "curador_resumo.md"
 TRAVA = ROOT / "state" / "curador.lock"
 TRAVA_HORAS = 12             # rodada mais velha que isso = morreu no meio: libera
+SAIDA_TRAVADO = 75           # outra rodada em andamento (o curador_oculto não acusa falha)
+PROGRESSO = ROOT / "state" / "curador_progresso.json"   # painel: "rodando desde 17:00 — etapa X"
 MAX_TENTATIVAS = 3           # falhou antes de baixar: volta pra fila até isso, depois desiste
 
 MODELO = "claude-opus-5-5"
@@ -147,6 +149,45 @@ def pegar_trava() -> bool:
 
 def soltar_trava() -> None:
     TRAVA.unlink(missing_ok=True)
+
+
+# --- progresso (painel) -------------------------------------------------------------------
+
+def ler_progresso() -> dict:
+    try:
+        dados = json.loads(PROGRESSO.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return dados if isinstance(dados, dict) else {}
+
+
+def gravar_progresso(dados: dict) -> None:
+    """Best-effort e atômico (o painel lê a cada 10s): falha vira aviso, nunca derruba a rodada."""
+    try:
+        PROGRESSO.parent.mkdir(parents=True, exist_ok=True)
+        tmp = PROGRESSO.with_suffix(".tmp")
+        tmp.write_text(json.dumps(dados, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, PROGRESSO)
+    except OSError as e:
+        print(f"[aviso] painel: não gravei o progresso ({e})", file=sys.stderr)
+
+
+def marcar_etapa(etapa: str, *, stem: str | None = None, inicio: bool = False) -> None:
+    """O que a rodada está fazendo agora. `stem` fica até a próxima troca (o painel junta a
+    etapa do pipeline daquele vídeo)."""
+    agora = datetime.now().isoformat(timespec="seconds")
+    dados = {} if inicio else ler_progresso()
+    dados.setdefault("desde", agora)
+    dados.update(rodando=True, pid=os.getpid(), etapa=etapa, atualizado=agora)
+    if stem is not None:
+        dados["stem"] = stem
+    gravar_progresso(dados)
+
+
+def encerrar_progresso(codigo: int | None) -> None:
+    dados = ler_progresso()
+    dados.update(rodando=False, fim=datetime.now().isoformat(timespec="seconds"), codigo=codigo)
+    gravar_progresso(dados)
 
 
 # --- o que já foi visto -------------------------------------------------------------------
@@ -387,7 +428,12 @@ def modo_colagem() -> str:
     return modo if modo in ("teste", "padrao") else "desligado"
 
 
+ROTULOS = {"01_baixar.py": "baixando", "pipeline.py": "pipeline", "11_revisor.py": "revisor",
+           "10_shorts.py": "Shorts", "07b_colagem.py": "thumb colagem"}
+
+
 def rodar(script: str, *args: str) -> bool:
+    marcar_etapa(ROTULOS.get(script, script))
     print(f"\n>> {script} {' '.join(args)}", flush=True)
     return subprocess.run([sys.executable, str(SCRIPTS / script), *args],
                           cwd=ROOT).returncode == 0
@@ -399,6 +445,7 @@ def processar(item: dict) -> dict:
     from _publicacao import aprovados, gerar
 
     stem = item["stem"]
+    marcar_etapa("preparando", stem=stem)
     res = {"stem": stem, "titulo": item["titulo"], "canal": item["canal"],
            "ok": False, "aprovados": 0, "publicacao": None, "avisos": []}
     if not cadastrar_zoom(stem, item.get("zoom")):
@@ -512,14 +559,27 @@ def main(argv: list[str]) -> int:
     forcar = "--forcar" in argv
     cfg = carregar_config()
 
-    if not dry_run and not pegar_trava():
-        print(f"[!] Outra rodada do Curador em andamento ({TRAVA.name}). Saindo.")
-        return 1
-    try:
+    if dry_run:
         return _rodada(cfg, dry_run, sem_pipeline, forcar)
+    if not pegar_trava():
+        print(f"[!] Outra rodada do Curador em andamento ({TRAVA.name}). Saindo.")
+        return SAIDA_TRAVADO
+    codigo = None
+    marcar_etapa("lendo os canais", inicio=True)
+    evento(None, "curador_rodada", "inicio", agente="curador")
+    try:
+        codigo = _rodada(cfg, dry_run, sem_pipeline, forcar)
+    except Exception as e:  # noqa: BLE001 — registra pro painel e deixa o Traceback no log
+        evento(None, "curador_rodada", "falha", agente="curador",
+               mensagem=f"quebrou em \"{ler_progresso().get('etapa', '?')}\": "
+                        f"{type(e).__name__}: {e}"[:300])
+        raise
+    else:   # falha de um vídeo/LLM já tem evento próprio: a rodada em si terminou
+        evento(None, "curador_rodada", "ok", agente="curador", mensagem=f"exit {codigo}")
+        return codigo
     finally:
-        if not dry_run:
-            soltar_trava()
+        encerrar_progresso(codigo)
+        soltar_trava()
 
 
 def _canal_de(cfg: dict, nome: str) -> dict:
@@ -598,6 +658,8 @@ def _rodada(cfg: dict, dry_run: bool, sem_pipeline: bool, forcar: bool) -> int:
                 novos.append(item)
                 print(f"   + {item['titulo'][:60]} ({item['duracao_s'] // 60} min, {item['data']})")
 
+    if not dry_run:
+        marcar_etapa("lendo o nosso canal no YouTube")
     aviso_canal = sincronizar_canal(dry_run)        # antes do estoque: o que já subiu sai dele
     estoque = calcular_estoque(cfg)
     minimo = cfg["estoque"]["dias_minimos"]
@@ -610,6 +672,7 @@ def _rodada(cfg: dict, dry_run: bool, sem_pipeline: bool, forcar: bool) -> int:
         print("(dry-run: nada foi enviado nem baixado)")
         return 0
 
+    marcar_etapa("atualizando o placar")
     aviso_placar = atualizar_placar()
     agora = datetime.now().isoformat(timespec="seconds")
     rodada = {"quando": agora, "custo": 0.0, "estoque": estoque, "escolhidos": [],
@@ -621,6 +684,7 @@ def _rodada(cfg: dict, dry_run: bool, sem_pipeline: bool, forcar: bool) -> int:
         load_dotenv(ROOT / ".env")
         evento(None, "curadoria", "inicio", agente="curador",
                mensagem=f"{len(novos)} vídeo(s) novo(s)")
+        marcar_etapa(f"Claude avaliando {len(novos)} vídeo(s) novo(s)")
         try:
             avaliacoes, custo = avaliar(Anthropic(), novos)
         except Exception as e:  # noqa: BLE001 — avaliação falhou: a fila de antes ainda roda
@@ -677,6 +741,7 @@ def _rodada(cfg: dict, dry_run: bool, sem_pipeline: bool, forcar: bool) -> int:
             gravar_estado(estado)
         rodada["estoque_depois"] = calcular_estoque(cfg)
 
+    marcar_etapa("escrevendo o resumo")
     print("\n" + escrever_resumo(rodada))
     ok = all(p["ok"] for p in rodada["processados"]) and not rodada.get("falha_llm")
     return 0 if ok else 1
