@@ -136,17 +136,19 @@ def marcar_short(pasta: Path, bloco: int, vid: str, quando: datetime, dry: bool)
 
 
 def marcar_longo(stem: str, bloco: int, vid: str, status: str, quando: datetime,
-                 dry: bool) -> bool:
+                 dry: bool, titulo: str | None = None) -> bool:
+    """Grava também o título real do canal (titulo_youtube): o casamento aceita edição
+    leve no Studio (ex.: grafia corrigida) e o painel mostra o que está no ar."""
     atual = ler_bloco(stem, bloco) or {}
     publish_at = quando.isoformat(timespec="seconds")
-    if (atual.get("status"), atual.get("youtube_id"), atual.get("publish_at")) == \
-            (status, vid, publish_at):
+    if (atual.get("status"), atual.get("youtube_id"), atual.get("publish_at"),
+            atual.get("titulo_youtube")) == (status, vid, publish_at, titulo):
         return False
     if atual.get("status") == "publicado" and status == "agendado":
         return False                        # já está no ar: nunca volta pra agendado
     if not dry:
         upsert_bloco(stem, bloco, status=status, youtube_id=vid, publish_at=publish_at,
-                     forcar_status=True)
+                     titulo_youtube=titulo, forcar_status=True)
     return True
 
 
@@ -185,7 +187,7 @@ def aplicar(videos: list[dict], locais: list[dict], agora: datetime | None = Non
                 if not dry:
                     evento(m["stem"], "14_canal", "ok", bloco_id=m["bloco"], agente="publicador",
                            mensagem=f"Short {status} no canal: {v['id']} em {linha['quando']}")
-        elif marcar_longo(m["stem"], m["bloco"], v["id"], status, quando, dry):
+        elif marcar_longo(m["stem"], m["bloco"], v["id"], status, quando, dry, v["titulo"]):
             res["longos"].append(linha)
             if not dry:
                 evento(m["stem"], "14_canal", "ok", bloco_id=m["bloco"], agente="publicador",

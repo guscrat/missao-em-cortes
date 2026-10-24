@@ -119,8 +119,9 @@ def estoque() -> dict | None:
 
 
 def _nome(b) -> str:
-    """titulo > tema > 'bloco N' (NaN do pandas é truthy: checa o tipo)."""
-    for campo in ("titulo", "tema"):
+    """titulo_youtube (o que está no canal) > titulo > tema > 'bloco N'
+    (NaN do pandas é truthy: checa o tipo)."""
+    for campo in ("titulo_youtube", "titulo", "tema"):
         v = getattr(b, campo, None)
         if isinstance(v, str) and v.strip():
             return v
