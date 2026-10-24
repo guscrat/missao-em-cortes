@@ -5,6 +5,7 @@ Uso: uv run streamlit run painel/app.py      (abre em http://localhost:8501)
 Só LÊ o banco (state/pipeline.db). Quem escreve são os scripts e agentes via
 scripts/_eventos.py. O botão "Sincronizar" roda o scripts/sincronizar_estado.py.
 """
+import html
 import os
 import sqlite3
 import subprocess
@@ -92,7 +93,7 @@ def card_bloco(b: pd.Series) -> None:
     with st.container(border=True):
         if isinstance(b.thumb_path, str) and (ROOT / b.thumb_path).exists():
             st.image(str(ROOT / b.thumb_path), width="stretch")
-        st.markdown(f"<div class='tit'>{b.titulo or b.tema or f'Bloco {b.bloco_id}'}</div>",
+        st.markdown(f"<div class='tit'>{html.escape(hoje._nome(b))}</div>",
                     unsafe_allow_html=True)
         partes = [f"{b.stem} · #{int(b.bloco_id)}"]
         if pd.notna(b.score):
