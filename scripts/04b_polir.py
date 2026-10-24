@@ -34,6 +34,7 @@ from dotenv import load_dotenv
 from _ffmpeg import VENC, AENC
 from _paths import achar_pasta, stem_de
 from _eventos import evento
+import _custo
 
 load_dotenv()
 
@@ -65,6 +66,8 @@ DEBUG_DIR = ROOT / "outputs" / "_debug"
 # Devem casar com os paddings do 04_cortar.py (pra mapear timestamp global -> relativo ao corte)
 PADDING_INICIO_S = 1.0
 PADDING_FIM_S    = 2.0
+
+MODELO = "claude-sonnet-4-6"
 
 PROMPT_SISTEMA = """Você é um editor de vídeo do canal Missão em Cortes.
 
@@ -253,8 +256,9 @@ def chamar_claude(palavras, duracao, bloco_id):
         f"Transcrição word-level:\n{texto}\n\n"
         "Identifique intervalos pra remover seguindo os critérios do sistema."
     )
+    # Sem prompt cache: as instruções têm ~680 tokens e o mínimo do Sonnet 4.6 é 1024
     response = get_client().messages.create(
-        model="claude-sonnet-4-6",
+        model=MODELO,
         max_tokens=4000,
         system=PROMPT_SISTEMA,
         messages=[{"role": "user", "content": user_msg}],
@@ -286,7 +290,7 @@ def chamar_claude(palavras, duracao, bloco_id):
     descartados = len(intervalos) - len(filtrados)
     if descartados:
         print(f"  ({descartados} intervalo(s) descartados por motivo 'ignorar/manter')")
-    return filtrados, response.usage
+    return filtrados, response
 
 
 def aplicar_jumpcut(input_mp4, output_mp4, intervalos):
@@ -345,8 +349,7 @@ if reaplicar and not salvos_por_id:
 if only_bloco is not None and not reaplicar:
     print(f"Modo --bloco={only_bloco}: processando só esse bloco")
 
-total_in_tokens = 0
-total_out_tokens = 0
+usos = []   # um _custo.uso() por chamada; vira um evento só no fim
 
 for b in data["blocos"]:
     if only_bloco is not None and b["id"] != only_bloco:
@@ -379,9 +382,8 @@ for b in data["blocos"]:
         else:
             print(f"  Chamando Claude (conservador)...")
             try:
-                intervalos_llm, usage = chamar_claude(palavras, dur, b["id"])
-                total_in_tokens += usage.input_tokens
-                total_out_tokens += usage.output_tokens
+                intervalos_llm, resp = chamar_claude(palavras, dur, b["id"])
+                usos.append(_custo.uso(resp, MODELO))
             except Exception as e:
                 print(f"  ERRO Claude: {e}. Pulando este bloco.")
                 continue
@@ -427,7 +429,7 @@ else:
     if sem_llm:
         print("Custo total: $0 (modo --sem-llm, só silêncios programáticos)")
     else:
-        custo_usd = (total_in_tokens / 1_000_000) * 3 + (total_out_tokens / 1_000_000) * 15
-        print(f"Custo total: input {total_in_tokens:,} tok · output {total_out_tokens:,} tok (~${custo_usd:.2f})")
-        evento(stem, "04b_polir", "llm", agente="editor",
-               tokens_in=total_in_tokens, tokens_out=total_out_tokens, custo_usd=custo_usd)
+        uso = _custo.somar(usos)
+        print(f"Custo total: input {uso['tokens_in']:,} tok · output {uso['tokens_out']:,} tok "
+              f"(~${uso['custo_usd']:.2f}){_custo.resumo(uso)}")
+        evento(stem, "04b_polir", "llm", agente="editor", **uso)

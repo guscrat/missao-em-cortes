@@ -5,6 +5,7 @@ sys.stdout.reconfigure(encoding='utf-8')
 from pathlib import Path
 from anthropic import Anthropic
 from dotenv import load_dotenv
+import _custo
 from _paths import achar_pasta, stem_de
 from _eventos import evento
 
@@ -47,11 +48,9 @@ response = client.messages.create(
 
 raw = response.content[0].text.strip()
 print(f"Resposta: {len(raw):,} caracteres")
-custo_usd = (response.usage.input_tokens / 1_000_000) * 3 + (response.usage.output_tokens / 1_000_000) * 15
-print(f"Custo: input {response.usage.input_tokens:,} tok · output {response.usage.output_tokens:,} tok (~${custo_usd:.2f})")
-evento(stem, "03_segmentar", "llm", agente="editor",
-       tokens_in=response.usage.input_tokens, tokens_out=response.usage.output_tokens,
-       custo_usd=custo_usd, mensagem="claude-sonnet-4-6")
+uso = _custo.uso(response, "claude-sonnet-4-6")
+print(f"Custo: input {uso['tokens_in']:,} tok · output {uso['tokens_out']:,} tok (~${uso['custo_usd']:.2f})")
+evento(stem, "03_segmentar", "llm", agente="editor", **uso, mensagem="claude-sonnet-4-6")
 
 # Limpa markdown code blocks se vier (defensivo)
 if raw.startswith("```"):

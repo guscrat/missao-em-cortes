@@ -44,6 +44,7 @@ import time
 from pathlib import Path
 
 import _colagem
+import _custo
 import _editor
 import _grafias
 from _descricoes import ler_descricoes
@@ -52,7 +53,6 @@ from _legenda import hhmmss_para_segundos, palavras_na_janela
 from _paths import achar_pasta, escolher_thumb, stem_de
 
 MODELO = "claude-opus-5-5"
-PRECO_IN, PRECO_OUT = 4.0, 20.0        # US$ por 1M tokens (opus 5.5)
 CUSTO_ESTIMADO_BLOCO = 0.05            # só pro --dry-run (+ até ~US$ 0.03 se trocar a thumb)
 N_FRAMES = 6
 LARGURA_IMG = 512                      # imagem pequena = menos token; dá pra ler a tela
@@ -105,8 +105,8 @@ atribuem ao speaker algo que ele não disse, invertem o sentido, exageram um fat
 ficar falso, ou prometem um assunto que o trecho não entrega. Gancho forte, paráfrase e \
 simplificação são OK. Números, datas, fatos e nomes têm que bater EXATAMENTE com a \
 transcrição (ex.: "3 INQUÉRITOS" quando a fala diz 2 reprova). Nome de pessoa fora da \
-grafia oficial (lista no pedido) também reprova. Se vierem várias variantes de texto da \
-thumb separadas por " | " (teste A/B da thumb colagem), TODAS precisam passar: aponte qual \
+grafia oficial (lista GRAFIAS OFICIAIS no fim destas instruções) também reprova. Se \
+vierem várias variantes de texto da thumb separadas por " | " (teste A/B da thumb colagem), TODAS precisam passar: aponte qual \
 falhou. Reprove TAMBÉM se o título ou o texto da thumb destacam palavrão ou \
 termo que possa soar como ofensa a um grupo (raça, etnia, gênero, orientação sexual, \
 religião, origem, deficiência etc.), MESMO que esteja na fala: diga isso em titulo_problema.
@@ -163,9 +163,17 @@ def montar_conteudo(titulo: str, texto_thumb: str, transcricao: str,
     sem_thumb = "" if thumb_b64 else "SEM THUMB ESCOLHIDA: marque thumb_ok=false.\n"
     conteudo.append({"type": "text", "text": (
         f"TÍTULO DO YOUTUBE: {titulo}\nTEXTO DA THUMB: {texto_thumb}\n{sem_thumb}"
-        f"\nGRAFIAS OFICIAIS:\n{_grafias.para_prompt()}\n"
         f"\nTRANSCRIÇÃO DO TRECHO:\n{transcricao}")})
     return conteudo
+
+
+def sistema_revisor() -> list[dict]:
+    """Parte fixa do pedido (instruções + grafias, ~2K tokens) com o breakpoint do prompt
+    cache no fim: blocos revisados em sequência (< 5 min entre um e outro) leem isso do
+    cache. O que muda (thumb, frames, título, transcrição) vem depois, na mensagem."""
+    return [{"type": "text", "text": SISTEMA},
+            {"type": "text", "text": f"GRAFIAS OFICIAIS:\n{_grafias.para_prompt()}",
+             "cache_control": {"type": "ephemeral"}}]
 
 
 def texto_da_thumb(pasta: Path, bid: int, texto_thumb: str) -> str:
@@ -178,13 +186,14 @@ def texto_da_thumb(pasta: Path, bid: int, texto_thumb: str) -> str:
     return " | ".join(dict.fromkeys(textos)) or texto_thumb
 
 
-def chamar_claude(client, conteudo: list[dict], sistema: str = SISTEMA, schema: dict = SCHEMA,
+def chamar_claude(client, conteudo: list[dict], sistema: str | None = None, schema: dict = SCHEMA,
                   effort: str = "medium") -> tuple[dict | None, object]:
-    """(checagens ou None se recusou, resposta). Fallback de refusal ligado (servidor)."""
+    """(checagens ou None se recusou, resposta). Fallback de refusal ligado (servidor).
+    Sem `sistema`: o do revisor completo, com prompt cache."""
     resp = client.beta.messages.create(
         model=MODELO,
         max_tokens=16000,
-        system=sistema,
+        system=sistema_revisor() if sistema is None else sistema,
         messages=[{"role": "user", "content": conteudo}],
         output_config={"effort": effort,
                        "format": {"type": "json_schema", "schema": schema}},
@@ -224,8 +233,8 @@ def precisa_editor(status: str, checagens: dict | None) -> bool:
 
 
 def custo(resp) -> tuple[int, int, float]:
-    tin, tout = resp.usage.input_tokens, resp.usage.output_tokens
-    return tin, tout, tin / 1e6 * PRECO_IN + tout / 1e6 * PRECO_OUT
+    u = _custo.uso(resp, MODELO)
+    return u["tokens_in"], u["tokens_out"], u["custo_usd"]
 
 
 def escolher_video(pasta: Path, nn: str) -> Path | None:
@@ -253,7 +262,8 @@ def revisar_bloco(client, anthropic, stem, pasta, b, nn, video, titulo, texto_th
         return None
     tin, tout, usd = custo(resp)
     evento(stem, "11_revisor", "llm", agente="revisor", bloco_id=bid, tokens_in=tin,
-           tokens_out=tout, custo_usd=usd, mensagem=resp.model, duracao_s=time.time() - t0)
+           tokens_out=tout, custo_usd=usd, mensagem=resp.model, duracao_s=time.time() - t0,
+           **_custo.cache(resp))
     status, motivo = decidir(checagens)
     print(f"  {nn}: revisor → {status}{' — ' + motivo if motivo else ''} (US$ {usd:.3f})")
     return checagens, status, motivo, usd
@@ -273,7 +283,7 @@ def editar(client, anthropic, stem, pasta, b, titulo, texto_thumb, problema, tra
         return None, 0.0
     tin, tout, usd = _editor.custo(resp)
     evento(stem, "11_editor", "llm", agente="editor", bloco_id=bid, tokens_in=tin,
-           tokens_out=tout, custo_usd=usd, mensagem=resp.model)
+           tokens_out=tout, custo_usd=usd, mensagem=resp.model, **_custo.cache(resp))
     if novo is None:
         evento(stem, "11_editor", "falha", agente="editor", bloco_id=bid, mensagem="recusou")
         return None, usd
@@ -345,7 +355,7 @@ def trocar_thumb(client, anthropic, stem, pasta, bid, nn, titulo, texto_thumb,
         usd_total += usd
         evento(stem, "11_revisor", "llm", agente="revisor", bloco_id=bid, tokens_in=tin,
                tokens_out=tout, custo_usd=usd, mensagem=f"{resp.model} (thumb)",
-               duracao_s=time.time() - t0)
+               duracao_s=time.time() - t0, **_custo.cache(resp))
         if r is None:
             return "quarentena", "thumb: revisor recusou analisar — revisar à mão", problemas, usd_total
         print(f"  {nn}: frame novo da thumb → {'ok' if r['thumb_ok'] else r['thumb_problema']}"
