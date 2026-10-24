@@ -163,7 +163,7 @@ def test_descrever_mensagem_nan_ou_none():
         assert time_dev.descrever(ev) == "corte · ok"
 
 
-def test_kanban_separa_pronto_de_agendado_e_esconde_arquivado(banco, monkeypatch):
+def test_kanban_separa_pronto_de_agendado_e_esconde_arquivado(banco, monkeypatch, cartoes):
     import _eventos
     from _eventos import upsert_bloco
     upsert_bloco("v", 1, status="aprovado", forcar_status=True, titulo="Pronto A")
@@ -176,8 +176,8 @@ def test_kanban_separa_pronto_de_agendado_e_esconde_arquivado(banco, monkeypatch
     st.cache_data.clear()   # o carregar() é cacheado no processo: senão lê o banco do teste anterior
     at = AppTest.from_file("../painel/app.py", default_timeout=60).run()
     assert not at.exception
-    metricas = {m.label: m.value for m in at.metric}
-    assert metricas["Prontos p/ publicar"] == "2" and metricas["Agendados"] == "1"
+    c = cartoes(at)
+    assert c["Prontos p/ publicar"][0] == "2" and c["Agendados"][0] == "1"
     textos = " ".join(m.value for m in at.markdown)
     assert "Pronto para publicar · 2" in textos and "Agendado · 1" in textos
     assert "Velho D" not in textos and "arquivado" not in textos

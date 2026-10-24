@@ -33,3 +33,10 @@
 - Orçamento e limiar de cota em `config/painel.json` (`orcamento_mensal_usd`, padrão 10; `cota_alerta_pct`, padrão 80). O custo do mês soma `custo_usd` de todos os eventos desde o dia 1º, por agente.
 - **Placar do canal:** o Analista (`scripts/15_placar.py`, chamado pelo Curador 1x/dia) grava `state/placar.json` = `{"atualizado": ISO, "inscritos": int, "horas_12m": float, "views_shorts_90d": int}`. Sem o arquivo a seção mostra "—" (metas do YPP: 1.000 inscritos + 4.000 h ou 10 mi de views em Shorts).
 - Alerta novo = função pura em `hoje.py` que devolve `[(nivel "erro"|"aviso", título, detalhe)]`, somada na chamada de `faixa_alertas` no `app.py`.
+
+## Visual do painel (`painel/visual.py`)
+
+- **Tema:** grafite (escuro) e creme (claro) em `.streamlit/config.toml` (`[theme.dark]`/`[theme.light]`, widgets nativos) + `visual.TOKENS` (variáveis CSS `--tx`, `--card`, `--acento-tx`... do HTML próprio). Mudou uma cor? Mude nos dois. Nada de cor fixa em `hoje.py`/`time_dev.py`/`app.py`: use `var(--...)`.
+- **Seletor Escuro/Claro** na barra lateral: grava a escolha do Streamlit no `localStorage` (`stActiveTheme-<path>-v2`) e recarrega; é o mesmo que o menu ⋮ → Settings.
+- **Métrica = cartão:** `visual.cartao(rótulo, valor, contexto, tom=""|"alerta"|"erro"|"ok", ajuda, medidor)` dentro de `visual.grade([...], grande=True)` (o que importa mais) ou `grade([...])` (o resto). Não use `st.metric`. Nos testes, a fixture `cartoes(at)` lê `{rótulo: (valor, contexto)}`.
+- **Barras:** `visual.barras(serie, formato)` escreve o valor na ponta de cada barra (sem eixo X).

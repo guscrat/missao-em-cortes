@@ -276,7 +276,7 @@ def test_config_painel(tmp_path, monkeypatch):
 
 # ── smoke do painel com a aba Hoje ─────────────────────────────────────────
 
-def test_painel_aba_hoje(banco, monkeypatch, tmp_path):
+def test_painel_aba_hoje(banco, monkeypatch, tmp_path, cartoes):
     import _eventos
     from _eventos import upsert_bloco
     amanha = (datetime.now() + pd.Timedelta(days=1)).strftime("%Y-%m-%dT18:00:00")
@@ -294,10 +294,13 @@ def test_painel_aba_hoje(banco, monkeypatch, tmp_path):
     at = AppTest.from_file("../painel/app.py", default_timeout=60).run()
     assert not at.exception
     assert [t.label for t in at.tabs][0] == "Hoje"
-    metricas = {m.label: m.value for m in at.metric}
-    assert metricas["Vai ao ar hoje"] == "0" and metricas["Amanhã"] == "1"
-    assert metricas["Canal coberto até"] == "24/10" and "Estoque" not in metricas and metricas["Auditoria YouTube"] == "pendente"
+    c = cartoes(at)
+    assert c["Vai ao ar hoje"] == ("0", "nada hoje") and c["Amanhã"] == ("1", "18h00")
+    assert c["Canal coberto até"] == ("24/10", "0,5 dia(s) · abaixo do mínimo (3)")
+    assert "Estoque" not in c and c["Auditoria YouTube"][0] == "pendente"
+    assert c["Decisões pendentes"] == ("1", "1 em quarentena")
     textos = " ".join(m.value for m in at.markdown)
+    assert "<div class='ct alerta'><div class='ct-r'>Canal coberto até" in textos   # abaixo do mínimo
     assert "Estoque baixo" in textos and "Sai amanhã" in textos and "Quarentena · Em dúvida" in textos
     assert "canal coberto só até 24/10" in textos
     assert "Nada agendado pra amanhã" not in textos

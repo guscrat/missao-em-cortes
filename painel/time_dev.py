@@ -107,16 +107,16 @@ def custo_semana_por_tarefa(eventos: pd.DataFrame, tarefas: pd.DataFrame,
 # ── render ─────────────────────────────────────────────────────────────────
 
 CSS = """<style>
-.faixa {background:#F5C518; color:#0A0A0A; border-radius:8px; padding:.7rem 1rem; margin-bottom:1rem;}
+.faixa {background:#F5C518; color:#0A0A0A; border-radius:10px; padding:.7rem 1rem; margin-bottom:1rem;}
 .faixa b {font-family:'Anton','Impact',sans-serif; font-weight:400; letter-spacing:.03em;}
 .faixa div {margin-top:.2rem;}
-.ag-nome {font-family:'Anton','Impact',sans-serif; font-size:1.1rem; color:#F2F2F2;}
+.ag-nome {font-family:'Anton','Impact',sans-serif; font-size:1.1rem; color:var(--tx);}
 .ag-st {font-size:.8rem; font-weight:600;}
-.ag-st.on {color:#7fdca4;} .ag-st.off {color:#9a9a9a;} .ag-st.voce {color:#F5C518;}
-.ag-papel {color:#9a9a9a; font-size:.72rem;}
+.ag-st.on {color:var(--ok-tx);} .ag-st.off {color:var(--mudo);} .ag-st.voce {color:var(--acento-tx);}
+.ag-papel {color:var(--tx2); font-size:.72rem;}
 .ag-ult {font-size:.8rem; margin-top:.35rem; line-height:1.25;
           white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
-.decisao {color:#F5C518; font-size:.75rem; margin-top:.25rem;}
+.decisao {color:var(--acento-tx); font-size:.75rem; margin-top:.25rem;}
 </style>"""
 
 

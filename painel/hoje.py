@@ -27,6 +27,8 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import streamlit as st
 
+import visual
+
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))   # o estoque vem do próprio Curador (13)
 
@@ -271,21 +273,25 @@ def placar(path: Path | None = None) -> dict:
 
 CSS = """<style>
 .alertas {margin-bottom:1rem;}
-.al {border-radius:8px; padding:.55rem 1rem; margin-bottom:.35rem; font-size:.9rem;}
+.al {border-radius:10px; padding:.6rem 1rem; margin-bottom:.4rem; font-size:.9rem;}
 .al b {font-family:'Anton','Impact',sans-serif; font-weight:400; letter-spacing:.03em;}
-.al.erro {background:#3a1414; color:#ffb0b0; border-left:4px solid #ff5c5c;}
-.al.aviso {background:#3a3210; color:#F5C518; border-left:4px solid #F5C518;}
-.hj-item {display:flex; gap:.8rem; align-items:baseline; padding:.35rem 0;
-          border-bottom:1px solid #262626; font-size:.9rem;}
-.hj-hora {font-family:'Anton','Impact',sans-serif; color:#F5C518; min-width:3.2rem;}
-.hj-dia {color:#9a9a9a; font-size:.75rem; text-transform:uppercase; letter-spacing:.06em;
-         margin-top:.6rem;}
-.hj-dec {border-left:3px solid #F5C518; padding:.3rem .7rem; margin-bottom:.45rem; font-size:.88rem;}
-.hj-dec small {color:#9a9a9a; display:block;}
-.hj-vazio {color:#9a9a9a; font-size:.85rem; padding:.3rem 0;}
-.placar-n {font-family:'Anton','Impact',sans-serif; font-size:1.6rem; line-height:1.1;}
-.placar-n span {color:#9a9a9a; font-size:.95rem;}
-.placar-l {color:#9a9a9a; font-size:.78rem;}
+.al.erro {background:var(--erro-bg); color:var(--erro-tx); border-left:4px solid var(--erro-borda);}
+.al.aviso {background:var(--acento-bg); color:var(--acento-tx); border-left:4px solid var(--acento);}
+.hj-sec {background:var(--card); border:1px solid var(--borda); border-radius:14px;
+         padding:.4rem 1.2rem 1rem; margin-bottom:1rem;}
+.hj-item {display:flex; gap:.8rem; align-items:baseline; padding:.4rem 0;
+          border-bottom:1px solid var(--borda); font-size:.92rem;}
+.hj-item:last-child {border-bottom:none;}
+.hj-hora {font-family:'Anton','Impact',sans-serif; color:var(--acento-tx); min-width:3.2rem;}
+.hj-dia {color:var(--tx2); font-size:.75rem; font-weight:600; text-transform:uppercase;
+         letter-spacing:.06em; margin-top:.7rem;}
+.hj-dec {border-left:3px solid var(--acento); padding:.3rem .7rem; margin:.45rem 0; font-size:.9rem;}
+.hj-dec small {color:var(--tx2); display:block;}
+.hj-vazio {color:var(--mudo); font-size:.88rem; padding:.3rem 0;}
+.placar-l {display:flex; justify-content:space-between; gap:.5rem; color:var(--tx2);
+           font-size:.85rem; margin-top:.8rem;}
+.placar-l b {color:var(--tx); font-size:1.05rem; white-space:nowrap;}
+.placar-l b small {color:var(--mudo); font-weight:400; font-size:.8rem;}
 </style>"""
 
 
@@ -304,37 +310,36 @@ def _lista_no_ar(rotulo: str, df: pd.DataFrame) -> str:
     return "".join(linhas)
 
 
-def _placar(dados: dict) -> None:
-    st.markdown("<h3>Placar do canal</h3>", unsafe_allow_html=True)
+def _horarios(df: pd.DataFrame) -> str:
+    return " · ".join(f"{q:%Hh%M}" for q in df["quando"]) if not df.empty else ""
+
+
+def _placar(dados: dict) -> str:
     rotulos = {"inscritos": "inscritos", "horas_12m": "horas assistidas (12 meses)",
                "views_shorts_90d": "views de Shorts (90 dias)"}
+    linhas = ["<div class='hj-sec'><h3>Placar do canal</h3>"]
     for chave, rotulo in rotulos.items():
         valor, meta = dados[chave]
         txt = _fmt(valor) if valor is not None else "—"
-        st.markdown(f"<div class='placar-n'>{txt} <span>/ {_fmt(meta)}</span></div>"
-                    f"<div class='placar-l'>{rotulo}</div>", unsafe_allow_html=True)
-        st.progress(min(valor / meta, 1.0) if valor is not None else 0.0)
-    if dados["atualizado"]:
-        st.caption(f"Atualizado em {str(dados['atualizado'])[:16].replace('T', ' ')} pelo Analista. "
-                   "YPP: 1.000 inscritos + 4.000 h (ou 10 mi de views em Shorts).")
-    else:
-        st.caption("Aguardando o Analista (vai preencher `state/placar.json`). "
-                   "YPP: 1.000 inscritos + 4.000 h (ou 10 mi de views em Shorts).")
+        pct = min(valor / meta, 1.0) if valor is not None else 0.0
+        linhas.append(f"<div class='placar-l'><span>{rotulo}</span>"
+                      f"<b>{txt} <small>/ {_fmt(meta)}</small></b></div>"
+                      f"<div class='medidor'><span style='width:{100 * pct:.1f}%'></span></div>")
+    quem = (f"Atualizado em {html.escape(str(dados['atualizado'])[:16].replace('T', ' '))} pelo Analista."
+            if dados["atualizado"] else "Aguardando o Analista (vai preencher state/placar.json).")
+    linhas.append(f"<div class='hj-vazio'>{quem} YPP: 1.000 inscritos + 4.000 h "
+                  "(ou 10 mi de views em Shorts).</div></div>")
+    return "".join(linhas)
 
 
 def _custo(c: dict) -> None:
-    st.markdown("<h3>Custo do mês x orçamento</h3>", unsafe_allow_html=True)
-    st.markdown(f"<div class='placar-n'>US$ {c['gasto']:.2f} <span>/ US$ {c['orcamento']:.2f}</span></div>"
-                f"<div class='placar-l'>{c['pct']:.0f}% do orçamento · projeção pro fim do mês "
-                f"US$ {c['projecao']:.2f}</div>", unsafe_allow_html=True)
-    st.progress(min(c["pct"] / 100, 1.0))
+    st.markdown("<h3>Custo do mês por agente</h3>", unsafe_allow_html=True)
     if c["projecao"] > c["orcamento"]:
         st.warning(f"No ritmo atual o mês fecha em US$ {c['projecao']:.2f}, acima do orçamento.")
     if c["por_agente"].empty:
         st.caption("Nenhum gasto de API este mês.")
     else:
-        st.bar_chart(c["por_agente"].rename("US$"), color="#F5C518", horizontal=True,
-                     height=40 + 36 * len(c["por_agente"]))
+        visual.barras(c["por_agente"], nome="custo")
 
 
 def aba_hoje(blocos: pd.DataFrame, tarefas: pd.DataFrame, est: dict | None, custo: dict,
@@ -345,49 +350,65 @@ def aba_hoje(blocos: pd.DataFrame, tarefas: pd.DataFrame, est: dict | None, cust
     pend = decisoes(tarefas, blocos)
     auditoria = ler_json(UPLOAD_JSON).get("auditoria_aprovada") is True
     st.markdown(CSS, unsafe_allow_html=True)
+    cartao = visual.cartao
 
-    m = st.columns(4)
-    m[0].metric("Vai ao ar hoje", len(df_hoje))
-    m[1].metric("Amanhã", len(df_amanha))
+    # O que importa: grande e no topo.
     if est is None:
-        m[2].metric("Estoque", "—")
-        m[2].caption("não consegui calcular (veja o terminal do painel)")
+        c_estoque = cartao("Canal coberto até", "—", "não consegui calcular (veja o terminal do painel)",
+                           tom="erro")
     else:
         baixo = est["dias"] < est["minimo"]
         ate = est.get("coberto_ate")
         dias = f"{est['dias']:.1f} dia(s)".replace(".", ",")
-        m[2].metric("Canal coberto até", f"{ate:%d/%m}" if ate else "—",
-                    delta=f"{dias} · abaixo do mínimo ({est['minimo']})" if baixo
-                    else f"{dias} · mínimo {est['minimo']}",
-                    delta_color="inverse" if baixo else "off", delta_arrow="off",
-                    help="O mesmo cálculo do Curador: dias até o último longo agendado no canal "
-                         "+ longos prontos pra publicar (1 por dia). Abaixo do mínimo o Curador "
-                         "processa um vídeo novo.")
-    m[3].metric("Auditoria YouTube", "aprovada" if auditoria else "pendente",
-                delta="upload e Shorts liberados" if auditoria else "upload e Shorts travados",
-                delta_color="normal" if auditoria else "off", delta_arrow="off")
+        c_estoque = cartao(
+            "Canal coberto até", f"{ate:%d/%m}" if ate else "—",
+            f"{dias} · abaixo do mínimo ({est['minimo']})" if baixo else f"{dias} · mínimo {est['minimo']}",
+            tom="alerta" if baixo else "",
+            ajuda="O mesmo cálculo do Curador: dias até o último longo agendado no canal + longos "
+                  "prontos pra publicar (1 por dia). Abaixo do mínimo o Curador processa um vídeo novo.")
+    n_dev = sum(o.startswith("Tarefa") for o, _ in pend)
+    origem = [f"{n_dev} do time de dev" if n_dev else "",
+              f"{len(pend) - n_dev} em quarentena" if len(pend) > n_dev else ""]
+    visual.grade([
+        c_estoque,
+        cartao("Vai ao ar hoje", len(df_hoje), _horarios(df_hoje) or "nada hoje"),
+        cartao("Decisões pendentes", len(pend), " · ".join(o for o in origem if o) or "nada esperando você",
+               tom="alerta" if pend else ""),
+    ], grande=True)
 
+    # O resto: menor.
     n_fila = est.get("agendados_futuros", 0) if est else 0
     ultimo = est.get("ultimo_agendado") if est else None
-    fila = (f"<div class='hj-vazio'>Fila no YouTube: {n_fila} agendado(s), até "
-            f"{DIAS_SEMANA[ultimo.weekday()]} {ultimo:%d/%m}</div>" if n_fila and ultimo
-            else "<div class='hj-vazio'>Fila no YouTube vazia</div>" if est
-            else "<div class='hj-vazio'>Fila no YouTube indisponível</div>")
-    c1, c2 = st.columns([3, 2])
-    with c1:
-        st.markdown("<h3>No ar</h3>" + fila
-                    + _lista_no_ar(f"Hoje · {hoje:%d/%m}", df_hoje)
-                    + _lista_no_ar(f"Amanhã · {amanha:%d/%m}", df_amanha), unsafe_allow_html=True)
-    with c2:
-        st.markdown(f"<h3>Decisões pendentes · {len(pend)}</h3>", unsafe_allow_html=True)
-        if not pend:
-            st.markdown("<div class='hj-vazio'>nada esperando você</div>", unsafe_allow_html=True)
-        st.markdown("".join(f"<div class='hj-dec'>{html.escape(str(p))}"
-                            f"<small>{html.escape(o)}</small></div>" for o, p in pend),
+    prontos = int((blocos["status"] == "aprovado").sum()) if not blocos.empty else 0
+    visual.grade([
+        cartao("Amanhã", len(df_amanha), _horarios(df_amanha) or "nada agendado",
+               tom="" if len(df_amanha) else "alerta"),
+        cartao("Fila no YouTube", n_fila if est else "—",
+               f"até {DIAS_SEMANA[ultimo.weekday()]} {ultimo:%d/%m}" if n_fila and ultimo
+               else "vazia" if est else "indisponível"),
+        cartao("Prontos p/ publicar", prontos, "aprovados, fora do YouTube"),
+        cartao("Auditoria YouTube", "aprovada" if auditoria else "pendente",
+               "upload e Shorts liberados" if auditoria else "upload e Shorts travados",
+               tom="ok" if auditoria else ""),
+        cartao("Custo do mês", f"${custo['gasto']:.2f}",
+               f"{custo['pct']:.0f}% de US$ {custo['orcamento']:.0f} · proj. US$ {custo['projecao']:.2f}",
+               tom="alerta" if custo["projecao"] > custo["orcamento"] else "",
+               medidor=custo["pct"] / 100),
+    ])
+
+    if pend:   # zerado, o cartão grande já diz tudo
+        itens = "".join(f"<div class='hj-dec'>{html.escape(str(p))}<small>{html.escape(o)}</small></div>"
+                        for o, p in pend)
+        st.markdown(f"<div class='hj-sec'><h3>Decisões pendentes · {len(pend)}</h3>{itens}</div>",
                     unsafe_allow_html=True)
 
-    c3, c4 = st.columns([3, 2])
-    with c3:
-        _custo(custo)
-    with c4:
-        _placar(placar())
+    c1, c2 = st.columns([3, 2])
+    with c1:
+        st.markdown("<div class='hj-sec'><h3>No ar</h3>"
+                    + _lista_no_ar(f"Hoje · {hoje:%d/%m}", df_hoje)
+                    + _lista_no_ar(f"Amanhã · {amanha:%d/%m}", df_amanha) + "</div>",
+                    unsafe_allow_html=True)
+        with st.container(border=True):
+            _custo(custo)
+    with c2:
+        st.markdown(_placar(placar()), unsafe_allow_html=True)

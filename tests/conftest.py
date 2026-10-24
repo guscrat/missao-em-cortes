@@ -78,3 +78,18 @@ def projeto(tmp_path, monkeypatch, banco):
 
     p.video = video
     return p
+
+
+@pytest.fixture
+def cartoes():
+    """Lê os cartões do painel (visual.cartao) de um AppTest: {rótulo: (valor, contexto)}."""
+    import html
+    import re
+    padrao = re.compile(r"<div class='ct-r'>(.*?)(?:<abbr.*?</abbr>)?</div><div class='ct-v'>(.*?)</div>"
+                        r"(?:<div class='medidor'>.*?</div>)?<div class='ct-c'>(.*?)</div>")
+
+    def ler(at) -> dict:
+        texto = " ".join(m.value for m in at.markdown)
+        return {html.unescape(r): (v, html.unescape(c)) for r, v, c in padrao.findall(texto)}
+
+    return ler
