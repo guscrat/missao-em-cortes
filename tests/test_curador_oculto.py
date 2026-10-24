@@ -101,3 +101,21 @@ def test_main_trava_75_nao_acusa(amb, monkeypatch):
     monkeypatch.setattr(co.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=75))
     assert co.main([]) == 75
     assert _falhas(amb) == []
+
+
+def test_importa_sem_stdout_como_no_pythonw(tmp_path):
+    """Regressão: pythonw tem sys.stdout/stderr = None e o import em cadeia (13 →
+    sincronizar_estado) fazia sys.stdout.reconfigure → AttributeError antes de abrir o log."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+    scripts = Path(__file__).parent.parent / "scripts"
+    codigo = ("import sys; sys.stdout = sys.stderr = None; "
+              f"sys.path.insert(0, {str(scripts)!r}); import curador_oculto; "
+              "print('importou')")
+    log = tmp_path / "curador.log"
+    env = {**os.environ, "MISSAO_CURADOR_LOG": str(log), "MISSAO_DB": str(tmp_path / "db.sqlite")}
+    r = subprocess.run([sys.executable, "-c", codigo], env=env, capture_output=True, timeout=60)
+    assert r.returncode == 0, r.stderr.decode("utf-8", "replace")
+    assert "importou" in log.read_text(encoding="utf-8")       # stdout do pythonw vai pro log
