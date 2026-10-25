@@ -62,6 +62,7 @@ def test_uso_sem_cache_opus():
 @pytest.mark.parametrize("modelo,esperado", [
     ("claude-opus-5-5", 4 + 5 + 0.20 + 20),
     ("claude-sonnet-4-6", 3 + 3.75 + 0.30 + 15),
+    ("claude-sonnet-5-5", 2 + 2.50 + 0.10 + 10),
     ("claude-haiku-5-5", 0.10 + 0.125 + 0.01 + 0.50),
 ])
 def test_uso_com_cache_por_modelo(modelo, esperado):

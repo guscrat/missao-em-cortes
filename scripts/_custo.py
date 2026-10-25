@@ -15,6 +15,7 @@ import sys
 PRECOS = {
     "claude-opus-5-5":   (4.00, 5.00, 0.20, 20.00),
     "claude-sonnet-4-6": (3.00, 3.75, 0.30, 15.00),
+    "claude-sonnet-5-5": (2.00, 2.50, 0.10, 10.00),
     "claude-haiku-5-5":  (0.10, 0.125, 0.01, 0.50),
 }
 # Haiku 5.5 com prompt (sem cache + escrita + leitura) acima de 100K tokens: tudo mais caro
