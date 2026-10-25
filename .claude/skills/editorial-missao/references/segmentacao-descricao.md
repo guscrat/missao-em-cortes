@@ -16,6 +16,12 @@ O 03 valida os timestamps (fim>início, cold_open dentro do bloco, fim≤duraç�
 
 Por que 5-7min: mudança de Jun/2026 pra retenção — cortes curtos e focados num assunto só. Validar com o `12_metricas`.
 
+### Modelo: fica no Sonnet 4.6 (decisão do Gu, 24/10/2026)
+
+O `claude-sonnet-5-5` foi testado na renan_lula_vire com o mesmo prompt e **perdeu blocos bons**: o 4.6 achou 5 blocos; o 5.5 achou 2 (effort `low`), 4 (`medium`, sem o Pavanato, score 9) e 4 (`high`, sem o "Quem manda na direita se Flávio perder", score 8). Também saíram cortes abaixo de 5 min e títulos com menos gancho; no `high` custou mais (US$ 0.36 × 0.20). O 04b, que só marca trechos pra remover, foi pro 5.5 sem perda.
+
+Se um dia precisar trocar o modelo do 03: **ajuste o `prompts/segmentacao.md` junto** (o prompt foi escrito pro 4.6) e **repita a comparação** numa live já processada antes de trocar: rodar numa cópia da pasta, com `MISSAO_DB` num banco temporário, e pôr lado a lado os blocos (timestamps, tema, título, `score_potencial`) e o custo de cada versão. Só troca se os blocos forem iguais ou melhores.
+
 ## Step 8 — descrições pro YouTube
 
 `uv run py scripts/08_descricao.py <stem>` — <5s, grátis, **sem API** (reaproveita o `blocos.json`).
