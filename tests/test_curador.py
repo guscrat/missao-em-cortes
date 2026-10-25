@@ -202,7 +202,8 @@ def rodada(raiz, monkeypatch):
     monkeypatch.setattr(cu, "listar_canal", lambda canal, n: reg["listar"].get(canal["prefixo"], []))
     monkeypatch.setattr(cu, "detalhar", lambda item: item)
 
-    def avaliar(client, itens):
+    def avaliar(client, itens, evento=None):
+        reg["evento"] = evento
         reg["llm"] += 1
         reg["enviados"] = [i["id"] for i in itens]
         return {i["id"]: reg["avaliacoes"][i["id"]] for i in itens if i["id"] in reg["avaliacoes"]}, \
@@ -364,7 +365,7 @@ def test_trava_velha_e_liberada(raiz, rodada):
 
 def test_falha_no_llm_registra_e_sai_com_erro(raiz, rodada, monkeypatch, banco):
     rodada["listar"] = {"renan": [_item("a")]}
-    def quebra(client, itens):
+    def quebra(client, itens, evento=None):
         raise RuntimeError("API fora")
     monkeypatch.setattr(cu, "avaliar", quebra)
     assert cu.main([]) == 1
