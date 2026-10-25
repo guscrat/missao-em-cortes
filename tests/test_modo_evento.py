@@ -136,6 +136,14 @@ def test_evento_estoque_cheio_processa_so_item_do_evento_e_ignora_fila_antiga(ro
     assert json.loads(cu.ESTADO.read_text(encoding="utf-8"))["velho"]["decisao"] == "fila"
 
 
+def test_evento_item_novo_de_prioridade_baixa_nao_fura_o_estoque(rodada):
+    rodada["listar"] = [_item("novo", "Previsao Velha", dias_atras=0)]
+    rodada["avaliacoes"] = {"novo": _av(cu.PRIORIDADE_EVENTO - 1)}
+    assert cu.main([]) == 0
+    assert rodada["processados"] == []
+    assert json.loads(cu.ESTADO.read_text(encoding="utf-8"))["novo"]["decisao"] == "fila"
+
+
 def test_evento_sem_item_novo_e_estoque_cheio_nao_processa(rodada):
     cu.gravar_estado({"velho": _fila("Live Velha", 5, 10)})
     assert cu.main([]) == 0

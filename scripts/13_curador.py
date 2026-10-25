@@ -59,6 +59,7 @@ TRAVA_HORAS = 12             # rodada mais velha que isso = morreu no meio: libe
 SAIDA_TRAVADO = 75           # outra rodada em andamento (o curador_oculto não acusa falha)
 PROGRESSO = ROOT / "state" / "curador_progresso.json"   # painel: "rodando desde 17:00 — etapa X"
 MAX_TENTATIVAS = 3           # falhou antes de baixar: volta pra fila até isso, depois desiste
+PRIORIDADE_EVENTO = 6        # modo evento: abaixo disso não fura o estoque (previsão velha)
 
 MODELO = "claude-opus-5-5"
 CUSTO_POR_VIDEO = 0.65                 # segmentação + polimento + revisor, só pra estimativa
@@ -599,11 +600,12 @@ def _canal_de(cfg: dict, nome: str) -> dict:
     return next((c for c in cfg["canais"] if c["nome"] == nome), {})
 
 
-def proximo_da_fila(estado: dict, desde: date | None = None) -> str | None:
-    """Id da fila com maior prioridade; empate = o mais recente. desde (modo evento): só
-    vídeos daquele dia em diante."""
+def proximo_da_fila(estado: dict, desde: date | None = None, minimo: int = 0) -> str | None:
+    """Id da fila com maior prioridade; empate = o mais recente. desde/minimo (modo evento):
+    só vídeos daquele dia em diante e com prioridade >= minimo."""
     fila = [(k, v) for k, v in estado.items() if v.get("decisao") == "fila"
-            and (desde is None or (v.get("data") or "") >= desde.isoformat())]
+            and (desde is None or (v.get("data") or "") >= desde.isoformat())
+            and v.get("prioridade", 0) >= minimo]
     if not fila:
         return None
     return max(fila, key=lambda kv: (kv[1].get("prioridade", 0), kv[1].get("data") or ""))[0]
@@ -738,7 +740,7 @@ def _rodada(cfg: dict, dry_run: bool, sem_pipeline: bool, forcar: bool) -> int:
     vid = None
     if not sem_pipeline:
         if evento_on:                               # conteúdo do evento passa na frente
-            vid = proximo_da_fila(estado, evento_on["desde"])
+            vid = proximo_da_fila(estado, evento_on["desde"], PRIORIDADE_EVENTO)
         if vid is None and precisa:
             vid = proximo_da_fila(estado)
     if vid:
