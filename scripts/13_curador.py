@@ -23,6 +23,9 @@ Fluxo:
      ~US$ 0,65 por vídeo. Fila com mais de DIAS_ARQUIVAR dias expira.
      Thumb colagem (config/thumb.json): "teste" roda o 07b_colagem no fim, em thumbs/colagem/
      (~US$ 0,15/vídeo, não mexe nas thumbs que sobem); "padrao" roda com --aplicar antes do revisor.
+  Modo evento (config/canais.json → modo_evento, ex.: 2º turno): até modo_evento_ate
+     processa 1 vídeo por rodada MESMO com o canal coberto, só da fila a partir de
+     modo_evento_desde, e o Claude prioriza modo_evento_tema. Depois do "ate" desliga sozinho.
   4. Resumo em state/curador_resumo.md (cortes prontos pra publicar, recusados com motivo,
      avisos) e decisões em state/curadoria.json. Tudo também vira evento no painel.
 
@@ -40,6 +43,7 @@ from pathlib import Path
 
 import _custo
 from _eventos import evento, upsert_video, conectar
+from _paths import modo_evento
 from sincronizar_estado import DIAS_ARQUIVAR    # janela do conteúdo antigo (15 dias)
 
 ROOT = Path(__file__).parent.parent
@@ -55,6 +59,7 @@ TRAVA_HORAS = 12             # rodada mais velha que isso = morreu no meio: libe
 SAIDA_TRAVADO = 75           # outra rodada em andamento (o curador_oculto não acusa falha)
 PROGRESSO = ROOT / "state" / "curador_progresso.json"   # painel: "rodando desde 17:00 — etapa X"
 MAX_TENTATIVAS = 3           # falhou antes de baixar: volta pra fila até isso, depois desiste
+PRIORIDADE_EVENTO = 6        # modo evento: abaixo disso não fura o estoque (previsão velha)
 
 MODELO = "claude-opus-5-5"
 CUSTO_POR_VIDEO = 0.65                 # segmentação + polimento + revisor, só pra estimativa
@@ -292,8 +297,12 @@ def motivo_filtro(item: dict, cfg: dict, hoje: date, vistos: set[str]) -> str | 
 
 # --- escolha (LLM) ------------------------------------------------------------------------
 
-def montar_pedido(itens: list[dict]) -> str:
-    linhas = [f"Hoje é {date.today():%d/%m/%Y}. Vídeos novos:"]
+def montar_pedido(itens: list[dict], evento: dict | None = None) -> str:
+    linhas = [f"Hoje é {date.today():%d/%m/%Y}."]
+    if evento:
+        linhas.append(f"MODO EVENTO até {evento['ate']:%d/%m}: prioridade 9-10 para {evento['tema']}. "
+                      "Previsão ou análise de antes do resultado envelhece: prioridade baixa.")
+    linhas.append("Vídeos novos:")
     for x in itens:
         linhas.append(f"- id={x['id']} | canal: {x['canal']} | {x['data'] or '?'} | "
                       f"{x['duracao_s'] // 60} min | título: {x['titulo']}"
@@ -301,13 +310,14 @@ def montar_pedido(itens: list[dict]) -> str:
     return "\n".join(linhas)
 
 
-def avaliar(client, itens: list[dict]) -> tuple[dict[str, dict], tuple[int, int, float]]:
+def avaliar(client, itens: list[dict],
+            evento: dict | None = None) -> tuple[dict[str, dict], tuple[int, int, float]]:
     """({id: {vale, prioridade, motivo}}, (tokens_in, tokens_out, custo))."""
     resp = client.beta.messages.create(
         model=MODELO,
         max_tokens=8000,
         system=SISTEMA,
-        messages=[{"role": "user", "content": montar_pedido(itens)}],
+        messages=[{"role": "user", "content": montar_pedido(itens, evento)}],
         output_config={"effort": "low",
                        "format": {"type": "json_schema", "schema": SCHEMA}},
         betas=["server-side-fallback-2026-07-01"],
@@ -500,6 +510,10 @@ def escrever_resumo(rodada: dict) -> str:
               f"Custo de curadoria: US$ {rodada['custo']:.3f} · "
               f"{len(rodada['processados'])} vídeo(s) processado(s)",
               f"Estoque no início: {_texto_estoque(est)}"]
+    if rodada.get("modo_evento"):
+        ev = rodada["modo_evento"]
+        linhas.append(f"**Modo evento** até {ev['ate']:%d/%m} ({ev['tema']}): processa mesmo "
+                      "com o canal coberto; publicacao.txt com datas na frente dos agendados")
     if rodada.get("estoque_depois"):
         d = rodada["estoque_depois"]
         linhas.append(f"Estoque no fim: {_texto_estoque(d)}")
@@ -586,9 +600,12 @@ def _canal_de(cfg: dict, nome: str) -> dict:
     return next((c for c in cfg["canais"] if c["nome"] == nome), {})
 
 
-def proximo_da_fila(estado: dict) -> str | None:
-    """Id da fila com maior prioridade; empate = o mais recente."""
-    fila = [(k, v) for k, v in estado.items() if v.get("decisao") == "fila"]
+def proximo_da_fila(estado: dict, desde: date | None = None, minimo: int = 0) -> str | None:
+    """Id da fila com maior prioridade; empate = o mais recente. desde/minimo (modo evento):
+    só vídeos daquele dia em diante e com prioridade >= minimo."""
+    fila = [(k, v) for k, v in estado.items() if v.get("decisao") == "fila"
+            and (desde is None or (v.get("data") or "") >= desde.isoformat())
+            and v.get("prioridade", 0) >= minimo]
     if not fila:
         return None
     return max(fila, key=lambda kv: (kv[1].get("prioridade", 0), kv[1].get("data") or ""))[0]
@@ -664,8 +681,12 @@ def _rodada(cfg: dict, dry_run: bool, sem_pipeline: bool, forcar: bool) -> int:
     estoque = calcular_estoque(cfg)
     minimo = cfg["estoque"]["dias_minimos"]
     precisa = forcar or estoque["dias"] < minimo
+    evento_on = modo_evento(hoje, cfg)
     print(f"\nEstoque pronto: {_texto_estoque(estoque)} (mínimo {minimo}) → "
           f"{'processa 1 vídeo' if precisa else 'não processa hoje'}")
+    if evento_on:
+        print(f"MODO EVENTO até {evento_on['ate']:%d/%m}: processa 1 vídeo de "
+              f"{evento_on['desde']:%d/%m} em diante mesmo com o canal coberto")
     na_fila = sum(1 for v in estado.values() if v.get("decisao") == "fila")
     print(f"{len(novos)} novo(s) pro Claude, {na_fila} na fila")
     if dry_run:
@@ -677,7 +698,7 @@ def _rodada(cfg: dict, dry_run: bool, sem_pipeline: bool, forcar: bool) -> int:
     agora = datetime.now().isoformat(timespec="seconds")
     rodada = {"quando": agora, "custo": 0.0, "estoque": estoque, "escolhidos": [],
               "fila": [], "recusados": [], "processados": [], "aviso_canal": aviso_canal,
-              "aviso_placar": aviso_placar}
+              "aviso_placar": aviso_placar, "modo_evento": evento_on}
     if novos:
         from anthropic import Anthropic
         from dotenv import load_dotenv
@@ -686,7 +707,7 @@ def _rodada(cfg: dict, dry_run: bool, sem_pipeline: bool, forcar: bool) -> int:
                mensagem=f"{len(novos)} vídeo(s) novo(s)")
         marcar_etapa(f"Claude avaliando {len(novos)} vídeo(s) novo(s)")
         try:
-            avaliacoes, custo = avaliar(Anthropic(), novos)
+            avaliacoes, custo = avaliar(Anthropic(), novos, evento_on)
         except Exception as e:  # noqa: BLE001 — avaliação falhou: a fila de antes ainda roda
             evento(None, "curadoria", "falha", agente="curador", mensagem=str(e)[:300])
             print(f"[!] Avaliação dos novos falhou ({e}); sigo só com a fila")
@@ -716,7 +737,12 @@ def _rodada(cfg: dict, dry_run: bool, sem_pipeline: bool, forcar: bool) -> int:
     expirar_fila(estado, hoje)
     gravar_estado(estado)
 
-    vid = proximo_da_fila(estado) if precisa and not sem_pipeline else None
+    vid = None
+    if not sem_pipeline:
+        if evento_on:                               # conteúdo do evento passa na frente
+            vid = proximo_da_fila(estado, evento_on["desde"], PRIORIDADE_EVENTO)
+        if vid is None and precisa:
+            vid = proximo_da_fila(estado)
     if vid:
         e = estado[vid]
         canal = _canal_de(cfg, e["canal"])

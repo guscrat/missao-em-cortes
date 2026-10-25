@@ -32,6 +32,15 @@ Só se a cobertura estiver **abaixo do mínimo** (ou com `--forcar`). Processa *
 
 Custa ~US$ 0,65 por vídeo (+0,15 da colagem). O resto continua na fila; item com mais de 15 dias vira `expirado`.
 
+## Modo evento (ex.: 2º turno)
+
+`config/canais.json` → `modo_evento: true` + `modo_evento_desde` / `modo_evento_ate` (inclusive) + `modo_evento_tema`. Lido por `_paths.modo_evento()`; depois do `ate` **desliga sozinho** (a flag pode continuar `true` no arquivo). Enquanto ligado:
+
+- O Claude recebe o tema no pedido: prioridade 9-10 pro tema (ex.: reação ao resultado), previsão de antes do resultado com prioridade baixa.
+- Toda rodada processa **1 vídeo da fila com data ≥ `desde` e prioridade ≥ 6** (`PRIORIDADE_EVENTO`), mesmo com o canal coberto. Sem vídeo do evento na fila, vale a regra normal do estoque (fila antiga só com cobertura abaixo do mínimo).
+- O `publicacao.txt` ignora o último agendado: datas a partir de hoje (antes das 16h) ou amanhã, **na frente** dos agendados, com aviso pra empurrar no Studio o longo do mesmo dia. Não mexe em bloco agendado nenhum.
+- O resumo do Curador mostra "Modo evento até DD/MM".
+
 ## Detalhes
 
 - **O que já subiu sai do estoque sozinho:** no começo de cada rodada, o Curador roda o `14_canal` (skill `youtube-compliance`), que marca o que o Gu publicou/agendou no Studio. Se a leitura falhar (sem login, sem rede), a rodada segue com o estoque como estava e o resumo avisa.
