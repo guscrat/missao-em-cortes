@@ -71,6 +71,39 @@ def test_janela_fim_no_meio_de_palavra_inclui_inteira():
     assert 20.0 <= b <= 20.3
 
 
+def test_janela_palavra_de_duracao_zero_no_fim_entra():
+    # live do Renan, bloco 07: "Eu acho o seguinte, cara." — o whisper deu start == end
+    # pro "cara." e o corte saía em "seguinte,"
+    p = P(("seguinte,", 9741.45, 9741.71), ("cara.", 9742.43, 9742.43),
+          ("Essa", 9743.05, 9743.25))
+    a, b = fr.janela(p, 9741.45, 9742.43)
+    assert 9742.43 < b <= 9743.05 - fr.FOLGA_S + 1e-9
+    c = fr.checar(p, 9741.45, 9742.43)
+    assert c["ultimas"].endswith("cara.") and c["fim_ok"]
+
+
+def test_janela_varias_palavras_de_duracao_zero_seguidas_no_fim():
+    p = P(("seguinte,", 10.0, 10.3), ("cara", 10.5, 10.5), ("mesmo.", 10.5, 10.5),
+          ("Essa", 11.2, 11.4))
+    a, b = fr.janela(p, 10.0, 10.5)
+    assert 10.5 < b <= 11.2 - fr.FOLGA_S + 1e-9
+    assert fr.checar(p, 10.0, 10.5)["ultimas"].endswith("mesmo.")
+
+
+def test_janela_palavra_de_duracao_zero_no_inicio():
+    p = P(("Oi.", 4.0, 4.3), ("Então", 5.0, 5.0), ("vamos", 5.0, 5.3), ("lá.", 5.4, 5.8),
+          ("Fim", 7.0, 7.2))
+    a, b = fr.janela(p, 5.0, 5.8)
+    assert a >= 4.3 + fr.FOLGA_S - 1e-9 and a <= 5.0
+    assert fr.checar(p, 5.0, 5.8)["primeiras"].startswith("Então")
+
+
+def test_janela_palavra_zero_no_fim_sem_proxima_palavra():
+    p = P(("fim", 1.0, 1.2), ("tchau.", 2.0, 2.0))
+    a, b = fr.janela(p, 1.0, 2.0)
+    assert b >= 2.0
+
+
 # ── checar ─────────────────────────────────────────────────────────────────
 
 def test_checar_ok():
