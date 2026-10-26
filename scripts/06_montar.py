@@ -193,8 +193,7 @@ for b in data["blocos"]:
     if ONLY_BLOCO is not None and b["id"] != ONLY_BLOCO:
         continue
     if b.get("remover") and not USE_POLIDO:
-        print(f"
-[!] Bloco {b['id']}: tem trecho em 'remover' (ex.: propaganda da live), que só "
+        print(f"\n[!] Bloco {b['id']}: tem trecho em 'remover' (ex.: propaganda da live), que só "
               f"sai no polido — sem --polido ele vai pro vídeo final")
     card   = CARDS_DIR / f"card_{b['id']:02d}.mp4"
     fonte_cortes = CORTES_DIR / "legendados" if USE_LEGENDADO else CORTES_DIR
