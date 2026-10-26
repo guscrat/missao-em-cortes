@@ -4,17 +4,21 @@
 
 `uv run py scripts/03_segmentar.py <stem>` — 30-90s, ~$0.20/live, modelo `claude-sonnet-4-6`. Prompt em `prompts/segmentacao.md`.
 
-A LLM recebe a transcrição completa com timestamps e retorna JSON com **2-6 blocos temáticos de 5-7min** (até 6 por live; lives longas rendem mais blocos), cada um focado em UM ponto, com:
+A LLM recebe a transcrição completa com timestamps e retorna JSON com os **blocos temáticos de 8-30 min** (sem número fixo: o tamanho é o do assunto; durações variadas — curtos 8-12, médios 12-20, longos 20-30), cada um sobre UM assunto, com:
 
-- início e fim em pontos naturais (não cortar no meio de frase ou raciocínio)
+- início e fim em pontos naturais (não cortar no meio de frase ou raciocínio); `timestamp_fim` = linha seguinte à frase de encerramento
+- `parte` (`null` ou `{"n", "total"}`: assunto de mais de 30 min vira Parte 1/Parte 2, título com "(Parte N)")
 - `titulo_sugerido` (frase longa pro YouTube)
 - `texto_thumb` (2-5 palavras de impacto pra miniatura, distinto do título)
 - `tema`, score de potencial viral, ganchos, tags
+- `short` (até 3 min, ideal 30-90s, ideia completa terminando numa frase de impacto: `gancho`, `frase_final`)
 - `cold_open` (trecho de 15-30s de maior impacto dentro do bloco, com timestamps próprios)
+
+Depois da resposta, o 03 **encaixa os tempos** (bloco, cold open e Short) no fim de frase + pausa mais perto pelo `words.json` (`_fronteira.encaixar`, até 30s no bloco e 10s nos trechos, respeitando 8-30 min e o teto de 175s do Short) e grava os tempos exatos (`HH:MM:SS.ss`), a `duracao_minutos` real e a `faixa_duracao`. Também grava `duracao_min` no banco. Avisa: bloco fora de 8-30 min, sem ponto natural perto, todos na mesma faixa; Short inválido/fora do bloco/acima de 3 min é removido (o 10 cai pro cold open).
 
 O 03 valida os timestamps (fim>início, cold_open dentro do bloco, fim≤duração do vídeo). Inválido → salva `blocos_invalido.json` e sai com erro em vez de gravar lixo. Falha de parse → dump em `outputs/_debug/`. Loga custo em $.
 
-Por que 5-7min: mudança de Jun/2026 pra retenção — cortes curtos e focados num assunto só. Validar com o `12_metricas`.
+Histórico da duração: 8-15 min → 5-7 min (Jun/2026, retenção) → **8-30 min guiado pelo assunto** (26/10/2026: coerência acima da duração, mínimo de 8 pra anúncio no meio). O `12_metricas` compara retenção e horas assistidas por faixa pra achar o ponto ideal.
 
 ### Modelo: fica no Sonnet 4.6 (decisão do Gu, 24/10/2026)
 

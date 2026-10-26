@@ -23,6 +23,8 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
+from _fronteira import faixa
+
 ROOT = Path(__file__).parent.parent
 DB_PATH = Path(os.environ.get("MISSAO_DB") or ROOT / "state" / "pipeline.db")
 BUSY_TIMEOUT_S = 10   # espera por lock; o hook do Claude Code baixa pra caber em <1s
@@ -59,7 +61,8 @@ CREATE TABLE IF NOT EXISTS blocos (
     titulo        TEXT,
     texto_thumb   TEXT,
     score         REAL,
-    duracao_min   REAL,
+    duracao_min   REAL,               -- duração real do corte (tempos encaixados no 03/11)
+    faixa_duracao TEXT,               -- curto 8-12 | medio 12-20 | longo 20-30 | fora
     status        TEXT NOT NULL DEFAULT 'segmentado',
     motivo        TEXT,               -- por que foi pra quarentena/devolvido
     video_path    TEXT,
@@ -118,8 +121,9 @@ def conectar(db_path: Path | None = None) -> sqlite3.Connection:
     con.execute("PRAGMA journal_mode=WAL")   # painel lê enquanto o pipeline escreve
     con.execute("PRAGMA foreign_keys=ON")
     con.executescript(SCHEMA)
-    # migração: bancos criados antes das colunas tarefa_id, titulo_youtube e cache_*
+    # migração: bancos criados antes das colunas tarefa_id, titulo_youtube, cache_* e faixa_duracao
     for tabela, coluna in (("eventos", "tarefa_id INTEGER"), ("blocos", "titulo_youtube TEXT"),
+                           ("blocos", "faixa_duracao TEXT"),
                            ("eventos", "cache_escrita INTEGER DEFAULT 0"),
                            ("eventos", "cache_leitura INTEGER DEFAULT 0")):
         if coluna.split()[0] not in {r["name"] for r in con.execute(f"PRAGMA table_info({tabela})")}:
@@ -185,12 +189,15 @@ def upsert_video(stem: str, pasta: str | None = None, fonte_url: str | None = No
 
 def upsert_bloco(stem: str, bloco_id: int, *, forcar_status: bool = False, **campos) -> None:
     """Cria/atualiza um bloco. `status` só sobrescreve status AUTO, a não ser que
-    forcar_status=True (agentes de decisão usam isso)."""
+    forcar_status=True (agentes de decisão usam isso). Quem grava duracao_min leva junto a
+    faixa_duracao (o Analista compara retenção por faixa)."""
     permitidos = {"tema", "titulo", "texto_thumb", "score", "duracao_min", "status",
                   "motivo", "video_path", "thumb_path", "publish_at", "youtube_id", "titulo_youtube"}
     invalidos = set(campos) - permitidos
     if invalidos:
         raise ValueError(f"campos inválidos pra bloco: {invalidos}")
+    if campos.get("duracao_min") is not None:
+        campos["faixa_duracao"] = faixa(campos["duracao_min"])
     status = campos.pop("status", None)
     if status and status not in STATUS_BLOCO:
         raise ValueError(f"status inválido: {status}")

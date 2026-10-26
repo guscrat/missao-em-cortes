@@ -13,6 +13,10 @@
 - 6 frames do corte completo
 - A lista de grafias oficiais
 
+## Checagem 0 — fronteira (código, $0, antes da chamada paga)
+
+`_fronteira.checar`: no que se ouve no vídeo (janela do 04), a 1ª palavra abre frase e a última fecha frase com pausa depois (≥ 0,5s; ou sem pontuação e ≥ 1,2s)? Reprovou → `_fronteira.encaixar` leva a ponta reprovada pro ponto natural mais perto (até 30s, sem sair de 8-30 min), grava no `blocos.json` (tempos, `duracao_minutos`, `faixa_duracao`) e no banco, e refaz o bloco com `pipeline.py <pasta> --bloco=N` (04 → 04b → 04c → 06, com as mesmas flags com que ele foi feito; o 04b com LLM custa ~US$ 0,03). Sem ponto natural perto, falha ao refazer ou continua reprovado → `quarentena` com o motivo (sem gastar a chamada do revisor). O `--dry-run` mostra a checagem sem reajustar. Resultado em `revisao.json` → `fronteira` (`ultimas`, `pausa_depois_s`, `reajuste_s`).
+
 ## Checagens (JSON estruturado)
 
 1. **Título fiel à fala** — gancho ousado ok, distorção não; e **nunca destacar palavrão nem termo que soe como ofensa a um grupo**, mesmo que esteja na fala. Grafia fora da oficial reprova.

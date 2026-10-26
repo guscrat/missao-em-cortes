@@ -1,26 +1,35 @@
-"""Corta os blocos identificados usando ffmpeg."""
+"""Corta os blocos identificados usando ffmpeg.
+
+Uso: uv run py scripts/04_cortar.py <stem> [--bloco=N]
+
+A janela de cada corte vem do _fronteira.janela(): o padding de sempre (1s antes, 2s
+depois; 0,5s no cold open), mas sem pegar pedaço da frase vizinha (words.json).
+"""
 import json
 import subprocess
 import sys
 sys.stdout.reconfigure(encoding='utf-8')
 import re
 from pathlib import Path
+import _fronteira as fr
 from _ffmpeg import VENC, AENC, SCALE_PAD
 from _paths import achar_pasta, stem_de
 
 ROOT = Path(__file__).parent.parent
 
-input_arg = sys.argv[1] if len(sys.argv) > 1 else "live_teste"
+args = [a for a in sys.argv[1:] if not a.startswith("--")]
+only_bloco = next((int(a.split("=", 1)[1]) for a in sys.argv[1:] if a.startswith("--bloco=")), None)
+input_arg = args[0] if args else "live_teste"
 PASTA = achar_pasta(input_arg)
 stem = stem_de(PASTA)
 BLOCOS_JSON = PASTA / "blocos.json"
+WORDS_JSON = PASTA / "words.json"
 VIDEO = ROOT / "inputs" / f"{stem}.mp4"
 OUT_DIR = PASTA / "cortes"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-PADDING_INICIO_S  = 1.0   # folga antes do início do corte completo
-PADDING_FIM_S     = 2.0   # folga no fim do corte completo
-COLD_PADDING_S    = 0.5   # margem menor nas duas pontas do cold open
+PALAVRAS = (json.loads(WORDS_JSON.read_text(encoding="utf-8")).get("words", [])
+            if WORDS_JSON.exists() else [])
 
 FADE_COLD_D       = 0.4   # duração do fade in/out no cold open (s)
 FADE_CORTE_OUT_D  = 0.5   # duração do fade out no corte completo (s)
@@ -123,11 +132,13 @@ with BLOCOS_JSON.open(encoding="utf-8") as f:
     data = json.load(f)
 
 for b in data["blocos"]:
+    if only_bloco is not None and b["id"] != only_bloco:
+        continue
     s = slug(b["tema"])
 
     # ── Corte completo ──────────────────────────────────────────────────────
-    inicio_s = max(0, hhmmss_para_segundos(b["timestamp_inicio"]) - PADDING_INICIO_S)
-    fim_s    = hhmmss_para_segundos(b["timestamp_fim"]) + PADDING_FIM_S
+    inicio_s, fim_s = fr.janela(PALAVRAS, hhmmss_para_segundos(b["timestamp_inicio"]),
+                                hhmmss_para_segundos(b["timestamp_fim"]))
     duracao  = fim_s - inicio_s
 
     nome_corte  = f"corte_{b['id']:02d}_{s}.mp4"
@@ -147,8 +158,9 @@ for b in data["blocos"]:
         continue
 
     co = b["cold_open"]
-    cold_inicio_s = max(0, hhmmss_para_segundos(co["timestamp_inicio"]) - COLD_PADDING_S)
-    cold_fim_s    = hhmmss_para_segundos(co["timestamp_fim"]) + COLD_PADDING_S
+    cold_inicio_s, cold_fim_s = fr.janela(PALAVRAS, hhmmss_para_segundos(co["timestamp_inicio"]),
+                                          hhmmss_para_segundos(co["timestamp_fim"]),
+                                          fr.COLD_PADDING_S, fr.COLD_PADDING_S)
     cold_duracao  = cold_fim_s - cold_inicio_s
 
     nome_cold  = f"cold_{b['id']:02d}_{s}.mp4"

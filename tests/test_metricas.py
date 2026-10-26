@@ -59,7 +59,9 @@ def test_resumo_grupo_pondera_por_views_e_ignora_poucas_views():
     g = mt.resumo_grupo([{"views": 100, "retencao_pct": 40.0, "assistido_s": 120},
                          {"views": 300, "retencao_pct": 60.0, "assistido_s": 200},
                          {"views": 5, "retencao_pct": 99.0, "assistido_s": 999}])
-    assert g == {"n": 2, "views": 400, "retencao_pct": 55.0, "assistido_s": 180}
+    # horas = (100·120 + 300·200) / 3600 = 20h
+    assert g == {"n": 2, "views": 400, "retencao_pct": 55.0, "assistido_s": 180,
+                 "horas_assistidas": 20.0, "horas_por_video": 10.0}
     assert mt.resumo_grupo([{"views": 1, "retencao_pct": 50.0, "assistido_s": 1}]) is None
     assert mt.resumo_grupo([]) is None
 

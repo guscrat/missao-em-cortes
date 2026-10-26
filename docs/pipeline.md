@@ -29,7 +29,9 @@ Outras pastas em `outputs/`: `_calibracao/` (scratch da calibração de zoom), `
 
 ## Step 4 — Cortes
 
-Gera **dois arquivos por bloco**: `corte_NN_<slug>.mp4` (corte completo, fade out 0.5s) e `cold_NN_<slug>.mp4` (cold open 15-30s, fade in+out 0.4s). Se o JSON não tiver `cold_open`, gera só o corte e loga um aviso. Sai com exit 1 e resumo se algum ffmpeg falhar.
+Gera **dois arquivos por bloco**: `corte_NN_<slug>.mp4` (corte completo, fade out 0.5s) e `cold_NN_<slug>.mp4` (cold open 15-30s, fade in+out 0.4s). Se o JSON não tiver `cold_open`, gera só o corte e loga um aviso. Sai com exit 1 e resumo se algum ffmpeg falhar. `--bloco=N` corta só um bloco.
+
+A janela vem do `_fronteira.janela()` (a mesma do 04b, 04c e 10): o padding de sempre (1s antes, 2s depois; 0,5s no cold open), mas parando antes da palavra vizinha — com o tempo exato do fim de frase (encaixado no 03), o padding fixo vazava o começo da frase seguinte.
 
 ## Tratamento de overlays da live original (zoom)
 
@@ -79,7 +81,7 @@ Todo o pipeline (steps 4, 4b, 5, 6) produz vídeo **1280x720, 30fps, yuv420p, H.
 
 ## Step 10 — Shorts 9:16
 
-`uv run py scripts/10_shorts.py <stem> [--bloco=N]` — **off-pipeline** e **grátis**: gera um **Short 9:16** (1080x1920, 30fps, NVENC) por bloco a partir do **cold open**. Recorta direto do vídeo **original** (`inputs/<stem>.mp4`, 1080p), porque o `cold_NN.mp4` é 720p e ficaria borrado esticado.
+`uv run py scripts/10_shorts.py <stem> [--bloco=N]` — **off-pipeline** e **grátis**: gera um **Short 9:16** (1080x1920, 30fps, NVENC) por bloco a partir do trecho **`short`** do bloco (até 3 min, ideal 30-90s, ideia completa terminando numa frase de impacto; blocos antigos sem `short` usam o **cold open**). Trecho acima de 179s é pulado (falha); fim fora de fim de frase gera aviso. Recorta direto do vídeo **original** (`inputs/<stem>.mp4`, 1080p), porque o `cold_NN.mp4` é 720p e ficaria borrado esticado.
 
 - A janela 9:16 usa a altura toda da área anti-overlay do `config/zoom.json` e fica **sempre dentro dela**, então os overlays continuam fora (stem sem zoom: quadro inteiro + aviso).
 - A posição horizontal segue o rosto de quem fala: OpenCV detecta rostos a cada 0.5s, agrupa por posição e, entre os que aparecem em ≥30% dos frames, escolhe o **mais perto do centro do quadro** (quem filma mantém o palestrante no centro). O critério "maior rosto" perdia pra foto no telão, e o "rosto que mais mexe" perdia pra quem bebia água na mesa.
