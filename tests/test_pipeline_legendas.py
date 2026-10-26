@@ -90,3 +90,14 @@ def test_sem_desde_nao_quebra(monkeypatch):
     cmds, saida = _rodar(monkeypatch, ["--polir"], desde=None)
     assert saida is not None and "01_baixar.py" in str(saida.code)
     assert cmds == []
+
+
+def test_refazer_vai_so_pro_03(monkeypatch):
+    cmds, _ = _rodar(monkeypatch, ["--refazer"], desde="--desde=3")
+    assert _por_script(cmds)["03_segmentar.py"][-1] == "--refazer"
+    assert all("--refazer" not in a for s, a in cmds if s != "03_segmentar.py")
+
+
+def test_sem_refazer_03_nao_recebe_flag(monkeypatch):
+    cmds, _ = _rodar(monkeypatch, [], desde="--desde=3")
+    assert "--refazer" not in _por_script(cmds)["03_segmentar.py"]
