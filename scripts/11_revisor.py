@@ -4,7 +4,9 @@ Uso:
     uv run py scripts/11_revisor.py <stem> --dry-run     # mostra o que vai revisar e o custo estimado
     uv run py scripts/11_revisor.py <stem> [--bloco=N]
 
-Antes de qualquer chamada paga, a checagem de FRONTEIRA (código, $0, _fronteira.py): o corte
+Antes de qualquer chamada paga, a checagem de ABERTURA (código, $0): o corte abre com
+propaganda/patrocínio da live (config/propaganda.json)? → o início vai pra 1ª frase depois
+dela e o bloco é refeito; sem ela fica < 8 min → "quarentena". Depois, a de FRONTEIRA: o corte
 começa no começo de frase e termina em fim de frase com pausa depois (últimas palavras do
 words.json)? Reprovou → reajusta sozinho: leva a ponta pro fim de frase mais perto (até 30s),
 grava no blocos.json e refaz o bloco (pipeline.py --bloco=N, ~US$ 0.03 do 04b). Sem ponto
@@ -21,6 +23,8 @@ e responde 4 checagens em JSON estruturado:
      cima, texto legível e coerente, não é tela compartilhada)
   3. tela compartilhada (a maior parte do corte mostra tela em vez de gente falando)
   4. corte sem sentido (o trecho não se sustenta sozinho)
+  5. momentos_fora: itens de "Principais momentos" da descrição que não estão na transcrição
+     do trecho → saem sozinhos do descricoes.txt e dos ganchos do blocos.json ($0)
 
 Quem decide é o código, não o modelo (regra de produto da quarentena):
   - problema de CONTEÚDO (3 ou 4) → "descartado" com o motivo; não sobe, não chama ninguém
@@ -43,6 +47,7 @@ troca de frame da thumb ~US$ 0.01 (reavalia só a thumb).
 Logado por bloco no banco (agente="revisor" e agente="editor").
 """
 import base64
+import difflib
 import json
 import os
 import subprocess
@@ -56,7 +61,7 @@ import _custo
 import _editor
 import _fronteira
 import _grafias
-from _descricoes import ler_descricoes
+from _descricoes import ler_descricoes, momentos as momentos_da_descricao, remover_momentos
 from _eventos import atualizar_tarefa, evento, ler_bloco, upsert_bloco
 from _legenda import hhmmss_para_segundos, palavras_na_janela
 from _paths import achar_pasta, escolher_thumb, stem_de
@@ -81,9 +86,11 @@ SCHEMA = {
         "tela_problema": {"type": "string"},
         "corte_sem_sentido": {"type": "boolean"},
         "sentido_problema": {"type": "string"},
+        "momentos_fora": {"type": "array", "items": {"type": "string"}},
     },
     "required": ["titulo_fiel", "titulo_problema", "thumb_ok", "thumb_problema",
-                 "tela_compartilhada", "tela_problema", "corte_sem_sentido", "sentido_problema"],
+                 "tela_compartilhada", "tela_problema", "corte_sem_sentido", "sentido_problema",
+                 "momentos_fora"],
     "additionalProperties": False,
 }
 
@@ -126,7 +133,11 @@ compartilhada (navegador, matéria, gráfico, documento) em vez de pessoas falan
 true. Algum frame de tela no meio é normal: aí é false.
 4. corte_sem_sentido: pela transcrição, o trecho NÃO se sustenta sozinho? Ex.: começa ou \
 termina no meio de um raciocínio a ponto de não dar pra entender do que se fala, ou pula \
-de assunto sem fio condutor. Começo abrupto mas compreensível é false."""
+de assunto sem fio condutor. Começo abrupto mas compreensível é false.
+5. momentos_fora: cada item dos PRINCIPAIS MOMENTOS DA DESCRIÇÃO tem que estar DENTRO da \
+transcrição do trecho (fala citada ou fato dito nele; paráfrase fiel de algo dito no trecho é \
+ok). Liste, copiando o item EXATAMENTE como veio, cada um que não está: fala de outro momento \
+da live, inventada ou distorcida. Lista vazia [] quando todos estão (ou não há itens)."""
 
 
 def ler_imagem_b64(path: Path, largura: int = LARGURA_IMG) -> str:
@@ -162,7 +173,8 @@ def frames_b64(video: Path, n: int = N_FRAMES) -> list[str]:
 
 
 def montar_conteudo(titulo: str, texto_thumb: str, transcricao: str,
-                    thumb_b64: str | None, frames: list[str]) -> list[dict]:
+                    thumb_b64: str | None, frames: list[str],
+                    momentos: list[str] = ()) -> list[dict]:
     img = lambda b64: {"type": "image",   # noqa: E731
                        "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}}
     conteudo = []
@@ -171,8 +183,10 @@ def montar_conteudo(titulo: str, texto_thumb: str, transcricao: str,
     conteudo += [{"type": "text", "text": f"FRAMES DO CORTE ({len(frames)}):"}]
     conteudo += [img(f) for f in frames]
     sem_thumb = "" if thumb_b64 else "SEM THUMB ESCOLHIDA: marque thumb_ok=false.\n"
+    lista = "\n".join(f"• {m}" for m in momentos) or "(nenhum)"
     conteudo.append({"type": "text", "text": (
         f"TÍTULO DO YOUTUBE: {titulo}\nTEXTO DA THUMB: {texto_thumb}\n{sem_thumb}"
+        f"\nPRINCIPAIS MOMENTOS DA DESCRIÇÃO:\n{lista}\n"
         f"\nTRANSCRIÇÃO DO TRECHO:\n{transcricao}")})
     return conteudo
 
@@ -258,7 +272,7 @@ def escolher_video(pasta: Path, nn: str) -> Path | None:
 
 
 def revisar_bloco(client, anthropic, stem, pasta, b, nn, video, titulo, texto_thumb,
-                  transcricao):
+                  transcricao, momentos=()):
     """Uma revisão (uma chamada). (checagens, status, motivo, custo) ou None se falhou."""
     bid = b["id"]
     thumb = escolher_thumb(pasta / "thumbs", nn)
@@ -267,7 +281,8 @@ def revisar_bloco(client, anthropic, stem, pasta, b, nn, video, titulo, texto_th
     evento(stem, "11_revisor", "inicio", agente="revisor", bloco_id=bid)
     try:
         conteudo = montar_conteudo(titulo, texto_thumb, transcricao,
-                                   ler_imagem_b64(thumb) if thumb else None, frames_b64(video))
+                                   ler_imagem_b64(thumb) if thumb else None, frames_b64(video),
+                                   momentos)
         checagens, resp = chamar_claude(client, conteudo)
     except (anthropic.APIError, subprocess.CalledProcessError, json.JSONDecodeError) as e:
         print(f"  [!] {nn}: revisão falhou ({type(e).__name__}: {str(e)[:200]})")
@@ -431,6 +446,81 @@ def refazer_bloco(pasta: Path, bid: int) -> bool:
         return False
 
 
+def gravar_tempos(stem: str, pasta: Path, b: dict, novo_ini: float, novo_fim: float) -> None:
+    """Grava os tempos novos do bloco no blocos.json (e no dict `b`) e a duração no banco."""
+    blocos_path = pasta / "blocos.json"
+    data = json.loads(blocos_path.read_text(encoding="utf-8"))
+    for x in data["blocos"]:
+        if x["id"] == b["id"]:
+            x["timestamp_inicio"] = b["timestamp_inicio"] = _fronteira.segundos_para_ts(novo_ini)
+            x["timestamp_fim"] = b["timestamp_fim"] = _fronteira.segundos_para_ts(novo_fim)
+            x["duracao_minutos"] = b["duracao_minutos"] = round((novo_fim - novo_ini) / 60, 1)
+            x["faixa_duracao"] = b["faixa_duracao"] = _fronteira.faixa(x["duracao_minutos"])
+    blocos_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    upsert_bloco(stem, b["id"], duracao_min=b["duracao_minutos"])
+
+
+def conferir_abertura(stem: str, pasta: Path, b: dict, todas: list[dict],
+                      reajustar: bool = True) -> tuple[dict | None, str | None]:
+    """Regra editorial: nenhum corte abre com propaganda/patrocínio da live original
+    (config/propaganda.json). Código, $0. Abre com propaganda → o início vai pra 1ª frase
+    depois dela, grava no blocos.json e refaz o bloco sozinho. Sem ela o corte fica com menos
+    de 8 min → quarentena. (registro pro revisao.json ou None, motivo de quarentena ou None)."""
+    bid, nn = b["id"], f"{b['id']:02d}"
+    ini, fim = hhmmss_para_segundos(b["timestamp_inicio"]), hhmmss_para_segundos(b["timestamp_fim"])
+    pp = _fronteira.pular_propaganda(todas, ini, *_fronteira.termos_propaganda())
+    if pp is None:
+        return None, None
+    novo_ini, pulado = pp
+    registro = {"pulado_s": round(novo_ini - ini, 2), "trecho": pulado[-200:]}
+    print(f"  {nn}: abre com propaganda da live (\"{pulado[:60]}…{pulado[-60:]}\") → começa "
+          f"{novo_ini - ini:.0f}s depois")
+    if not reajustar:
+        return registro, "corte abre com propaganda da live"
+    if (fim - novo_ini) / 60 < _fronteira.LONGO_MIN:
+        return registro, (f"corte abre com propaganda da live e sem ela fica com "
+                          f"{(fim - novo_ini) / 60:.1f} min (mínimo {_fronteira.LONGO_MIN:.0f}) — "
+                          f"revisar à mão")
+    gravar_tempos(stem, pasta, b, novo_ini, fim)
+    evento(stem, "11_revisor", "aviso", agente="revisor", bloco_id=bid,
+           mensagem=f"abertura sem propaganda: +{novo_ini - ini:.0f}s")
+    if not refazer_bloco(pasta, bid):
+        return registro, "início movido pra depois da propaganda, mas falhou ao refazer o bloco"
+    return registro, None
+
+
+_MOMENTO_PARECIDO = 0.85    # o revisor às vezes devolve o item com outra pontuação/acento
+
+
+def limpar_momentos(pasta: Path, bid: int, fora: list[str], momentos: list[str]) -> list[str]:
+    """Regra editorial: toda fala de "Principais momentos" está dentro do trecho. Tira do
+    descricoes.txt (edição manual vale: mexe só nessas linhas) e dos ganchos do blocos.json os
+    itens que o revisor achou fora. Devolve os itens removidos ($0, sem refazer vídeo)."""
+    norm = _fronteira._norm   # sem acento, pontuação e espaço
+    removidos = []
+    for f in fora:
+        par = max(momentos, key=lambda m: difflib.SequenceMatcher(None, norm(m), norm(f)).ratio(),
+                  default=None)
+        if par and par not in removidos and \
+                difflib.SequenceMatcher(None, norm(par), norm(f)).ratio() >= _MOMENTO_PARECIDO:
+            removidos.append(par)
+    if not removidos:
+        return []
+    desc = pasta / "descricoes.txt"
+    if desc.exists():
+        desc.write_text(remover_momentos(desc.read_text(encoding="utf-8"), bid, removidos),
+                        encoding="utf-8")
+    blocos_path = pasta / "blocos.json"
+    data = json.loads(blocos_path.read_text(encoding="utf-8"))
+    alvo = {norm(r) for r in removidos}
+    for x in data["blocos"]:
+        if x["id"] == bid:
+            x["ganchos"] = [g for g in x.get("ganchos", [])
+                            if norm(_grafias.corrigir(g)) not in alvo and norm(g) not in alvo]
+    blocos_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    return removidos
+
+
 def conferir_fronteira(stem: str, pasta: Path, b: dict, todas: list[dict],
                        reajustar: bool = True) -> tuple[dict, str | None]:
     """Regra editorial: corte começa e termina em ponto natural (fim de frase + pausa).
@@ -465,16 +555,7 @@ def conferir_fronteira(stem: str, pasta: Path, b: dict, todas: list[dict],
         # o ponto natural é o próprio tempo e a checagem reprova: refazer daria o mesmo vídeo
         return registro, (f"corte {pontas} no meio de frase, mas o ponto natural mais perto é "
                           f"o tempo atual — revisar à mão")
-    blocos_path = pasta / "blocos.json"
-    data = json.loads(blocos_path.read_text(encoding="utf-8"))
-    for x in data["blocos"]:
-        if x["id"] == bid:
-            x["timestamp_inicio"] = b["timestamp_inicio"] = _fronteira.segundos_para_ts(novo_ini)
-            x["timestamp_fim"] = b["timestamp_fim"] = _fronteira.segundos_para_ts(novo_fim)
-            x["duracao_minutos"] = b["duracao_minutos"] = round((novo_fim - novo_ini) / 60, 1)
-            x["faixa_duracao"] = b["faixa_duracao"] = _fronteira.faixa(x["duracao_minutos"])
-    blocos_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-    upsert_bloco(stem, bid, duracao_min=b["duracao_minutos"])
+    gravar_tempos(stem, pasta, b, novo_ini, novo_fim)
     registro["reajuste_s"] = [round(novo_ini - ini, 2), round(novo_fim - fim, 2)]
     print(f"  {nn}: reajustado ({registro['reajuste_s'][0]:+.1f}s no início, "
           f"{registro['reajuste_s'][1]:+.1f}s no fim) → refazendo o bloco (pipeline --bloco, "
@@ -543,7 +624,8 @@ def main(argv: list[str]) -> int:
              f"/bloco se o editor reescrever)" if com_editor else "")
           + f" · +~US$ {CUSTO_REFAZER_BLOCO:.2f}/bloco com fronteira reajustada (04b refeito)")
     if dry or not fila:
-        for b, nn, _ in fila:   # checagem de fronteira é de graça: mostra no dry-run
+        for b, nn, _ in fila:   # abertura e fronteira são de graça: mostra no dry-run
+            conferir_abertura(stem, pasta, b, todas, reajustar=False)
             conferir_fronteira(stem, pasta, b, todas, reajustar=False)
         print("(dry-run: nada foi enviado)" if dry else "Nada a revisar.")
         return 0
@@ -558,11 +640,14 @@ def main(argv: list[str]) -> int:
 
     for b, nn, video in fila:
         bid = b["id"]
-        fronteira, motivo_fr = conferir_fronteira(stem, pasta, b, todas)
+        abertura, motivo_fr = conferir_abertura(stem, pasta, b, todas)
+        fronteira = None
+        if not motivo_fr:
+            fronteira, motivo_fr = conferir_fronteira(stem, pasta, b, todas)
         if motivo_fr:
             upsert_bloco(stem, bid, status="quarentena", forcar_status=True, motivo=motivo_fr)
             revisao[nn] = {"status": "quarentena", "motivo": motivo_fr, "fronteira": fronteira,
-                           "modelo": None, "custo_usd": 0.0}
+                           "abertura": abertura, "modelo": None, "custo_usd": 0.0}
             revisao_path.write_text(json.dumps(revisao, ensure_ascii=False, indent=2),
                                     encoding="utf-8")
             evento(stem, "11_revisor", "ok", agente="revisor", bloco_id=bid,
@@ -576,10 +661,11 @@ def main(argv: list[str]) -> int:
         ini = hhmmss_para_segundos(b["timestamp_inicio"])
         fim = hhmmss_para_segundos(b["timestamp_fim"])
         transcricao = " ".join(w["word"] for w in palavras_na_janela(todas, ini, fim))
+        momentos = momentos_da_descricao(descricoes.get(bid, {}).get("descricao", ""))
         tentativas, custo_bloco = [], 0.0
         while True:
             r = revisar_bloco(client, anthropic, stem, pasta, b, nn, video, titulo, texto_thumb,
-                              transcricao)
+                              transcricao, momentos)
             if r is None:
                 falhas += 1
                 break
@@ -616,7 +702,7 @@ def main(argv: list[str]) -> int:
             if _editor.voltar_template(pasta, bid):
                 texto_thumb = texto_base
                 r2 = revisar_bloco(client, anthropic, stem, pasta, b, nn, video, titulo,
-                                   texto_thumb, transcricao)
+                                   texto_thumb, transcricao, momentos)
                 if r2 is not None:
                     checagens, status, motivo, usd = r2
                     total += usd
@@ -639,10 +725,19 @@ def main(argv: list[str]) -> int:
             custo_bloco += usd_ab
             texto_thumb = texto_da_thumb(pasta, bid, texto_base)
 
+        # falas de "Principais momentos" fora do trecho: saem da descrição sozinhas ($0)
+        removidos = limpar_momentos(pasta, bid, (checagens or {}).get("momentos_fora") or [],
+                                    momentos)
+        if removidos:
+            print(f"  {nn}: {len(removidos)} momento(s) da descrição fora do trecho — removido(s): "
+                  + " | ".join(removidos))
+            evento(stem, "11_revisor", "aviso", agente="revisor", bloco_id=bid,
+                   mensagem=f"momentos fora do trecho removidos: {' | '.join(removidos)}"[:300])
         upsert_bloco(stem, bid, status=status, forcar_status=True, motivo=motivo)
         thumb = escolher_thumb(pasta / "thumbs", nn)
         revisao[nn] = {"status": status, "motivo": motivo, "checagens": checagens,
-                       "fronteira": fronteira,
+                       "fronteira": fronteira, "abertura": abertura,
+                       "momentos_removidos": removidos,
                        "titulo": titulo, "texto_thumb": texto_thumb,
                        "thumb": thumb.name if thumb else None,
                        "reescritas": tentativas, "trocas_thumb": trocas_thumb[1:],

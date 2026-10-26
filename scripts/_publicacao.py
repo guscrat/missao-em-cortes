@@ -11,7 +11,10 @@ dos agendados). Enquanto config/upload.json → auditoria_aprovada for false, a 
 mostra só os longos; depois os Shorts aparecem marcados "sobe pela API" (09 --shorts). Usado pelo
 Curador (13) no fim de cada vídeo; dá pra rodar à mão:
 
-  uv run py scripts/_publicacao.py <stem>
+  uv run py scripts/_publicacao.py <stem> [--grade=12h,19h]
+
+--grade: horários fixos por dia (1 vídeo por horário), em vez de 1-2 por dia às 18h. Horário
+de hoje que já passou sai como "publicar JÁ" (o dia continua com os vídeos dele).
 """
 import json
 import sys
@@ -107,6 +110,22 @@ def agenda(n: int, agora: datetime | None = None, depois_de: date | None = None)
     return [inicio + timedelta(days=i // por_dia) for i in range(n)]
 
 
+def horas(grade: list[str] | None, dias: list[date], agora: datetime | None = None) -> list[str]:
+    """Hora de cada vídeo: HORA sem grade; com grade, o i-ésimo vídeo do dia leva o i-ésimo
+    horário. Horário de hoje que já passou: 'JÁ (12h passou)'."""
+    if not grade:
+        return [HORA] * len(dias)
+    agora = agora or datetime.now()
+    saida, vistos = [], {}
+    for d in dias:
+        i = vistos.get(d, 0)
+        vistos[d] = i + 1
+        h = grade[min(i, len(grade) - 1)]
+        passou = d == agora.date() and int(h.rstrip("h").split(":")[0]) <= agora.hour
+        saida.append(f"JÁ ({h} passou)" if passou else h)
+    return saida
+
+
 def linhas_thumbs(thumbs: list[tuple[Path, str]]) -> list[str]:
     if not thumbs:
         return ["THUMB:   (sem thumb)"]
@@ -116,14 +135,24 @@ def linhas_thumbs(thumbs: list[tuple[Path, str]]) -> list[str]:
                                               for t, estilo in thumbs]
 
 
-def gerar(pasta: Path, agora: datetime | None = None) -> tuple[Path | None, list[dict]]:
-    """Grava publicacao.txt. Sem aprovados não grava nada: (None, [])."""
+def gerar(pasta: Path, agora: datetime | None = None,
+          grade: list[str] | None = None) -> tuple[Path | None, list[dict]]:
+    """Grava publicacao.txt. Sem aprovados não grava nada: (None, []). `grade`: horários
+    fixos por dia (ex.: ["12h", "19h"]), um vídeo por horário."""
     lista = aprovados(pasta)
     if not lista:
         return None, []
     evento = modo_evento((agora or datetime.now()).date())
     # modo evento: conteúdo novo passa na frente dos agendados (datas a partir de hoje/amanhã)
-    dias = agenda(len(lista), agora, None if evento else ultimo_agendado())
+    depois_de = None if evento else ultimo_agendado()
+    if grade:
+        inicio = (agora or datetime.now()).date()   # horário de hoje que passou vira "JÁ"
+        if depois_de and depois_de >= inicio:
+            inicio = depois_de + timedelta(days=1)
+        dias = [inicio + timedelta(days=i // len(grade)) for i in range(len(lista))]
+    else:
+        dias = agenda(len(lista), agora, depois_de)
+    hs = horas(grade, dias, agora)
     com_shorts = auditoria_aprovada()
     linhas = [f"# Publicação manual — {pasta.name}",
               f"# {len(lista)} corte(s) aprovado(s) pelo revisor, em ordem de score.",
@@ -132,20 +161,21 @@ def gerar(pasta: Path, agora: datetime | None = None) -> tuple[Path | None, list
               "# Resultado do teste: 16_thumb_ab.py registrar <stem> <vídeo> <a|b|c|empate>."]
     if evento:
         linhas += [f"# MODO EVENTO (até {evento['ate']:%d/%m}): datas NA FRENTE dos já agendados.",
-                   "# Se o dia já tem longo agendado às 18h, empurre o agendado no Studio."]
+                   f"# Se o dia já tem longo agendado às {'/'.join(grade or [HORA])}, empurre o "
+                   f"agendado no Studio."]
     if com_shorts:
         linhas += ["# Shorts sobem pela API (09_upload.py <stem> --shorts, 2/dia, depois do longo):",
                    "# NÃO suba à mão. O vídeo relacionado é marcado no Studio (dia_d.py relacionados).", ""]
     else:
         linhas += ["# Só os vídeos LONGOS: os Shorts ficam prontos e sobem pela API quando a",
                    "# auditoria for aprovada (config/upload.json → auditoria_aprovada).", ""]
-    for x, dia in zip(lista, dias):
+    for x, dia, hora in zip(lista, dias, hs):
         short = []
         if com_shorts:
             short = [f"SHORT:   shorts/{x['short'].name} (sobe pela API)" if x["short"]
                      else "SHORT:   (sem Short)"]
         linhas +=["=" * 70,
-                   f"{DIAS_SEMANA[dia.weekday()]} {dia:%d/%m} {HORA} · VÍDEO {x['id']:02d} · "
+                   f"{DIAS_SEMANA[dia.weekday()]} {dia:%d/%m} {hora} · VÍDEO {x['id']:02d} · "
                    f"score {x['score']} · {x['duracao']} min",
                    "=" * 70,
                    f"ARQUIVO: finalizados/{x['video'].name}",
@@ -161,7 +191,10 @@ def gerar(pasta: Path, agora: datetime | None = None) -> tuple[Path | None, list
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
     from _paths import achar_pasta
-    if len(sys.argv) < 2:
-        sys.exit("Uso: uv run py scripts/_publicacao.py <stem>")
-    caminho, itens = gerar(achar_pasta(sys.argv[1]))
+    pos = [a for a in sys.argv[1:] if not a.startswith("--")]
+    grade = next((a.split("=", 1)[1].split(",") for a in sys.argv[1:]
+                  if a.startswith("--grade=")), None)
+    if not pos:
+        sys.exit("Uso: uv run py scripts/_publicacao.py <stem> [--grade=12h,19h]")
+    caminho, itens = gerar(achar_pasta(pos[0]), grade=grade)
     print(f"OK {len(itens)} aprovado(s) → {caminho}" if caminho else "Nenhum bloco aprovado.")
