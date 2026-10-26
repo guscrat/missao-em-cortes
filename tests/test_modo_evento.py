@@ -117,6 +117,7 @@ def rodada(tmp_path, monkeypatch, banco):
         return {"stem": item["stem"], "titulo": item["titulo"], "canal": item["canal"],
                 "ok": True, "aprovados": 1, "publicacao": "pub.txt", "avisos": []}
     monkeypatch.setattr(cu, "processar", processar)
+    monkeypatch.setattr(cu, "esperar_livre", lambda: [])
     import anthropic
     monkeypatch.setattr(anthropic, "Anthropic", lambda: object())
     return reg

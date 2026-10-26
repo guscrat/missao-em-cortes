@@ -215,6 +215,7 @@ def rodada(raiz, monkeypatch):
         return {"stem": item["stem"], "titulo": item["titulo"], "canal": item["canal"],
                 "ok": True, "aprovados": 3, "publicacao": "pub.txt", "avisos": []}
     monkeypatch.setattr(cu, "processar", processar)
+    monkeypatch.setattr(cu, "esperar_livre", lambda: reg.get("ocupado", []))
     import anthropic
     monkeypatch.setattr(anthropic, "Anthropic", lambda: object())
     return reg
