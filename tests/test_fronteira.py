@@ -82,6 +82,28 @@ def test_janela_palavra_de_duracao_zero_no_fim_entra():
     assert c["ultimas"].endswith("cara.") and c["fim_ok"]
 
 
+def test_janela_varias_palavras_de_duracao_zero_seguidas_no_fim():
+    p = P(("seguinte,", 10.0, 10.3), ("cara", 10.5, 10.5), ("mesmo.", 10.5, 10.5),
+          ("Essa", 11.2, 11.4))
+    a, b = fr.janela(p, 10.0, 10.5)
+    assert 10.5 < b <= 11.2 - fr.FOLGA_S + 1e-9
+    assert fr.checar(p, 10.0, 10.5)["ultimas"].endswith("mesmo.")
+
+
+def test_janela_palavra_de_duracao_zero_no_inicio():
+    p = P(("Oi.", 4.0, 4.3), ("Então", 5.0, 5.0), ("vamos", 5.0, 5.3), ("lá.", 5.4, 5.8),
+          ("Fim", 7.0, 7.2))
+    a, b = fr.janela(p, 5.0, 5.8)
+    assert a >= 4.3 + fr.FOLGA_S - 1e-9 and a <= 5.0
+    assert fr.checar(p, 5.0, 5.8)["primeiras"].startswith("Então")
+
+
+def test_janela_palavra_zero_no_fim_sem_proxima_palavra():
+    p = P(("fim", 1.0, 1.2), ("tchau.", 2.0, 2.0))
+    a, b = fr.janela(p, 1.0, 2.0)
+    assert b >= 2.0
+
+
 # ── checar ─────────────────────────────────────────────────────────────────
 
 def test_checar_ok():
