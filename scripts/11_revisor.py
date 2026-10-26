@@ -63,6 +63,7 @@ from _paths import achar_pasta, escolher_thumb, stem_de
 
 MODELO = "claude-opus-5-5"
 CUSTO_ESTIMADO_BLOCO = 0.05            # só pro --dry-run (+ até ~US$ 0.03 se trocar a thumb)
+CUSTO_REFAZER_BLOCO = 0.03             # 04b (LLM) ao refazer um bloco com a fronteira reajustada
 N_FRAMES = 6
 LARGURA_IMG = 512                      # imagem pequena = menos token; dá pra ler a tela
 NAO_MEXER = {"agendado", "publicado", "arquivado"}  # decisão já tomada: revisor não mexe
@@ -470,7 +471,8 @@ def conferir_fronteira(stem: str, pasta: Path, b: dict, todas: list[dict],
     upsert_bloco(stem, bid, duracao_min=b["duracao_minutos"])
     registro["reajuste_s"] = [round(novo_ini - ini, 2), round(novo_fim - fim, 2)]
     print(f"  {nn}: reajustado ({registro['reajuste_s'][0]:+.1f}s no início, "
-          f"{registro['reajuste_s'][1]:+.1f}s no fim) → refazendo o bloco (pipeline --bloco)")
+          f"{registro['reajuste_s'][1]:+.1f}s no fim) → refazendo o bloco (pipeline --bloco, "
+          f"~US$ {CUSTO_REFAZER_BLOCO:.2f} do 04b se polido)")
     evento(stem, "11_revisor", "aviso", agente="revisor", bloco_id=bid,
            mensagem=f"fronteira reajustada {registro['reajuste_s']}")
     if not refazer_bloco(pasta, bid):
@@ -532,7 +534,8 @@ def main(argv: list[str]) -> int:
     print(f"\nRevisão de '{stem}': {len(fila)} bloco(s) · {MODELO} · "
           f"custo estimado ~US$ {CUSTO_ESTIMADO_BLOCO * len(fila):.2f}"
           + (f" (até +US$ {(CUSTO_ESTIMADO_BLOCO + _editor.CUSTO_ESTIMADO) * _editor.MAX_RODADAS:.2f}"
-             f"/bloco se o editor reescrever)" if com_editor else ""))
+             f"/bloco se o editor reescrever)" if com_editor else "")
+          + f" · +~US$ {CUSTO_REFAZER_BLOCO:.2f}/bloco com fronteira reajustada (04b refeito)")
     if dry or not fila:
         for b, nn, _ in fila:   # checagem de fronteira é de graça: mostra no dry-run
             conferir_fronteira(stem, pasta, b, todas, reajustar=False)
