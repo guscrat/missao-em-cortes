@@ -394,7 +394,8 @@ def conferir_colagem_ab(client, anthropic, stem, pasta, bid, titulo) -> float:
         if r is not None and r["thumb_ok"]:
             continue
         ok = _editor.voltar_template(pasta, bid, ("b", "c"))
-        msg = f"colagem {thumb.stem[-1]} reprovada ({problema}) → b/c " +               ("voltaram pro template" if ok else "NÃO voltaram pro template (falhou o 07)")
+        destino = "voltaram pro template" if ok else "NÃO voltaram pro template (falhou o 07)"
+        msg = f"colagem {thumb.stem[-1]} reprovada ({problema}) → b/c {destino}"
         print(f"  {bid:02d}: {msg}")
         evento(stem, "11_revisor", "aviso", agente="revisor", bloco_id=bid, mensagem=msg[:300])
         break
@@ -502,8 +503,9 @@ def main(argv: list[str]) -> int:
             texto_thumb = texto_da_thumb(pasta, bid, texto_base)
         if r is None:
             continue
+        escolhida_colagem = _colagem.variante_aplicada(escolher_thumb(pasta / "thumbs", nn))
         if status == "quarentena" and checagens and checagens["titulo_fiel"] \
-                and not checagens["thumb_ok"]                 and _colagem.variante_aplicada(escolher_thumb(pasta / "thumbs", nn)):
+                and not checagens["thumb_ok"] and escolhida_colagem:
             # colagem reprovada na arte: as 3 variantes voltam pro template (o --proximo só
             # trocaria a 'a') e o bloco é revisado de novo, com o texto do template
             print(f"  {nn}: colagem reprovada ({checagens['thumb_problema']}) → template atual")

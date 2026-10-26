@@ -723,10 +723,14 @@ def placar_thumb_ab() -> str | None:
     if modo_colagem() != "ab":
         return None
     import importlib
-    ab = importlib.import_module("16_thumb_ab")
-    p = ab.placar()
+    try:
+        ab = importlib.import_module("16_thumb_ab")
+        p = ab.placar()
+        sugestao = ab.sugestao(p)
+    except Exception as e:  # noqa: BLE001 — placar é só informativo, nunca derruba a rodada
+        return f"placar não lido ({type(e).__name__}): rode `uv run py scripts/16_thumb_ab.py placar`"
     return (f"template {p['template']} x colagem {p['colagem']} (empate {p['empate']}) em "
-            f"{p['testes']} teste(s) — {ab.sugestao(p)}")
+            f"{p['testes']} teste(s) — {sugestao}")
 
 
 def atualizar_placar() -> str | None:

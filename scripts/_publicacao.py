@@ -40,10 +40,14 @@ def _final(pasta: Path, bid: int) -> Path | None:
 def thumbs_do_teste(pasta: Path, bid: int, escolhida: Path | None) -> list[tuple[Path, str]]:
     """[(thumb, estilo)] que sobem no "Testar e comparar": as a/b/c do bloco, cada uma
     'template' ou 'colagem' (modo ab: a = template, b/c = colagem). Manual sobe sozinha."""
-    from _colagem import variante_aplicada      # import pesado (cv2): só quando precisa
     if escolhida and escolhida.stem.endswith("_manual"):
         return [(escolhida, "manual")]
-    abc = (pasta / "thumbs" / f"thumb_{bid:02d}_{l}.png" for l in "abc")
+    abc = [pasta / "thumbs" / f"thumb_{bid:02d}_{l}.png" for l in "abc"]
+    if (pasta / "thumbs" / "colagem" / "colagem.json").exists():
+        from _colagem import variante_aplicada      # import pesado (cv2): só com colagem
+    else:
+        def variante_aplicada(_):
+            return None
     lista = [(t, "colagem" if variante_aplicada(t) else "template") for t in abc if t.exists()]
     return lista or ([(escolhida, "template")] if escolhida else [])
 
