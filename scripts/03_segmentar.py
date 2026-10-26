@@ -110,45 +110,56 @@ def chamar_llm() -> dict:
     print(f"Transcrição: {len(transcricao):,} caracteres (~{len(transcricao)//4:,} tokens)")
     client = Anthropic()  # pega ANTHROPIC_API_KEY do .env
     blocos, observacoes, usos = [], [], []
-    cursor, n = 0.0, 0
-    while True:
-        n += 1
-        texto, ini, fim, ultima = janelas(linhas, cursor)
-        print(f"Chamando Claude (trecho {n}: {fr.segundos_para_ts(ini)[:8]} → "
-              f"{fr.segundos_para_ts(fim)[:8]})...")
-        data, uso = pedir_blocos(client, prompt_sistema, texto, ini, fim, ultima, n)
-        usos.append(uso)
-        print(f"  {len(data.get('blocos', []))} bloco(s) · ~${uso['custo_usd']:.2f}")
-        novos = [b for b in data.get("blocos", []) if inicio_s(b) >= ini - 60]
-        blocos += novos
-        if data.get("observacoes"):
-            observacoes.append(f"[trecho {n}] {data['observacoes']}")
-        if ultima:
-            break
-        fins = []
-        for b in list(novos):   # fim REAL do bloco (âncora pelo texto), não o relógio do LLM
-            t = inicio_s({"timestamp_inicio": b.get("timestamp_fim")})
-            if t == float("inf"):
-                continue
-            t = fr.ancorar(palavras, b.get("frase_de_encerramento") or "", t, "fim") or t
-            if fim - t < RABO_JANELA_MIN * 60:
-                # colado no fim da janela: o assunto provavelmente não acabou (o LLM fecha
-                # mesmo assim). Sai daqui e é analisado inteiro na próxima janela.
-                blocos.remove(b)
-                print(f"  (bloco '{b.get('tema')}' termina colado no fim do trecho — vai pro próximo)")
-                continue
-            fins.append(t)
-        proximo = max(fins) if fins and max(fins) > cursor + 5 * 60 else cursor + AVANCO_VAZIO_MIN * 60
-        cursor = min(proximo, fim)
-    for i, b in enumerate(blocos, 1):
-        b["id"] = i
-    uso = _custo.somar(usos)
-    print(f"Custo: input {uso['tokens_in']:,} tok · output {uso['tokens_out']:,} tok "
-          f"(~${uso['custo_usd']:.2f}){_custo.resumo(uso)} · {n} chamada(s)")
-    evento(stem, "03_segmentar", "llm", agente="editor", **uso, mensagem=f"{MODELO} ({n} trecho(s))")
-    data = {"blocos": blocos, "observacoes": " ".join(observacoes)}
-    # a resposta paga fica guardada antes de qualquer ajuste (--reaproveitar parte dela)
-    BRUTA.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    cursor, n, completo = 0.0, 0, False
+    try:
+        while True:
+            n += 1
+            texto, ini, fim, ultima = janelas(linhas, cursor)
+            print(f"Chamando Claude (trecho {n}: {fr.segundos_para_ts(ini)[:8]} → "
+                  f"{fr.segundos_para_ts(fim)[:8]})...")
+            data, uso = pedir_blocos(client, prompt_sistema, texto, ini, fim, ultima, n)
+            usos.append(uso)
+            print(f"  {len(data.get('blocos', []))} bloco(s) · ~${uso['custo_usd']:.2f}")
+            novos = [b for b in data.get("blocos", []) if inicio_s(b) >= ini - 60]
+            blocos += novos
+            if data.get("observacoes"):
+                observacoes.append(f"[trecho {n}] {data['observacoes']}")
+            if ultima:
+                break
+            fins = []
+            for b in list(novos):   # fim REAL do bloco (âncora pelo texto), não o relógio do LLM
+                t = inicio_s({"timestamp_inicio": b.get("timestamp_fim")})
+                if t == float("inf"):
+                    continue
+                t = fr.ancorar(palavras, b.get("frase_de_encerramento") or "", t, "fim") or t
+                if fim - t < RABO_JANELA_MIN * 60:
+                    # colado no fim da janela: o assunto provavelmente não acabou (o LLM fecha
+                    # mesmo assim). Sai daqui e é analisado inteiro na próxima janela.
+                    blocos.remove(b)
+                    print(f"  (bloco '{b.get('tema')}' termina colado no fim do trecho — vai pro próximo)")
+                    continue
+                fins.append(t)
+            proximo = max(fins) if fins and max(fins) > cursor + 5 * 60 else cursor + AVANCO_VAZIO_MIN * 60
+            cursor = min(proximo, fim)
+        completo = True
+    finally:
+        # janela do meio falhou: as anteriores já foram pagas — o custo vai pro painel e o
+        # que veio fica salvo (parcial, sem --reaproveitar automático)
+        for i, b in enumerate(blocos, 1):
+            b["id"] = i
+        data = {"blocos": blocos, "observacoes": " ".join(observacoes)}
+        if usos:
+            uso = _custo.somar(usos)
+            print(f"Custo: input {uso['tokens_in']:,} tok · output {uso['tokens_out']:,} tok "
+                  f"(~${uso['custo_usd']:.2f}){_custo.resumo(uso)} · {len(usos)} chamada(s)")
+            evento(stem, "03_segmentar", "llm", agente="editor", **uso,
+                   mensagem=f"{MODELO} ({len(usos)} trecho(s)){'' if completo else ' — INCOMPLETO'}")
+        # a resposta paga fica guardada antes de qualquer ajuste (--reaproveitar parte dela)
+        destino = BRUTA if completo else BRUTA.with_name("segmentacao_bruta_parcial.json")
+        if usos:
+            destino.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+            if not completo:
+                print(f"[!] falhou no trecho {n}: o que veio até aqui está em {destino.name}")
     return data
 
 
@@ -375,13 +386,20 @@ for v in validos:
         gravar_duracao(b_a, ini_a, novo)
         vivos[-1] = (id_a, ini_a, novo, b_a)
         vivos.append(v)
-    elif (b_b.get("score_potencial") or 0) > (b_a.get("score_potencial") or 0):
-        descartar(b_a, f"repete o assunto do bloco {id_b} (sobreposição de "
-                       f"{(fim_a - ini_b) / 60:.1f}min), que tem score maior")
-        vivos[-1] = v
+        # o fim encolheu: Short/cold open que passavam do novo fim saem (o 10 cai pro cold
+        # open; o 04 pula bloco sem cold open)
+        for k, nome in (("short", "short"), ("cold_open", "cold open")):
+            t = b_a.get(k)
+            if t and inicio_s({"timestamp_inicio": t.get("timestamp_fim")}) > novo + 1:
+                b_a.pop(k)
+                avisos.append(f"bloco {id_a}: {nome} passava do fim ajustado — removido")
     else:
-        descartar(b_b, f"repete o assunto do bloco {id_a} (sobreposição de "
-                       f"{(fim_a - ini_b) / 60:.1f}min), que tem score maior")
+        sa, sb = b_a.get("score_potencial") or 0, b_b.get("score_potencial") or 0
+        fica, sai = (v, vivos[-1]) if sb > sa else (vivos[-1], v)
+        descartar(sai[3], f"repete o assunto do bloco {fica[0]} (sobreposição de "
+                          f"{(fim_a - ini_b) / 60:.1f}min), que tem "
+                          f"{'score maior' if sa != sb else 'o mesmo score e veio antes'}")
+        vivos[-1] = fica
 
 # Mínimo de 8 min (anúncio no meio depois da monetização): com os tempos reais (âncora pelo
 # texto), bloco curto sai. O LLM não sente duração; a regra é do código.
@@ -400,6 +418,9 @@ faixas = [b.get("faixa_duracao") for b in data["blocos"] if b.get("faixa_duracao
 if len(faixas) >= 3 and len(set(faixas)) == 1:
     avisos.append(f"todos os {len(faixas)} blocos na faixa '{faixas[0]}': a regra pede variar "
                   f"(curtos 8-12, médios 12-20, longos 20-30)")
+
+if not data["blocos"] and not erros:
+    erros.append("nenhum bloco sobrou depois dos descartes (veja 'descartados')")
 
 for a in avisos:
     print(f"[aviso] {a}")

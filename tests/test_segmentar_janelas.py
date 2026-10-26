@@ -126,6 +126,21 @@ def test_bloco_que_comeca_antes_da_janela_e_descartado(tmp_path, monkeypatch):
     assert [b["timestamp_inicio"] for b in data["blocos"]] == ["00:02:00", "00:31:00"]
 
 
+def test_janela_do_meio_falha_registra_custo_e_guarda_parcial(tmp_path, monkeypatch):
+    # só 1 resposta: a 2ª chamada estoura (IndexError = falha da API no meio)
+    ns, _, eventos = carregar(tmp_path, monkeypatch, 150, [{"blocos": [bloco(2, 40)]}])
+    try:
+        ns["chamar_llm"]()
+        assert False, "devia propagar a falha"
+    except IndexError:
+        pass
+    assert len(eventos) == 1 and "INCOMPLETO" in eventos[0][1]["mensagem"]
+    assert eventos[0][1]["custo_usd"] > 0
+    parcial = json.loads((tmp_path / "segmentacao_bruta_parcial.json").read_text(encoding="utf-8"))
+    assert len(parcial["blocos"]) == 1
+    assert not (tmp_path / "segmentacao_bruta.json").exists()
+
+
 def test_bloco_colado_no_fim_da_janela_vai_pra_proxima(tmp_path, monkeypatch):
     # janela 1 = 0-60: o bloco 40-59 termina a 1 min do fim (assunto provavelmente cortado):
     # sai, e a janela 2 começa no fim do bloco anterior (40), não em 59
