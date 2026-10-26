@@ -46,6 +46,7 @@ Identifique os blocos temáticos CONTÍNUOS da live (não compilação de trecho
 
 - NÃO incluir bate-papo introdutório ("e aí galera, bem-vindos", agradecimento a viewers).
 - NÃO incluir despedidas, "vamos pro próximo tema", encerramento da live.
+- NÃO criar bloco de leitura de superchat, chat ou perguntas da audiência que pula de assunto em assunto (moto, investimento, IA, comida...) sem fio condutor: isso não é um assunto, é uma sequência de respostas soltas. Pule esse trecho. Exceção: uma pergunta do chat que puxa um raciocínio longo sobre UM assunto e fecha sozinho vira bloco normal, começando na leitura da pergunta.
 - NÃO cortar no meio de exemplo, história, dado ou raciocínio. Fechar o raciocínio é mais importante que qualquer duração — só não estique pra encaixar assunto novo.
 - NÃO sobrepor blocos (as partes 1 e 2 de um assunto são contíguas e não se sobrepõem).
 - Se a live não tem material de qualidade, retorne só os blocos que existem (1 bloco vale).
