@@ -1,6 +1,7 @@
 """Roda o pipeline completo pra um stem: (02) -> 03 -> 04 -> (04b) -> (04c) -> 05 -> 06 -> 07 -> 08.
 
 Uso: uv run py scripts/pipeline.py <stem> [--polir] [--sem-llm] [--sem-legendas] [--desde=N]
+                                          [--refazer]
 
   --polir     inclui o polimento (04b, ~$0.20 de API) e monta com --polido
   --sem-llm   com --polir: 04b só remove silêncios programáticos (custo $0,
@@ -9,6 +10,8 @@ Uso: uv run py scripts/pipeline.py <stem> [--polir] [--sem-llm] [--sem-legendas]
                   e monta com --legendado)
   --desde=N   retoma a partir do step N (aceita 4b e 4c). Ex: --desde=4 pra re-cortar
               depois de recalibrar o zoom, sem re-segmentar.
+  --refazer   o 03 segmenta de novo pela API mesmo com a transcrição igual (pago). Sem ele,
+              rodar de novo reaproveita os blocos já escolhidos ($0) e só reajusta os cortes.
   --bloco=N   refaz SÓ esse bloco, só os steps que dependem dos tempos dele (4, 4b, 4c, 6).
               Usado pelo revisor (11) quando reajusta o ponto de corte. Card, thumb e
               descrição ficam como estão.
@@ -16,7 +19,7 @@ Uso: uv run py scripts/pipeline.py <stem> [--polir] [--sem-llm] [--sem-legendas]
 Sem --desde, detecta sozinho: pula o step 2 se a transcrição já existe.
 Cada step é o script de sempre rodado em sequência (mesma saída no terminal);
 para na primeira falha e mostra o --desde pra retomar de onde parou.
-Custo de API: step 3 (~$0.20) + step 4b se --polir (~$0.20; $0 com --sem-llm). 4c: $0.
+Custo de API: step 3 (~$0.20/h de live, $0 ao reprocessar) + step 4b se --polir (~$0.20; $0 com --sem-llm). 4c: $0.
 
 O download (01_baixar.py) fica de fora de propósito — rode antes, uma vez.
 """
@@ -36,13 +39,15 @@ args = [a for a in sys.argv[1:] if not a.startswith("--")]
 flags = [a for a in sys.argv[1:] if a.startswith("--")]
 
 if not args:
-    sys.exit("Uso: uv run py scripts/pipeline.py <stem> [--polir] [--sem-llm] [--sem-legendas] [--desde=N]")
+    sys.exit("Uso: uv run py scripts/pipeline.py <stem> [--polir] [--sem-llm] [--sem-legendas] "
+             "[--desde=N] [--refazer]")
 
 alvo = args[0]                    # stem ou nome completo da pasta (os steps resolvem)
 stem = stem_de(Path(alvo))        # stem puro, pra achar inputs/<stem>.mp4
 polir = "--polir" in flags
 sem_llm = "--sem-llm" in flags
 legendas = "--sem-legendas" not in flags   # padrão: ligada
+refazer = "--refazer" in flags
 
 desde = None
 so_bloco = None
@@ -81,7 +86,7 @@ if desde <= 2 and not VIDEO.is_file():
 # (numero, script, args) — o 4b/4c/6 mudam conforme --polir/--sem-legendas
 steps = [
     (2.0, "02_transcribe.py", [str(VIDEO)]),
-    (3.0, "03_segmentar.py", [alvo]),
+    (3.0, "03_segmentar.py", [alvo] + (["--refazer"] if refazer else [])),
     (4.0, "04_cortar.py", [alvo]),
     *([(4.5, "04b_polir.py", [alvo] + (["--sem-llm"] if sem_llm else []))] if polir else []),
     *([(4.7, "04c_legendas.py", [alvo] + (["--polido"] if polir else []))] if legendas else []),

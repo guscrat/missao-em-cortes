@@ -4,6 +4,7 @@ O 03 roda no nível do módulo: extraímos do fonte (ast) só constantes e funç
 executamos num namespace isolado, com um Anthropic falso. Sem API.
 """
 import ast
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -16,7 +17,7 @@ FONTE = Path(__file__).parent.parent / "scripts" / "03_segmentar.py"
 NOMES_CONST = {"MODELO", "JANELA_MIN", "FOLGA_JANELA_MIN", "AVANCO_VAZIO_MIN",
                "RABO_JANELA_MIN"}
 NOMES_FUNC = {"linhas_com_tempo", "janelas", "pedir_blocos", "chamar_llm", "extrair_json",
-              "ts_s", "inicio_s"}
+              "ts_s", "inicio_s", "assinatura"}
 
 
 def _ts(s):
@@ -51,7 +52,9 @@ def carregar(tmp_path, monkeypatch, minutos, respostas, palavras=None):
     monkeypatch.setitem(sys.modules, "anthropic", SimpleNamespace(
         Anthropic=lambda: SimpleNamespace(messages=msgs)))
     eventos = []
-    ns = {"json": json, "fr": fr, "_custo": _custo, "PASTA": tmp_path, "stem": "x",
+    monkeypatch.setattr(_custo, "gasto_live", lambda stem: 0.0)
+    ns = {"json": json, "hashlib": hashlib,
+          "BRUTA_PARCIAL": tmp_path / "segmentacao_bruta_parcial.json", "fr": fr, "_custo": _custo, "PASTA": tmp_path, "stem": "x",
           "INPUT": tmp_path / "transcricao.txt", "BRUTA": tmp_path / "segmentacao_bruta.json",
           "PROMPT": tmp_path / "prompt.md",
           "evento": lambda *a, **k: eventos.append((a, k))}
@@ -85,14 +88,16 @@ def test_live_longa_janelas_em_sequencia_a_partir_do_fim_do_ultimo_bloco(tmp_pat
     data = ns["chamar_llm"]()
     assert len(msgs.pedidos) == 3
     conteudos = [p["messages"][0]["content"] for p in msgs.pedidos]
+    transcricoes = [p["system"][0]["text"] for p in msgs.pedidos]   # a transcrição vem antes do prompt
     assert "de 00:00:00 a 01:00:00" in conteudos[0] and "TERMINAM dentro" in conteudos[0]
     assert "de 00:50:00 a 01:50:00" in conteudos[1]
-    assert "ÚLTIMO trecho" in conteudos[2] and "fala do minuto 104." not in conteudos[2]
-    assert "fala do minuto 149." in conteudos[2]
+    assert "ÚLTIMO trecho" in conteudos[2] and "fala do minuto 104." not in transcricoes[2]
+    assert "fala do minuto 149." in transcricoes[2]
     assert [b["id"] for b in data["blocos"]] == [1, 2, 3, 4, 5]
     assert "[trecho 1] a" in data["observacoes"] and "[trecho 3] c" in data["observacoes"]
-    # prompt de sistema em cache (as janelas saem em sequência)
-    assert msgs.pedidos[0]["system"][0]["cache_control"] == {"type": "ephemeral"}
+    # primeira segmentação: sem cache (cada janela é lida uma vez); prompt depois da transcrição
+    assert all("cache_control" not in b for p in msgs.pedidos for b in p["system"])
+    assert msgs.pedidos[0]["system"][1]["text"] == "PROMPT"
 
 
 def test_janela_sem_bloco_anda_45_min(tmp_path, monkeypatch):

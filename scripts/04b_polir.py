@@ -413,6 +413,7 @@ for b in data["blocos"]:
         else:
             print(f"  Chamando Claude (conservador)...")
             try:
+                _custo.checar_orcamento(stem, "04b_polir")
                 intervalos_llm, resp = chamar_claude(palavras, dur, b["id"])
                 usos.append(_custo.uso(resp, MODELO))
             except Exception as e:

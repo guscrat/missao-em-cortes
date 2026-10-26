@@ -263,6 +263,7 @@ def revisar_bloco(client, anthropic, stem, pasta, b, nn, video, titulo, texto_th
     bid = b["id"]
     thumb = escolher_thumb(pasta / "thumbs", nn)
     t0 = time.time()
+    _custo.checar_orcamento(stem, "11_revisor")
     evento(stem, "11_revisor", "inicio", agente="revisor", bloco_id=bid)
     try:
         conteudo = montar_conteudo(titulo, texto_thumb, transcricao,
@@ -286,6 +287,7 @@ def editar(client, anthropic, stem, pasta, b, titulo, texto_thumb, problema, tra
            tentativas) -> tuple[dict | None, float]:
     """Uma reescrita do editor, já gravada (txt, json, thumb, Short). (novo ou None, custo)."""
     bid, nn = b["id"], f"{b['id']:02d}"
+    _custo.checar_orcamento(stem, "11_editor")
     evento(stem, "11_editor", "inicio", agente="editor", bloco_id=bid)
     pedido = _editor.montar_pedido(titulo, texto_thumb, problema, transcricao, tentativas)
     try:

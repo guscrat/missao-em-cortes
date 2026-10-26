@@ -8,6 +8,7 @@ import sqlite3
 
 import pytest
 
+import _custo
 import _eventos
 import _paths
 import sincronizar_estado
@@ -17,6 +18,13 @@ import sincronizar_estado
 def _sem_modo_evento_real(tmp_path, monkeypatch):
     """O modo evento do config/canais.json real nunca vaza pros testes."""
     monkeypatch.setattr(_paths, "CANAIS_JSON", tmp_path / "config" / "canais.json")
+
+
+@pytest.fixture(autouse=True)
+def _orcamento_isolado(tmp_path, monkeypatch):
+    """A trava de custo por live nunca lê o config/painel.json nem o state/ reais."""
+    monkeypatch.setattr(_custo, "CONFIG_PAINEL", tmp_path / "config" / "painel.json")
+    monkeypatch.setattr(_custo, "LIBERADAS", tmp_path / "state" / "orcamento_lives.json")
 
 
 @pytest.fixture

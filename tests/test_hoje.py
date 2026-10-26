@@ -265,11 +265,13 @@ def test_placar(tmp_path):
 
 def test_config_painel(tmp_path, monkeypatch):
     monkeypatch.setattr(hoje, "CONFIG_PAINEL", tmp_path / "nada.json")
-    assert hoje.config_painel() == {"orcamento_mensal_usd": 10.0, "cota_alerta_pct": 80}
+    assert hoje.config_painel() == {"orcamento_mensal_usd": 10.0, "cota_alerta_pct": 80,
+                                    "alerta_live_usd": 1.0, "trava_live_usd": 2.0}
     p = tmp_path / "painel.json"
     p.write_text(json.dumps({"orcamento_mensal_usd": 25, "lixo": 1}))
     monkeypatch.setattr(hoje, "CONFIG_PAINEL", p)
-    assert hoje.config_painel() == {"orcamento_mensal_usd": 25, "cota_alerta_pct": 80}
+    assert hoje.config_painel() == {"orcamento_mensal_usd": 25, "cota_alerta_pct": 80,
+                                    "alerta_live_usd": 1.0, "trava_live_usd": 2.0}
     p.write_text("{quebrado")
     assert hoje.config_painel()["orcamento_mensal_usd"] == 10.0
 

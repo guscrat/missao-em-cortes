@@ -11,6 +11,8 @@ Alertas (faixa acima das abas, aparece em qualquer aba):
   - token do YouTube/Analytics ausente, sem refresh_token ou recusado (invalid_grant)
   - cota diária do YouTube perto do limite (state/cota_youtube.json, gravado pelo 09)
   - estoque abaixo de dias_minimos e nada agendado pra amanhã
+  - custo de API de uma live acima de alerta_live_usd (US$ 1); acima de trava_live_usd (US$ 2)
+    os scripts pagos param (scripts/_custo.py) até o Gu liberar
 
 Placar do canal: o Analista grava state/placar.json; até lá a seção fica com o espaço vazio.
   {"atualizado": "2026-11-01T10:00:00-03:00", "inscritos": 312,
@@ -45,6 +47,7 @@ HORA_CURADOR = time(17, 0)
 FOLGA_CURADOR = timedelta(hours=1)            # 18h sem rodada de hoje = não rodou
 JANELA_FALHA = timedelta(hours=48)
 JANELA_TOKEN = timedelta(days=7)
+JANELA_CUSTO_LIVE = timedelta(days=7)        # live sem gasto há mais que isso sai do alerta
 TOKENS = [("YouTube (publicar)", "youtube_token.json"), ("YouTube Analytics", "analytics_token.json")]
 RE_TOKEN = re.compile(r"invalid_grant|RefreshError|token.*(expir|venc|revog|inv[aá]lid)|"
                       r"unauthorized", re.I)
@@ -52,7 +55,8 @@ YPP = {"inscritos": 1000, "horas_12m": 4000, "views_shorts_90d": 10_000_000}
 DIAS_SEMANA = ["seg", "ter", "qua", "qui", "sex", "sáb", "dom"]
 MODULOS_SCRIPTS = ["_cobertura", "_publicacao", "13_curador"]
 _MTIMES: dict[str, float] = {}
-PADRAO = {"orcamento_mensal_usd": 10.0, "cota_alerta_pct": 80}
+PADRAO = {"orcamento_mensal_usd": 10.0, "cota_alerta_pct": 80,
+          "alerta_live_usd": 1.0, "trava_live_usd": 2.0}
 
 
 def ler_json(path: Path) -> dict:
@@ -304,6 +308,29 @@ def alertas_operacao(est: dict | None, amanha: pd.DataFrame) -> list[tuple[str, 
     if amanha.empty:
         saida.append(("aviso", "Nada agendado pra amanhã",
                       "nenhum vídeo com data de amanhã no YouTube."))
+    return saida
+
+
+def alertas_custo_live(custos: pd.DataFrame, agora: pd.Timestamp, alerta: float, trava: float,
+                       liberadas_path: Path | None = None) -> list[tuple[str, str, str]]:
+    """custos: colunas stem, custo_usd (soma da live), ultimo (ts do último gasto).
+    >= trava (e acima do que o Gu liberou) = erro: os scripts pagos dessa live estão parados."""
+    if custos.empty:
+        return []
+    liberadas = ler_json(liberadas_path or STATE / "orcamento_lives.json")
+    recentes = custos[pd.to_datetime(custos["ultimo"]) >= agora - JANELA_CUSTO_LIVE]
+    saida = []
+    for c in recentes.sort_values("custo_usd", ascending=False).itertuples():
+        teto = max(trava, float(liberadas.get(c.stem) or 0))
+        if c.custo_usd >= teto:
+            saida.append(("erro", f"Live travada por custo: {c.stem}",
+                          f"já gastou US$ {c.custo_usd:.2f} de API (teto US$ {teto:.2f}); as "
+                          f"etapas pagas param até você liberar: uv run py scripts/_custo.py "
+                          f"liberar {c.stem}"))
+        elif c.custo_usd >= alerta:
+            extra = f" (liberada até US$ {teto:.2f})" if teto > trava else f"; trava em US$ {teto:.2f}"
+            saida.append(("aviso", f"Live cara: {c.stem}",
+                          f"US$ {c.custo_usd:.2f} de API{extra}."))
     return saida
 
 
