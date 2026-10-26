@@ -89,6 +89,8 @@ def janela(palavras: list[dict], ini: float, fim: float,
     if i > 0 and palavras[i - 1]["end"] <= ini + 0.01:
         a = max(a, palavras[i - 1]["end"] + FOLGA_S)
     j = bisect.bisect_left(starts, fim - 0.01)       # primeira que começa depois do fim
+    while j < len(palavras) and palavras[j]["end"] <= fim + 0.01:
+        j += 1   # palavra de duração zero (o whisper às vezes dá start == end) acabando no fim: é do trecho
     if 0 < j < len(palavras) and palavras[j - 1]["end"] > fim:
         j_fim = palavras[j - 1]["end"]               # o fim caiu no meio da palavra: inclui
         b = max(min(b, palavras[j]["start"] - FOLGA_S), j_fim + 0.1)

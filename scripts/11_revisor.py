@@ -459,6 +459,10 @@ def conferir_fronteira(stem: str, pasta: Path, b: dict, todas: list[dict],
                           f"{_fronteira.JANELA_BLOCO_S:.0f}s — ajuste os tempos à mão no blocos.json")
     novo_ini = e["inicio"] if not chk["inicio_ok"] else ini
     novo_fim = e["fim"] if not chk["fim_ok"] else fim
+    if abs(novo_ini - ini) < 0.01 and abs(novo_fim - fim) < 0.01:
+        # o ponto natural é o próprio tempo e a checagem reprova: refazer daria o mesmo vídeo
+        return registro, (f"corte {pontas} no meio de frase, mas o ponto natural mais perto é "
+                          f"o tempo atual — revisar à mão")
     blocos_path = pasta / "blocos.json"
     data = json.loads(blocos_path.read_text(encoding="utf-8"))
     for x in data["blocos"]:

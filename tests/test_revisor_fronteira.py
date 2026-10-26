@@ -76,6 +76,20 @@ def test_fronteira_sem_ponto_natural_vai_pra_quarentena_sem_mexer(cenario):
     assert refeitos == [] and _ts(pasta)[:2] == ("00:00:10", "00:00:20")
 
 
+def test_fronteira_reajuste_sem_mudanca_vai_pra_quarentena_sem_refazer(cenario, monkeypatch):
+    # a checagem reprova, mas o ponto natural mais perto é o próprio tempo: refazer daria o
+    # mesmo vídeo (live do Renan, bloco 07, antes do fix da palavra de duração zero)
+    pasta, b, refeitos, _ = cenario
+    monkeypatch.setattr(rv._fronteira, "checar", lambda *a, **k: {
+        "inicio_ok": True, "fim_ok": False, "primeiras": "c1", "ultimas": "c3",
+        "pausa_depois_s": 0.7})
+    monkeypatch.setattr(rv._fronteira, "encaixar", lambda p, ini, fim, *a: {
+        "inicio": ini, "fim": fim, "inicio_ok": True, "fim_ok": True})
+    _, motivo = rv.conferir_fronteira("v", pasta, b, NATURAL)
+    assert motivo and "tempo atual" in motivo
+    assert refeitos == [] and _ts(pasta)[:2] == ("00:00:10", "00:00:20")
+
+
 def test_fronteira_refazer_falhou_vira_quarentena(cenario, monkeypatch):
     pasta, b, _, _ = cenario
     monkeypatch.setattr(rv, "refazer_bloco", lambda p, bid: False)
