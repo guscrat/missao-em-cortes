@@ -663,7 +663,7 @@ def main(argv: list[str]) -> int:
         removidos_s = [(hhmmss_para_segundos(r["inicio"]), hhmmss_para_segundos(r["fim"]))
                        for r in b.get("remover") or []]   # cortado pelo 04b: não está no vídeo
         transcricao = " ".join(w["word"] for w in palavras_na_janela(todas, ini, fim)
-                               if not any(a <= w["start"] < z for a, z in removidos_s))
+                               if not any(a <= ini + w["start"] < z for a, z in removidos_s))
         momentos = momentos_da_descricao(descricoes.get(bid, {}).get("descricao", ""))
         tentativas, custo_bloco = [], 0.0
         while True:
