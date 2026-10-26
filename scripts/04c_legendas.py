@@ -30,16 +30,14 @@ import sys
 sys.stdout.reconfigure(encoding='utf-8')
 from pathlib import Path
 
+import _fronteira as fr
 from _eventos import ler_bloco
 from _ffmpeg import AENC, VENC
 from _legenda import (agrupar_linhas as _agrupar, cabecalho_ass, estilo, eventos_karaoke,
                       filtro_ass, hhmmss_para_segundos, palavras_na_janela, remapear_polido)
 from _paths import achar_pasta, stem_de
 
-# Devem casar com os paddings do 04_cortar.py (timestamp global -> relativo ao corte)
-PADDING_INICIO_S = 1.0
-PADDING_FIM_S = 2.0
-COLD_PADDING_S = 0.5    # idem pro cold open
+# A janela (timestamp global -> relativo ao corte) é a do 04_cortar.py: _fronteira.janela()
 
 MAX_PALAVRAS = 4        # por linha: curto pra ler de relance
 MAX_CHARS = 26          # Anton 72px em 1280 de largura cabe folgado
@@ -56,16 +54,17 @@ NAO_MEXER = {"agendado", "publicado", "arquivado"}
 
 def palavras_do_bloco(todas: list[dict], bloco: dict) -> list[dict]:
     """Palavras do bloco com tempos relativos ao início do corte_NN.mp4."""
-    inicio_s = max(0, hhmmss_para_segundos(bloco["timestamp_inicio"]) - PADDING_INICIO_S)
-    fim_s = hhmmss_para_segundos(bloco["timestamp_fim"]) + PADDING_FIM_S
+    inicio_s, fim_s = fr.janela(todas, hhmmss_para_segundos(bloco["timestamp_inicio"]),
+                                hhmmss_para_segundos(bloco["timestamp_fim"]))
     return palavras_na_janela(todas, inicio_s, fim_s)
 
 
 def palavras_do_cold(todas: list[dict], bloco: dict) -> list[dict]:
     """Palavras do cold open com tempos relativos ao início do cold_NN.mp4."""
     co = bloco["cold_open"]
-    inicio_s = max(0, hhmmss_para_segundos(co["timestamp_inicio"]) - COLD_PADDING_S)
-    fim_s = hhmmss_para_segundos(co["timestamp_fim"]) + COLD_PADDING_S
+    inicio_s, fim_s = fr.janela(todas, hhmmss_para_segundos(co["timestamp_inicio"]),
+                                hhmmss_para_segundos(co["timestamp_fim"]),
+                                fr.COLD_PADDING_S, fr.COLD_PADDING_S)
     return palavras_na_janela(todas, inicio_s, fim_s)
 
 

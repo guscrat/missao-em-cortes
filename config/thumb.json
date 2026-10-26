@@ -1,4 +1,5 @@
 {
-  "_comment": "Thumb colagem (scripts/07b_colagem.py). colagem: 'desligado' | 'teste' | 'padrao'. teste = o Curador gera a colagem em thumbs/colagem/ de cada vídeo novo e cita no resumo, sem mexer nas thumbs que sobem. padrao = o Curador roda a colagem com --aplicar ANTES do revisor: vira thumb_NN_a/b/c (template atual como fallback por bloco) e o crédito da foto do banco entra na descrição.",
-  "colagem": "teste"
+  "_comment": "Thumbs. modo: 'classica' | 'ab'. classica = 07_thumb gera a/b/c com os 3 melhores frames e o mesmo texto_thumb. ab = a/b/c sao 3 versoes da classica com frames E textos diferentes (a = texto_thumb, b/c = 2 alternativas do editor, ~US$ 0.01/bloco), pra subir as 3 no 'Testar e comparar' do Studio (resultado: 16_thumb_ab.py). colagem (07b_colagem.py): 'pausada' desde 26/10/2026 (seta apontou pra pessoa errada); a v2 so usa imagens do proprio video e so poe seta/circulo com certeza de quem e (ver skill thumb-colagem). Valores antigos: 'desligado' | 'teste' | 'ab' | 'padrao'.",
+  "modo": "ab",
+  "colagem": "pausada"
 }

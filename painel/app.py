@@ -73,6 +73,22 @@ def carregar_custo_mes(inicio: str) -> pd.DataFrame:
         con.close()
 
 
+@st.cache_data(ttl=30)
+def carregar_custo_lives() -> pd.DataFrame:
+    """Custo de API acumulado por live (alerta de US$ 1 / trava de US$ 2)."""
+    vazio = pd.DataFrame(columns=["stem", "custo_usd", "ultimo"])
+    if not DB_PATH.exists():
+        return vazio
+    con = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
+    try:
+        return pd.read_sql("SELECT stem, SUM(custo_usd) AS custo_usd, MAX(ts) AS ultimo FROM eventos "
+                           "WHERE stem IS NOT NULL AND custo_usd > 0 GROUP BY stem", con)
+    except pd.errors.DatabaseError:
+        return vazio
+    finally:
+        con.close()
+
+
 @st.cache_data(ttl=60)
 def carregar_estoque() -> dict | None:
     return hoje.estoque()   # lê outputs/ inteiro: não precisa rodar a cada 10s
@@ -248,6 +264,8 @@ def corpo() -> None:
     hoje.faixa_alertas(hoje.curador_rodando(eventos, agora)
                        + hoje.alertas_curador(eventos, agora) + hoje.alertas_token(eventos, agora)
                        + hoje.alerta_cota(pct_alerta=cfg["cota_alerta_pct"])
+                       + hoje.alertas_custo_live(carregar_custo_lives(), agora,
+                                                 cfg["alerta_live_usd"], cfg["trava_live_usd"])
                        + hoje.alertas_operacao(est, hoje.no_ar(blocos, (agora + pd.Timedelta(days=1)).date())))
     faixa_decisoes(tarefas)
     if videos.empty and tarefas.empty:

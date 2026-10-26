@@ -391,15 +391,22 @@ def test_07b_main_bloco_ok_devolve_0(tmp_path, monkeypatch):
 # --- 11_revisor ----------------------------------------------------------------------------------
 
 def test_11_texto_da_thumb(tmp_path, monkeypatch):
-    monkeypatch.setattr(rv._colagem, "colagem_aplicada", lambda t, b: None)
-    assert rv.texto_da_thumb(tmp_path, 1, "TXT") == "TXT"
-    reg = {"variantes": {"a": {"texto": ["QUEM *MANDA*", "[LULA]?"]},
-                         "b": {"texto": ["OUTRO", "TEXTO"]},
-                         "c": {"texto": ["QUEM *MANDA*", "[LULA]?"]}}}
-    monkeypatch.setattr(rv._colagem, "colagem_aplicada", lambda t, b: reg)
+    th = tmp_path / "thumbs"
+    th.mkdir()
+    assert rv.texto_da_thumb(tmp_path, 1, "TXT") == "TXT"            # sem thumbs
+    for l in "abc":
+        (th / f"thumb_01_{l}.png").write_bytes(l.encode())
+    monkeypatch.setattr(rv._colagem, "variante_aplicada", lambda t: None)
+    assert rv.texto_da_thumb(tmp_path, 1, "TXT") == "TXT"            # tudo template: dedup
+    regs = {"thumb_01_a.png": {"texto": ["QUEM *MANDA*", "[LULA]?"]},
+            "thumb_01_b.png": {"texto": ["OUTRO", "TEXTO"]},
+            "thumb_01_c.png": {"texto": ["QUEM *MANDA*", "[LULA]?"]}}
+    monkeypatch.setattr(rv._colagem, "variante_aplicada", lambda t: regs.get(t.name))
     assert rv.texto_da_thumb(tmp_path, 1, "TXT") == "QUEM MANDA LULA? | OUTRO TEXTO"
-    monkeypatch.setattr(rv._colagem, "colagem_aplicada", lambda t, b: {"variantes": {}})
-    assert rv.texto_da_thumb(tmp_path, 1, "TXT") == "TXT"
+    # modo ab: a = template, b/c = colagem
+    monkeypatch.setattr(rv._colagem, "variante_aplicada",
+                        lambda t: None if t.name.endswith("_a.png") else regs.get(t.name))
+    assert rv.texto_da_thumb(tmp_path, 1, "TXT") == "TXT | OUTRO TEXTO | QUEM MANDA LULA?"
 
 
 def test_voltar_template_tira_credito(tmp_path, runs):

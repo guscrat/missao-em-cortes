@@ -15,6 +15,8 @@ from pathlib import Path
 ROOT = Path(__file__).parent.parent
 OUTPUTS = ROOT / "outputs"
 UPLOAD_JSON = ROOT / "config" / "upload.json"
+CANAIS_JSON = ROOT / "config" / "canais.json"
+THUMB_JSON = ROOT / "config" / "thumb.json"
 _DATE_PREFIX = re.compile(r"^\d{4}-\d{2}-\d{2}_")
 
 
@@ -26,6 +28,36 @@ def auditoria_aprovada() -> bool:
         return json.loads(UPLOAD_JSON.read_text(encoding="utf-8")).get("auditoria_aprovada") is True
     except (OSError, ValueError, AttributeError):
         return False
+
+
+def modo_thumb() -> str:
+    """config/thumb.json → "modo": 'ab' (a/b/c = 3 versões da clássica com frames e textos
+    diferentes, pro "Testar e comparar") ou 'classica' (a/b/c = 3 frames, mesmo texto).
+    Arquivo ausente/ilegível ou outro valor = 'classica'."""
+    try:
+        modo = json.loads(THUMB_JSON.read_text(encoding="utf-8")).get("modo")
+    except (OSError, ValueError, AttributeError):
+        return "classica"
+    return "ab" if modo == "ab" else "classica"
+
+
+def modo_evento(hoje: date | None = None, cfg: dict | None = None) -> dict | None:
+    """Modo evento do config/canais.json (ex.: 2º turno): {"desde", "ate", "tema"} enquanto
+    "modo_evento" for true e hoje estiver entre modo_evento_desde e modo_evento_ate
+    (inclusive). Depois do "ate" desliga sozinho, mesmo com a flag ainda true. Sem config,
+    flag false ou data ilegível = None (desligado). cfg = canais.json já lido (o Curador)."""
+    hoje = hoje or date.today()
+    try:
+        cfg = cfg if cfg is not None else json.loads(CANAIS_JSON.read_text(encoding="utf-8"))
+        if cfg.get("modo_evento") is not True:
+            return None
+        ate = date.fromisoformat(cfg["modo_evento_ate"])
+        desde = date.fromisoformat(cfg.get("modo_evento_desde") or hoje.isoformat())
+    except (OSError, ValueError, AttributeError, KeyError, TypeError):
+        return None
+    if not desde <= hoje <= ate:
+        return None
+    return {"desde": desde, "ate": ate, "tema": cfg.get("modo_evento_tema") or "evento"}
 
 
 def stem_de(pasta: Path) -> str:

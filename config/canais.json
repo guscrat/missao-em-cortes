@@ -1,9 +1,13 @@
 {
-  "_comment": "Canais que o agente Curador (scripts/13_curador.py) verifica 1x/dia. zoom = crop anti-overlay padrão do canal, copiado pro config/zoom.json do stem novo (null = sem zoom calibrado: processa e avisa no resumo). dias = idade máxima do vídeo novo; duracao_min/max em minutos; por_canal = itens recentes lidos por aba. estoque: só processa (1 vídeo, ~US$ 0,65) quando o canal está coberto por menos de dias_minimos = dias até o último longo agendado + longos aprovados / longos_por_dia (shorts_por_dia não entra na conta).",
+  "_comment": "Canais que o agente Curador (scripts/13_curador.py) verifica 1x/dia. zoom = crop anti-overlay padrão do canal, copiado pro config/zoom.json do stem novo (null = sem zoom calibrado: processa e avisa no resumo). dias = idade máxima do vídeo novo; duracao_min/max em minutos; por_canal = itens recentes lidos por aba. estoque: só processa (1 vídeo, ~US$ 0,65) quando o canal está coberto por menos de dias_minimos = dias até o último longo agendado + longos aprovados / longos_por_dia (shorts_por_dia não entra na conta). modo_evento (true/false): de modo_evento_desde até modo_evento_ate (inclusive; depois desliga sozinho) o Curador processa 1 vídeo por rodada mesmo com o canal coberto, só vídeos a partir de modo_evento_desde, priorizando modo_evento_tema; e o publicacao.txt sugere datas NA FRENTE dos agendados.",
   "dias": 3,
   "duracao_min": 20,
   "duracao_max": 240,
   "por_canal": 8,
+  "modo_evento": false,
+  "modo_evento_desde": "2026-10-25",
+  "modo_evento_ate": "2026-10-27",
+  "modo_evento_tema": "lives de reação ao resultado do 2º turno da eleição presidencial (25/10/2026)",
   "estoque": {
     "dias_minimos": 2,
     "longos_por_dia": 1,

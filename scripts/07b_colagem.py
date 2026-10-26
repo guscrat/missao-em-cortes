@@ -11,14 +11,23 @@ Layout e fontes de imagem: ver _colagem.py. Por bloco:
   6. rembg recorta o apresentador; a = círculo, b = seta, c = outra expressão/texto
 Sem rosto bom, sem recorte ou sem 2 cenas → o bloco fica com a thumb do template atual (07).
 
+PAUSADA desde 26/10/2026 (config/thumb.json → "colagem": "pausada"): a seta apontou pro Kim
+numa thumb sobre o Marçal. Enquanto pausada, sai com 3 sem fazer nada (--forcar libera, pra
+desenvolver a v2). A v2: só imagens do próprio vídeo (sem o banco de personagens) e
+seta/círculo só com certeza de quem é (o apresentador, ou cena com o nome escrito na tela);
+na dúvida, sem seta. Ver skill thumb-colagem.
+
 Modo (config/thumb.json → "colagem"):
-  - "teste" (padrão agora): grava em thumbs/colagem/ e NÃO mexe nas thumbs que sobem
+  - "teste": grava em thumbs/colagem/ e NÃO mexe nas thumbs que sobem
+  - "ab" (até 26/10/2026): com --ab, só as variantes b/c viram thumb_NN_b/c (a fica no template do 07),
+    pro "Testar e comparar" do Studio medir template x colagem (resultado: 16_thumb_ab.py);
+    o crédito da foto do banco entra na descrição
   - "padrao": com --aplicar, copia pra thumbs/thumb_NN_a/b/c.png e põe o crédito da foto do
     banco na descrição do bloco (descricoes.txt)
 Nunca mexe em bloco agendado/publicado/arquivado (nem em teste), a não ser com --saida=<pasta>
 (prévia fora do outputs/).
 
-Uso: uv run py scripts/07b_colagem.py <stem> [--bloco=N] [--sem-llm] [--sem-editor] [--aplicar] [--saida=DIR]
+Uso: uv run py scripts/07b_colagem.py <stem> [--bloco=N] [--sem-llm] [--sem-editor] [--aplicar | --ab] [--saida=DIR] [--forcar]
   --sem-editor: texto = texto_thumb do bloco (o 11 usa pra refazer a colagem depois de reescrever)
   Com --bloco=N, sai com 2 se a colagem do bloco não saiu (ou não foi aplicada).
 Custo: ~US$ 0.03 por bloco (~US$ 0.15 por live, medido em 22/10/2026). Logado com agente="editor".
@@ -46,6 +55,7 @@ CANAIS = ROOT / "config" / "canais.json"
 NAO_MEXER = {"agendado", "publicado", "arquivado"}
 LETRAS = ("a", "b", "c")
 MARCADORES = {"a": "circulo", "b": "seta", "c": "circulo"}
+LETRAS_AB = ("b", "c")              # modo ab: a fica no template (07)
 
 
 def apresentador(stem: str) -> str:
@@ -214,14 +224,25 @@ def processar_bloco(client, pasta, stem, b, titulo, transcricao, saida_dir, sem_
     return reg
 
 
-def aplicar(pasta: Path, saida_dir: Path, bid: int, reg: dict) -> None:
-    """Modo padrão: a colagem vira a thumb do bloco e o crédito da foto entra na descrição."""
+def aplicar(pasta: Path, saida_dir: Path, bid: int, reg: dict, letras=LETRAS) -> None:
+    """Modo padrão (a/b/c) ou ab (só b/c): a colagem vira a thumb do bloco e o crédito da foto
+    entra na descrição."""
     for letra, v in reg["variantes"].items():
+        if letra not in letras:
+            continue
         shutil.copyfile(saida_dir / v["arquivo"], pasta / "thumbs" / f"thumb_{bid:02d}_{letra}.png")
     desc = pasta / "descricoes.txt"
     if desc.exists():               # troca (não só acrescenta): colagem refeita com outra foto
         texto = desc.read_text(encoding="utf-8")
         desc.write_text(trocar_creditos(texto, bid, reg.get("creditos", [])), encoding="utf-8")
+
+
+def pausada() -> bool:
+    import _paths
+    try:
+        return json.loads(_paths.THUMB_JSON.read_text(encoding="utf-8")).get("colagem") == "pausada"
+    except (OSError, ValueError, AttributeError):
+        return False
 
 
 def main(argv: list[str]) -> int:
@@ -230,15 +251,23 @@ def main(argv: list[str]) -> int:
     if not pos:
         print(__doc__)
         return 1
-    sem_llm, aplicar_padrao = bool(flags.get("sem-llm")), bool(flags.get("aplicar"))
+    if pausada() and not flags.get("forcar"):
+        print("[!] thumb colagem pausada (config/thumb.json → colagem: \"pausada\"): nada feito. "
+              "A thumb que sobe é a clássica (07). --forcar roda mesmo assim (dev da v2).")
+        return 3
+    sem_llm, modo_ab = bool(flags.get("sem-llm")), bool(flags.get("ab"))
+    aplicar_padrao = bool(flags.get("aplicar")) or modo_ab
+    letras = LETRAS_AB if modo_ab else LETRAS
     sem_editor = bool(flags.get("sem-editor"))
     so_bloco = int(flags["bloco"]) if "bloco" in flags else None
     pasta = achar_pasta(pos[0])
     stem = stem_de(pasta)
     previa = "saida" in flags
     saida_dir = Path(flags["saida"]) if previa else pasta / "thumbs" / "colagem"
+    if flags.get("aplicar") and modo_ab:
+        sys.exit("[!] --aplicar (a/b/c) e --ab (só b/c) não combinam")
     if aplicar_padrao and previa:
-        sys.exit("[!] --aplicar e --saida não combinam (prévia não mexe nas thumbs do bloco)")
+        sys.exit("[!] --aplicar/--ab e --saida não combinam (prévia não mexe nas thumbs do bloco)")
     saida_dir.mkdir(parents=True, exist_ok=True)
 
     blocos = json.loads((pasta / "blocos.json").read_text(encoding="utf-8"))["blocos"]
@@ -261,7 +290,7 @@ def main(argv: list[str]) -> int:
     except (OSError, ValueError):
         registro = {}
     total, ok, aplicados = 0.0, 0, 0
-    print(f"Thumb colagem de '{stem}' → {saida_dir}" + (" (aplicando como padrão)" if aplicar_padrao else ""))
+    print(f"Thumb colagem de '{stem}' → {saida_dir}" + (" (aplicando em b/c: teste A/B)" if modo_ab else " (aplicando como padrão)" if aplicar_padrao else ""))
     for b in blocos:
         bid = b["id"]
         if so_bloco is not None and bid != so_bloco:
@@ -272,6 +301,8 @@ def main(argv: list[str]) -> int:
             continue
         print(f"[Bloco {bid}] {b.get('tema', '')}")
         t0 = time.time()
+        if not sem_llm:
+            _custo.checar_orcamento(stem, "07b_colagem")
         evento(stem, "07b_colagem", "inicio", agente="editor", bloco_id=bid)
         titulo = descricoes.get(bid, {}).get("titulo") or b.get("titulo_sugerido", "")
         transcricao = " ".join(w["word"] for w in palavras_na_janela(
@@ -287,7 +318,7 @@ def main(argv: list[str]) -> int:
             ok += 1
             if aplicar_padrao:
                 try:
-                    aplicar(pasta, saida_dir, bid, reg)
+                    aplicar(pasta, saida_dir, bid, reg, letras)
                     aplicados += 1
                 except OSError as e:
                     print(f"  [aviso] não aplicou a colagem ({e}): fica a thumb atual")

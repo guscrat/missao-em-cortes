@@ -28,9 +28,18 @@ dias = (último longo agendado no canal − hoje) + longos prontos ÷ `longos_po
 
 Só se a cobertura estiver **abaixo do mínimo** (ou com `--forcar`). Processa **1 vídeo**, o de maior prioridade da fila (empate: o mais recente):
 
-`01_baixar` → `pipeline.py --polir` → `11_revisor` → `10_shorts` (só dos aprovados, $0) → `publicacao.txt` → `07b_colagem` (modo `teste`, ~US$ 0,15, em `thumbs/colagem/`; no modo `padrao` roda com `--aplicar` **antes** do revisor).
+`01_baixar` → `pipeline.py --polir` (o 07 dentro dele faz as 3 clássicas do "Testar e comparar" no modo `ab`, ~US$ 0,01/bloco) → `11_revisor` → `10_shorts` (só dos aprovados, $0) → `publicacao.txt`. A colagem (07b) está **pausada** desde 26/10/2026 (`config/thumb.json` → `"colagem": "pausada"`): o Curador não chama.
 
-Custa ~US$ 0,65 por vídeo (+0,15 da colagem). O resto continua na fila; item com mais de 15 dias vira `expirado`.
+Custa ~US$ 0,65 por vídeo. O resto continua na fila; item com mais de 15 dias vira `expirado`.
+
+## Modo evento (ex.: 2º turno)
+
+`config/canais.json` → `modo_evento: true` + `modo_evento_desde` / `modo_evento_ate` (inclusive) + `modo_evento_tema`. Lido por `_paths.modo_evento()`; depois do `ate` **desliga sozinho** (a flag pode continuar `true` no arquivo). Enquanto ligado:
+
+- O Claude recebe o tema no pedido: prioridade 9-10 pro tema (ex.: reação ao resultado), previsão de antes do resultado com prioridade baixa.
+- Toda rodada processa **1 vídeo da fila com data ≥ `desde` e prioridade ≥ 6** (`PRIORIDADE_EVENTO`), mesmo com o canal coberto. Sem vídeo do evento na fila, vale a regra normal do estoque (fila antiga só com cobertura abaixo do mínimo).
+- O `publicacao.txt` ignora o último agendado: datas a partir de hoje (antes das 16h) ou amanhã, **na frente** dos agendados, com aviso pra empurrar no Studio o longo do mesmo dia. Não mexe em bloco agendado nenhum.
+- O resumo do Curador mostra "Modo evento até DD/MM".
 
 ## Detalhes
 
@@ -55,5 +64,7 @@ Register-ScheduledTask -TaskName "MissaoEmCortes-Curador" -Action $a -Trigger $t
 Tarefa já registrada com o `cmd.exe` antigo (janela preta): `Set-ScheduledTask -TaskName "MissaoEmCortes-Curador" -Action $a`.
 
 **Progresso no painel:** o 13 grava `state/curador_progresso.json` (`rodando`, `pid`, `desde`, `etapa`, `stem`, `atualizado`) a cada etapa, e a faixa do painel mostra "Curador rodando desde 17:00 — etapa X" (na etapa `pipeline`, junta o step do pipeline daquele vídeo). Falhas viram alerta: rodada que quebrou (evento `curador_rodada` `falha`, gravado pelo 13 ou pelo `curador_oculto` quando o processo morre ou nem começa) e progresso "rodando" com o processo sumido (PC desligou no meio). Trava ocupada sai com código 75 e não conta como falha.
+
+**Nunca dois processamentos ao mesmo tempo:** além do `state/curador.lock` (Curador x Curador), antes de baixar o vídeo escolhido o 13 procura na lista de processos qualquer script pesado rodando (`PESADOS_RE`: 01-08, `10_shorts`, `11_revisor`, `pipeline.py`; vale pipeline manual ou de outra sessão). Achou: espera até `ESPERA_OCUPADO_MIN` (30 min, checando a cada 60s, etapa "esperando outro processamento terminar" no painel). Continuou ocupado: pula o processamento (a avaliação dos novos já rodou), o vídeo fica na fila sem gastar tentativa, evento `curador_pulado` `aviso` → alerta "Curador pulou o processamento" no painel (some quando sai um `curador_pipeline` depois) e aviso no resumo. Se não der pra listar os processos, segue sem checar (só avisa no log). Pra adiar uma rodada avulsa já agendada: `Disable-ScheduledTask -TaskName "<nome>"`.
 
 Conferir: `Get-ScheduledTask -TaskName "MissaoEmCortes-Curador" | Get-ScheduledTaskInfo`. Rodar agora: `Start-ScheduledTask -TaskName "MissaoEmCortes-Curador"`. Remover: `Unregister-ScheduledTask -TaskName "MissaoEmCortes-Curador" -Confirm:$false`.

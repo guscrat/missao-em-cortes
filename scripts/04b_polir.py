@@ -35,6 +35,7 @@ from _ffmpeg import VENC, AENC
 from _paths import achar_pasta, stem_de
 from _eventos import evento
 import _custo
+import _fronteira as fr
 
 load_dotenv()
 
@@ -63,17 +64,19 @@ OUT_JSON = PASTA / "polimento.json"
 WORDS_JSON = PASTA / "words.json"  # do 02_transcribe: evita re-transcrever
 DEBUG_DIR = ROOT / "outputs" / "_debug"
 
-# Devem casar com os paddings do 04_cortar.py (pra mapear timestamp global -> relativo ao corte)
-PADDING_INICIO_S = 1.0
-PADDING_FIM_S    = 2.0
+# A janela do corte (timestamp global -> relativo ao corte) vem do _fronteira.janela(),
+# a mesma do 04_cortar.py
 
 MODELO = "claude-sonnet-5-5"
 EFFORT = "low"   # tarefa simples; o Sonnet 5.5 pensa por padrão (adaptive)
 
 PROMPT_SISTEMA = """Você é um editor de vídeo do canal Missão em Cortes.
 
-Recebe a transcrição word-level (cada linha: [start-end] palavra) de um corte.
+Recebe a transcrição word-level (cada linha: [start-end] palavra) de um corte de 8 a 30
+minutos, que já começa e termina em ponto natural (fim de frase/raciocínio).
 Sua tarefa: identificar TRECHOS pra REMOVER que melhorem o fluxo SEM perder contexto.
+A regra do canal é coerência acima da duração: o objetivo NÃO é encurtar o corte, é tirar
+o que atrapalha. Na dúvida, não corte.
 
 CRITÉRIOS (SEJA CONSERVADOR — prefira deixar passar a cortar demais):
 1. Problemas técnicos óbvios ditos pelo speaker ("ah, espera, deixa eu arrumar a câmera", "sumiu o som", "a internet caiu")
@@ -88,7 +91,10 @@ NUNCA REMOVA:
 - Fillers naturais isolados ("né", "tá", "então") — humanizam
 - Estrutura argumentativa, mesmo que com repetições estilísticas
 - Os primeiros 30s do corte (podem ser cold open, importantes pro gancho)
+- Os últimos 20s do corte (a conclusão e a frase de impacto que fecham o vídeo)
 - Frases incompletas que continuam logo em seguida
+- Qualquer trecho que deixe uma frase pela metade: o intervalo começa DEPOIS da última
+  palavra de uma frase e termina ANTES da primeira palavra da próxima
 
 FORMATO DE RESPOSTA — JSON PURO, NADA MAIS:
 - Resposta começa com { e termina com }
@@ -192,8 +198,8 @@ def palavras_do_corte(bloco, corte):
     if WORDS_JSON.exists():
         with WORDS_JSON.open(encoding="utf-8") as f:
             todas = json.load(f).get("words", [])
-        inicio_s = max(0, hhmmss_para_segundos(bloco["timestamp_inicio"]) - PADDING_INICIO_S)
-        fim_s    = hhmmss_para_segundos(bloco["timestamp_fim"]) + PADDING_FIM_S
+        inicio_s, fim_s = fr.janela(todas, hhmmss_para_segundos(bloco["timestamp_inicio"]),
+                                    hhmmss_para_segundos(bloco["timestamp_fim"]))
         palavras = [
             {"word": w["word"],
              "start": max(0.0, w["start"] - inicio_s),
@@ -208,12 +214,33 @@ def palavras_do_corte(bloco, corte):
     return palavras, dur
 
 
+def intervalos_fixos(bloco):
+    """Trechos que o bloco manda remover (campo `remover` do blocos.json, tempos ABSOLUTOS da
+    live: ex. propaganda da live no meio do assunto), relativos ao início do corte. Entram
+    sempre, sem a proteção de início/fim e sem passar pelo LLM."""
+    remover = bloco.get("remover") or []
+    if not remover:
+        return []
+    todas = []
+    if WORDS_JSON.exists():
+        with WORDS_JSON.open(encoding="utf-8") as f:
+            todas = json.load(f).get("words", [])
+    inicio_s, _ = fr.janela(todas, hhmmss_para_segundos(bloco["timestamp_inicio"]),
+                            hhmmss_para_segundos(bloco["timestamp_fim"]))
+    return [{"t_inicio": round(hhmmss_para_segundos(r["inicio"]) - inicio_s, 3),
+             "t_fim": round(hhmmss_para_segundos(r["fim"]) - inicio_s, 3),
+             "motivo": r.get("motivo") or "trecho removido (campo remover do bloco)",
+             "fixo": True} for r in remover]
+
+
 # Silêncios são detectados PROGRAMATICAMENTE (gap entre palavras consecutivas):
 # determinístico e grátis. O LLM fica só com o que exige julgamento (fillers,
 # problemas técnicos, speaker procurando conteúdo).
 GAP_SILENCIO_S    = 3.0   # gap mínimo entre palavras pra virar corte
 MARGEM_SILENCIO_S = 0.3   # respiro mantido em cada ponta do gap
 PROTECAO_INICIO_S = 30.0  # nunca cortar os primeiros 30s (mesma regra do prompt)
+PROTECAO_FIM_S    = 20.0  # nem os últimos 20s: a conclusão/frase de impacto fecha o vídeo
+MIN_INTERVALO_S   = 0.3   # intervalo menor que isso depois de alinhar não vale o jump cut
 
 
 def detectar_silencios(palavras):
@@ -229,6 +256,25 @@ def detectar_silencios(palavras):
             continue
         out.append({"t_inicio": round(ini, 3), "t_fim": round(fim, 3),
                     "motivo": f"silêncio de {gap:.1f}s (detectado automaticamente)"})
+    return out
+
+
+def proteger(intervalos, palavras, duracao):
+    """Coerência: nenhum intervalo parte uma palavra ao meio (borda vai pro vão entre
+    palavras) nem toca nos primeiros PROTECAO_INICIO_S / últimos PROTECAO_FIM_S do corte.
+    Vale pros silêncios e pro que o LLM mandou."""
+    limite_fim = duracao - PROTECAO_FIM_S
+    out = []
+    for iv in intervalos:
+        ini, fim = iv["t_inicio"], iv["t_fim"]
+        for w in palavras:
+            if w["start"] < ini < w["end"]:
+                ini = w["end"]
+            if w["start"] < fim < w["end"]:
+                fim = w["start"]
+        ini, fim = max(ini, PROTECAO_INICIO_S), min(fim, limite_fim)
+        if fim - ini >= MIN_INTERVALO_S:
+            out.append({**iv, "t_inicio": round(ini, 3), "t_fim": round(fim, 3)})
     return out
 
 
@@ -375,6 +421,12 @@ for b in data["blocos"]:
         palavras, dur = palavras_do_corte(b, corte)
         print(f"  corte tem {dur:.1f}s de vídeo")
 
+        fixos = intervalos_fixos(b)
+        if fixos:   # nem vai pro LLM (economiza token): já sai inteiro
+            print(f"  {len(fixos)} trecho(s) fixo(s) do campo remover "
+                  f"({sum(iv['t_fim'] - iv['t_inicio'] for iv in fixos):.0f}s)")
+            palavras = [w for w in palavras
+                        if not any(iv["t_inicio"] <= w["start"] < iv["t_fim"] for iv in fixos)]
         silencios = detectar_silencios(palavras)
         if silencios:
             t_sil = sum(iv["t_fim"] - iv["t_inicio"] for iv in silencios)
@@ -382,16 +434,18 @@ for b in data["blocos"]:
                   f"automaticamente ({t_sil:.1f}s, sem API)")
 
         if sem_llm:
-            intervalos = mesclar_intervalos(silencios)
+            intervalos = mesclar_intervalos(proteger(silencios, palavras, dur) + fixos)
         else:
             print(f"  Chamando Claude (conservador)...")
             try:
+                _custo.checar_orcamento(stem, "04b_polir")
                 intervalos_llm, resp = chamar_claude(palavras, dur, b["id"])
                 usos.append(_custo.uso(resp, MODELO))
             except Exception as e:
                 print(f"  ERRO Claude: {e}. Pulando este bloco.")
                 continue
-            intervalos = mesclar_intervalos(silencios + intervalos_llm)
+            intervalos = mesclar_intervalos(proteger(silencios + intervalos_llm, palavras, dur)
+                                            + fixos)
 
     if not intervalos:
         print(f"  Nenhum trecho pra cortar — copiando original")

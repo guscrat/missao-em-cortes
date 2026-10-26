@@ -20,9 +20,16 @@ Fluxo:
      ("canal coberto até DD/MM"). Shorts não entram na conta.
      Aí processa 1 vídeo só, o de maior prioridade (empate: o mais recente):
      01_baixar → pipeline.py --polir → 11_revisor → 10_shorts (aprovados) → publicacao.txt.
+     Shorts só com config/upload.json → auditoria_aprovada true (antes disso ninguém posta).
      ~US$ 0,65 por vídeo. Fila com mais de DIAS_ARQUIVAR dias expira.
      Thumb colagem (config/thumb.json): "teste" roda o 07b_colagem no fim, em thumbs/colagem/
-     (~US$ 0,15/vídeo, não mexe nas thumbs que sobem); "padrao" roda com --aplicar antes do revisor.
+     (~US$ 0,15/vídeo, não mexe nas thumbs que sobem); "padrao" roda com --aplicar antes do revisor;
+     "ab" roda com --ab antes do revisor (a = template, b/c = colagem, pro "Testar e comparar").
+     "pausada" (desde 26/10/2026) = desligada. O "Testar e comparar" agora é da clássica
+     (config/thumb.json → modo: "ab", feito pelo 07 dentro do pipeline).
+  Modo evento (config/canais.json → modo_evento, ex.: 2º turno): até modo_evento_ate
+     processa 1 vídeo por rodada MESMO com o canal coberto, só da fila a partir de
+     modo_evento_desde, e o Claude prioriza modo_evento_tema. Depois do "ate" desliga sozinho.
   4. Resumo em state/curador_resumo.md (cortes prontos pra publicar, recusados com motivo,
      avisos) e decisões em state/curadoria.json. Tudo também vira evento no painel.
 
@@ -34,12 +41,14 @@ import os
 import re
 import subprocess
 import sys
+import time
 import unicodedata
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import _custo
 from _eventos import evento, upsert_video, conectar
+from _paths import auditoria_aprovada, modo_evento
 from sincronizar_estado import DIAS_ARQUIVAR    # janela do conteúdo antigo (15 dias)
 
 ROOT = Path(__file__).parent.parent
@@ -55,6 +64,9 @@ TRAVA_HORAS = 12             # rodada mais velha que isso = morreu no meio: libe
 SAIDA_TRAVADO = 75           # outra rodada em andamento (o curador_oculto não acusa falha)
 PROGRESSO = ROOT / "state" / "curador_progresso.json"   # painel: "rodando desde 17:00 — etapa X"
 MAX_TENTATIVAS = 3           # falhou antes de baixar: volta pra fila até isso, depois desiste
+ESPERA_OCUPADO_MIN = 30      # outro processamento rodando: espera até isso, depois pula
+CHECA_OCUPADO_S = 60
+PRIORIDADE_EVENTO = 6        # modo evento: abaixo disso não fura o estoque (previsão velha)
 
 MODELO = "claude-opus-5-5"
 CUSTO_POR_VIDEO = 0.65                 # segmentação + polimento + revisor, só pra estimativa
@@ -82,7 +94,7 @@ SCHEMA = {
     "additionalProperties": False,
 }
 
-SISTEMA = """Você é o curador do canal "Missão em Cortes", que publica cortes de 5-7 min \
+SISTEMA = """Você é o curador do canal "Missão em Cortes", que publica cortes de 8-30 min \
 de lives, entrevistas e debates do Partido Missão (legenda 14, direita liberal, ligado ao \
 MBL): Renan Santos, Kim Kataguiri, Arthur do Val, Guto Zacarias e Amanda Vettorazzo.
 
@@ -92,7 +104,7 @@ Vale (prioridade alta) quando:
 - uma dessas figuras fala bastante: análise política, eleição, escândalo, debate, \
 entrevista, podcast com convidado relevante
 - o tema é quente agora (rende cliques nos próximos dias)
-- tem cara de render vários blocos de 5-7 min com um ponto forte cada
+- tem cara de render blocos de 8-30 min, cada um com um assunto que se sustenta sozinho
 
 Não vale quando:
 - jingle, paródia, trailer, aviso, corte já editado, compilação ou reprise
@@ -292,8 +304,12 @@ def motivo_filtro(item: dict, cfg: dict, hoje: date, vistos: set[str]) -> str | 
 
 # --- escolha (LLM) ------------------------------------------------------------------------
 
-def montar_pedido(itens: list[dict]) -> str:
-    linhas = [f"Hoje é {date.today():%d/%m/%Y}. Vídeos novos:"]
+def montar_pedido(itens: list[dict], evento: dict | None = None) -> str:
+    linhas = [f"Hoje é {date.today():%d/%m/%Y}."]
+    if evento:
+        linhas.append(f"MODO EVENTO até {evento['ate']:%d/%m}: prioridade 9-10 para {evento['tema']}. "
+                      "Previsão ou análise de antes do resultado envelhece: prioridade baixa.")
+    linhas.append("Vídeos novos:")
     for x in itens:
         linhas.append(f"- id={x['id']} | canal: {x['canal']} | {x['data'] or '?'} | "
                       f"{x['duracao_s'] // 60} min | título: {x['titulo']}"
@@ -301,13 +317,14 @@ def montar_pedido(itens: list[dict]) -> str:
     return "\n".join(linhas)
 
 
-def avaliar(client, itens: list[dict]) -> tuple[dict[str, dict], tuple[int, int, float]]:
+def avaliar(client, itens: list[dict],
+            evento: dict | None = None) -> tuple[dict[str, dict], tuple[int, int, float]]:
     """({id: {vale, prioridade, motivo}}, (tokens_in, tokens_out, custo))."""
     resp = client.beta.messages.create(
         model=MODELO,
         max_tokens=8000,
         system=SISTEMA,
-        messages=[{"role": "user", "content": montar_pedido(itens)}],
+        messages=[{"role": "user", "content": montar_pedido(itens, evento)}],
         output_config={"effort": "low",
                        "format": {"type": "json_schema", "schema": SCHEMA}},
         betas=["server-side-fallback-2026-07-01"],
@@ -420,12 +437,12 @@ def cadastrar_zoom(stem: str, zoom: str | None) -> bool:
 
 
 def modo_colagem() -> str:
-    """config/thumb.json → 'desligado' | 'teste' | 'padrao' (sem arquivo: desligado)."""
+    """config/thumb.json → 'desligado' | 'teste' | 'ab' | 'padrao' (sem arquivo: desligado)."""
     try:
         modo = json.loads((ROOT / "config" / "thumb.json").read_text(encoding="utf-8")).get("colagem")
     except (OSError, ValueError, AttributeError):
         return "desligado"
-    return modo if modo in ("teste", "padrao") else "desligado"
+    return modo if modo in ("teste", "ab", "padrao") else "desligado"
 
 
 ROTULOS = {"01_baixar.py": "baixando", "pipeline.py": "pipeline", "11_revisor.py": "revisor",
@@ -457,15 +474,17 @@ def processar(item: dict) -> dict:
               ("pipeline.py", stem, "--polir"),
               ("11_revisor.py", stem)]
     for script, *args in etapas:
-        if script == "11_revisor.py" and colagem == "padrao":   # revisor já avalia a colagem
-            if not rodar("07b_colagem.py", stem, "--aplicar"):
+        if script == "11_revisor.py" and colagem in ("padrao", "ab"):   # revisor já avalia a colagem
+            flag = "--aplicar" if colagem == "padrao" else "--ab"   # ab: só b/c; a fica no template
+            if not rodar("07b_colagem.py", stem, flag):
                 res["avisos"].append(f"{stem}: thumb colagem falhou, ficou o template atual")
         if not rodar(script, *args):
             res["erro"] = f"{script} falhou"
             evento(stem, "curador_pipeline", "falha", agente="curador", mensagem=res["erro"])
             return res
     pasta = achar_pasta(stem)
-    for bloco in aprovados(pasta):                 # Short só de corte aprovado ($0, ~1 min cada)
+    # Short só de corte aprovado ($0, ~1 min cada) e só depois da auditoria: até lá não sobe
+    for bloco in aprovados(pasta) if auditoria_aprovada() else []:
         if not rodar("10_shorts.py", stem, f"--bloco={bloco['id']}"):
             res["avisos"].append(f"{stem}: Short do bloco {bloco['id']} falhou "
                                  f"(10_shorts.py {stem} --bloco={bloco['id']})")
@@ -492,6 +511,73 @@ def processar_seguro(item: dict) -> dict:
                 "ok": False, "aprovados": 0, "publicacao": None, "avisos": [], "erro": erro}
 
 
+# --- outro processamento em andamento ---------------------------------------------------
+
+# Scripts que pesam (GPU/disco/API) ou mexem nas pastas de outputs. 09 (upload) e 12-15
+# (só leitura) não contam; o próprio 13 nem casa.
+PESADOS_RE = re.compile(r"scripts[\\/](?:0[1-8]\w*|10_shorts|11_revisor|pipeline)\.py", re.I)
+CREATE_NO_WINDOW = 0x08000000
+
+
+def _listar_processos() -> list[tuple[int, str]]:
+    """[(pid, linha de comando)] de todos os processos. Windows via CIM (sem psutil)."""
+    if sys.platform == "win32":
+        cmd = ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+               "Get-CimInstance Win32_Process | ForEach-Object "
+               "{ \"$($_.ProcessId) $($_.CommandLine)\" }"]
+        flags = CREATE_NO_WINDOW
+    else:
+        cmd, flags = ["ps", "-eo", "pid=,args="], 0
+    saida = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=60, check=True,
+                           creationflags=flags).stdout
+    procs = []
+    for linha in saida.splitlines():
+        pid, _, args = linha.strip().partition(" ")
+        if pid.isdigit():
+            procs.append((int(pid), args))
+    return procs
+
+
+def processamento_em_andamento(listar=_listar_processos) -> list[str]:
+    """Linhas de comando de pipeline rodando fora desta rodada (manual, outra sessão...).
+    Chamado antes do 01_baixar desta rodada, então nenhum filho nosso aparece aqui.
+    Não deu pra listar = segue (só avisa): travar o canal por erro de leitura é pior."""
+    try:
+        procs = listar()
+    except (OSError, subprocess.SubprocessError) as e:
+        print(f"[aviso] não consegui listar os processos ({e}); sigo sem checar", file=sys.stderr)
+        return []
+    return [args for pid, args in procs if pid != os.getpid() and PESADOS_RE.search(args)]
+
+
+def resumir_ocupado(ocupado: list[str]) -> str:
+    """'01_baixar.py renan_x': script + 1º argumento que não é flag nem URL."""
+    linha = ocupado[-1]
+    m = PESADOS_RE.search(linha)
+    if not m:
+        return "?"
+    alvo = next((a.strip('"') for a in linha[m.end():].split()
+                 if not a.lstrip('"').startswith(("-", "http"))), "")
+    nome = re.split(r"[\\/]", m.group(0))[-1]       # Path().name não separa \ no Linux
+    return f"{nome} {alvo}".strip()
+
+
+def esperar_livre(espera_min: int = ESPERA_OCUPADO_MIN, intervalo_s: int = CHECA_OCUPADO_S,
+                  checar=processamento_em_andamento, dormir=time.sleep) -> list[str]:
+    """Espera o outro processamento acabar (até espera_min). Devolve o que ainda roda
+    ([] = livre pra processar)."""
+    ocupado = checar()
+    fim = time.monotonic() + espera_min * 60
+    while ocupado and time.monotonic() < fim:
+        quem = resumir_ocupado(ocupado)
+        marcar_etapa(f"esperando outro processamento terminar ({quem})")
+        print(f"[espera] outro processamento rodando: {quem}", flush=True)
+        dormir(intervalo_s)
+        ocupado = checar()
+    return ocupado
+
+
 # --- resumo -------------------------------------------------------------------------------
 
 def escrever_resumo(rodada: dict) -> str:
@@ -500,6 +586,10 @@ def escrever_resumo(rodada: dict) -> str:
               f"Custo de curadoria: US$ {rodada['custo']:.3f} · "
               f"{len(rodada['processados'])} vídeo(s) processado(s)",
               f"Estoque no início: {_texto_estoque(est)}"]
+    if rodada.get("modo_evento"):
+        ev = rodada["modo_evento"]
+        linhas.append(f"**Modo evento** até {ev['ate']:%d/%m} ({ev['tema']}): processa mesmo "
+                      "com o canal coberto; publicacao.txt com datas na frente dos agendados")
     if rodada.get("estoque_depois"):
         d = rodada["estoque_depois"]
         linhas.append(f"Estoque no fim: {_texto_estoque(d)}")
@@ -510,6 +600,10 @@ def escrever_resumo(rodada: dict) -> str:
         linhas += [f"- **{p['aprovados']} corte(s)** de {p['canal']}: {p['titulo']} → "
                    f"`{p['publicacao']}`" for p in prontos]
         linhas.append("")
+    if rodada.get("thumb_ab"):
+        linhas += ["## Thumb A/B (Testar e comparar)", f"- {rodada['thumb_ab']}",
+                   "- Resultado novo: `uv run py scripts/16_thumb_ab.py registrar <stem> <vídeo> "
+                   "<a|b|c|empate>`", ""]
     colagens = [p for p in rodada["processados"] if p.get("colagem")]
     if colagens:
         linhas.append("## Thumb colagem (teste)")
@@ -536,6 +630,8 @@ def escrever_resumo(rodada: dict) -> str:
     avisos = [a for p in rodada["processados"] for a in p["avisos"]]
     if rodada.get("aviso_canal"):
         avisos.insert(0, rodada["aviso_canal"])
+    if rodada.get("pulado"):
+        avisos.insert(0, rodada["pulado"])
     if rodada.get("aviso_placar"):
         avisos.append(rodada["aviso_placar"])
     if rodada.get("falha_llm"):
@@ -586,9 +682,12 @@ def _canal_de(cfg: dict, nome: str) -> dict:
     return next((c for c in cfg["canais"] if c["nome"] == nome), {})
 
 
-def proximo_da_fila(estado: dict) -> str | None:
-    """Id da fila com maior prioridade; empate = o mais recente."""
-    fila = [(k, v) for k, v in estado.items() if v.get("decisao") == "fila"]
+def proximo_da_fila(estado: dict, desde: date | None = None, minimo: int = 0) -> str | None:
+    """Id da fila com maior prioridade; empate = o mais recente. desde/minimo (modo evento):
+    só vídeos daquele dia em diante e com prioridade >= minimo."""
+    fila = [(k, v) for k, v in estado.items() if v.get("decisao") == "fila"
+            and (desde is None or (v.get("data") or "") >= desde.isoformat())
+            and v.get("prioridade", 0) >= minimo]
     if not fila:
         return None
     return max(fila, key=lambda kv: (kv[1].get("prioridade", 0), kv[1].get("data") or ""))[0]
@@ -621,6 +720,26 @@ def sincronizar_canal(dry_run: bool = False) -> str | None:
         return (f"{len(res['sem_match'])} vídeo(s) recente(s) do canal sem bloco correspondente "
                 f"(título editado no Studio?): " + "; ".join(x["titulo"][:50] for x in res["sem_match"]))
     return None
+
+
+def placar_thumb_ab() -> str | None:
+    """Modo ab (colagem ou clássica): uma linha com o placar do "Testar e comparar"
+    (16_thumb_ab) pro resumo."""
+    from _paths import modo_thumb
+    colagem = modo_colagem() == "ab"
+    if not colagem and modo_thumb() != "ab":
+        return None
+    import importlib
+    try:
+        ab = importlib.import_module("16_thumb_ab")
+        if not colagem:
+            return ab.linha_classica(ab.placar_classica())
+        p = ab.placar()
+        sugestao = ab.sugestao(p)
+    except Exception as e:  # noqa: BLE001 — placar é só informativo, nunca derruba a rodada
+        return f"placar não lido ({type(e).__name__}): rode `uv run py scripts/16_thumb_ab.py placar`"
+    return (f"template {p['template']} x colagem {p['colagem']} (empate {p['empate']}) em "
+            f"{p['testes']} teste(s) — {sugestao}")
 
 
 def atualizar_placar() -> str | None:
@@ -664,8 +783,12 @@ def _rodada(cfg: dict, dry_run: bool, sem_pipeline: bool, forcar: bool) -> int:
     estoque = calcular_estoque(cfg)
     minimo = cfg["estoque"]["dias_minimos"]
     precisa = forcar or estoque["dias"] < minimo
+    evento_on = modo_evento(hoje, cfg)
     print(f"\nEstoque pronto: {_texto_estoque(estoque)} (mínimo {minimo}) → "
           f"{'processa 1 vídeo' if precisa else 'não processa hoje'}")
+    if evento_on:
+        print(f"MODO EVENTO até {evento_on['ate']:%d/%m}: processa 1 vídeo de "
+              f"{evento_on['desde']:%d/%m} em diante mesmo com o canal coberto")
     na_fila = sum(1 for v in estado.values() if v.get("decisao") == "fila")
     print(f"{len(novos)} novo(s) pro Claude, {na_fila} na fila")
     if dry_run:
@@ -677,7 +800,8 @@ def _rodada(cfg: dict, dry_run: bool, sem_pipeline: bool, forcar: bool) -> int:
     agora = datetime.now().isoformat(timespec="seconds")
     rodada = {"quando": agora, "custo": 0.0, "estoque": estoque, "escolhidos": [],
               "fila": [], "recusados": [], "processados": [], "aviso_canal": aviso_canal,
-              "aviso_placar": aviso_placar}
+              "aviso_placar": aviso_placar, "modo_evento": evento_on,
+              "thumb_ab": placar_thumb_ab()}
     if novos:
         from anthropic import Anthropic
         from dotenv import load_dotenv
@@ -686,7 +810,7 @@ def _rodada(cfg: dict, dry_run: bool, sem_pipeline: bool, forcar: bool) -> int:
                mensagem=f"{len(novos)} vídeo(s) novo(s)")
         marcar_etapa(f"Claude avaliando {len(novos)} vídeo(s) novo(s)")
         try:
-            avaliacoes, custo = avaliar(Anthropic(), novos)
+            avaliacoes, custo = avaliar(Anthropic(), novos, evento_on)
         except Exception as e:  # noqa: BLE001 — avaliação falhou: a fila de antes ainda roda
             evento(None, "curadoria", "falha", agente="curador", mensagem=str(e)[:300])
             print(f"[!] Avaliação dos novos falhou ({e}); sigo só com a fila")
@@ -716,7 +840,20 @@ def _rodada(cfg: dict, dry_run: bool, sem_pipeline: bool, forcar: bool) -> int:
     expirar_fila(estado, hoje)
     gravar_estado(estado)
 
-    vid = proximo_da_fila(estado) if precisa and not sem_pipeline else None
+    vid = None
+    if not sem_pipeline:
+        if evento_on:                               # conteúdo do evento passa na frente
+            vid = proximo_da_fila(estado, evento_on["desde"], PRIORIDADE_EVENTO)
+        if vid is None and precisa:
+            vid = proximo_da_fila(estado)
+    if vid and (ocupado := esperar_livre()):
+        # nunca dois processamentos ao mesmo tempo: o vídeo fica na fila (sem gastar tentativa)
+        rodada["pulado"] = (f"pulei o processamento: outro já estava rodando "
+                            f"({resumir_ocupado(ocupado)}) após {ESPERA_OCUPADO_MIN} min de "
+                            f"espera; \"{estado[vid]['titulo'][:60]}\" segue na fila")
+        evento(None, "curador_pulado", "aviso", agente="curador", mensagem=rodada["pulado"][:300])
+        print(f"\n[!] {rodada['pulado']}")
+        vid = None
     if vid:
         e = estado[vid]
         canal = _canal_de(cfg, e["canal"])

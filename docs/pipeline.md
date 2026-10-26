@@ -29,7 +29,9 @@ Outras pastas em `outputs/`: `_calibracao/` (scratch da calibração de zoom), `
 
 ## Step 4 — Cortes
 
-Gera **dois arquivos por bloco**: `corte_NN_<slug>.mp4` (corte completo, fade out 0.5s) e `cold_NN_<slug>.mp4` (cold open 15-30s, fade in+out 0.4s). Se o JSON não tiver `cold_open`, gera só o corte e loga um aviso. Sai com exit 1 e resumo se algum ffmpeg falhar.
+Gera **dois arquivos por bloco**: `corte_NN_<slug>.mp4` (corte completo, fade out 0.5s) e `cold_NN_<slug>.mp4` (cold open 15-30s, fade in+out 0.4s). Se o JSON não tiver `cold_open`, gera só o corte e loga um aviso. Sai com exit 1 e resumo se algum ffmpeg falhar. `--bloco=N` corta só um bloco.
+
+A janela vem do `_fronteira.janela()` (a mesma do 04b, 04c e 10): o padding de sempre (1s antes, 2s depois; 0,5s no cold open), mas parando antes da palavra vizinha — com o tempo exato do fim de frase (encaixado no 03), o padding fixo vazava o começo da frase seguinte.
 
 ## Tratamento de overlays da live original (zoom)
 
@@ -51,6 +53,7 @@ Pra cada `corte_NN_*.mp4` ele: (1) reaproveita os word-level timestamps do `word
 
 - `--bloco=N` reprocessa só um bloco; `--sem-llm` roda **só a parte programática** (silêncios) sem chamar o Claude — custo $0, abre mão dos cortes de fillers/problemas técnicos.
 - Os intervalos ficam em `polimento.json` (re-runs não duplicam blocos); `--reaplicar` re-aplica os intervalos salvos aos cortes sem chamar o LLM (útil após re-cortar, ex: mudou o zoom).
+- **Campo `remover` do bloco** (`blocos.json`, `[{"inicio": "HH:MM:SS", "fim": "HH:MM:SS", "motivo": "..."}]`, tempos absolutos da live): trechos que saem sempre (ex.: propaganda da live no meio de um assunto que continua depois). Entram sem a proteção de início/fim, não vão pro LLM e o 04c remapeia a legenda junto. O revisor (11) confere a transcrição sem eles. Só vale com `--polir`. A `duracao_minutos` do bloco deve descontar o trecho removido (o Analista compara pela duração final).
 - Cold opens **não** são polidos. Pra usar os polidos na montagem: `06_montar.py <stem> --polido` (gera `video_NN_<slug>_polido.mp4`).
 - Whisper cai pra CPU se CUDA indisponível (02/04b).
 - LLM: `claude-sonnet-5-5`, effort `low`, instruções no prompt cache (~920 tokens; mínimo do modelo 512). Teste de 24/10 na renan_lula_vire: mesmos intervalos do Sonnet 4.6, US$ 0.18 contra 0.25. O 03 continua no Sonnet 4.6: o 5.5 (low/medium/high) achou menos blocos e perdeu cortes de score 8-9.
@@ -79,7 +82,7 @@ Todo o pipeline (steps 4, 4b, 5, 6) produz vídeo **1280x720, 30fps, yuv420p, H.
 
 ## Step 10 — Shorts 9:16
 
-`uv run py scripts/10_shorts.py <stem> [--bloco=N]` — **off-pipeline** e **grátis**: gera um **Short 9:16** (1080x1920, 30fps, NVENC) por bloco a partir do **cold open**. Recorta direto do vídeo **original** (`inputs/<stem>.mp4`, 1080p), porque o `cold_NN.mp4` é 720p e ficaria borrado esticado.
+`uv run py scripts/10_shorts.py <stem> [--bloco=N]` — **off-pipeline** e **grátis**: gera um **Short 9:16** (1080x1920, 30fps, NVENC) por bloco a partir do trecho **`short`** do bloco (até 3 min, ideal 30-90s, ideia completa terminando numa frase de impacto; blocos antigos sem `short` usam o **cold open**). Trecho acima de 179s é pulado (falha); fim fora de fim de frase gera aviso. Recorta direto do vídeo **original** (`inputs/<stem>.mp4`, 1080p), porque o `cold_NN.mp4` é 720p e ficaria borrado esticado.
 
 - A janela 9:16 usa a altura toda da área anti-overlay do `config/zoom.json` e fica **sempre dentro dela**, então os overlays continuam fora (stem sem zoom: quadro inteiro + aviso).
 - A posição horizontal segue o rosto de quem fala: OpenCV detecta rostos a cada 0.5s, agrupa por posição e, entre os que aparecem em ≥30% dos frames, escolhe o **mais perto do centro do quadro** (quem filma mantém o palestrante no centro). O critério "maior rosto" perdia pra foto no telão, e o "rosto que mais mexe" perdia pra quem bebia água na mesa.

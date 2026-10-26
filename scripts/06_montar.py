@@ -14,6 +14,7 @@ args = [a for a in sys.argv[1:] if not a.startswith("--")]
 flags = [a for a in sys.argv[1:] if a.startswith("--")]
 USE_POLIDO = "--polido" in flags
 USE_LEGENDADO = "--legendado" in flags   # cortes de cortes/legendados/ (step 4c)
+ONLY_BLOCO = next((int(f.split("=", 1)[1]) for f in flags if f.startswith("--bloco=")), None)
 
 input_arg = args[0] if args else "live_teste"
 PASTA = achar_pasta(input_arg)
@@ -189,6 +190,11 @@ with BLOCOS_JSON.open(encoding="utf-8") as f:
     data = json.load(f)
 
 for b in data["blocos"]:
+    if ONLY_BLOCO is not None and b["id"] != ONLY_BLOCO:
+        continue
+    if b.get("remover") and not USE_POLIDO:
+        print(f"\n[!] Bloco {b['id']}: tem trecho em 'remover' (ex.: propaganda da live), que só "
+              f"sai no polido — sem --polido ele vai pro vídeo final")
     card   = CARDS_DIR / f"card_{b['id']:02d}.mp4"
     fonte_cortes = CORTES_DIR / "legendados" if USE_LEGENDADO else CORTES_DIR
     if USE_POLIDO:
