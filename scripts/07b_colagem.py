@@ -11,9 +11,15 @@ Layout e fontes de imagem: ver _colagem.py. Por bloco:
   6. rembg recorta o apresentador; a = círculo, b = seta, c = outra expressão/texto
 Sem rosto bom, sem recorte ou sem 2 cenas → o bloco fica com a thumb do template atual (07).
 
+PAUSADA desde 26/10/2026 (config/thumb.json → "colagem": "pausada"): a seta apontou pro Kim
+numa thumb sobre o Marçal. Enquanto pausada, sai com 3 sem fazer nada (--forcar libera, pra
+desenvolver a v2). A v2: só imagens do próprio vídeo (sem o banco de personagens) e
+seta/círculo só com certeza de quem é (o apresentador, ou cena com o nome escrito na tela);
+na dúvida, sem seta. Ver skill thumb-colagem.
+
 Modo (config/thumb.json → "colagem"):
   - "teste": grava em thumbs/colagem/ e NÃO mexe nas thumbs que sobem
-  - "ab" (agora): com --ab, só as variantes b/c viram thumb_NN_b/c (a fica no template do 07),
+  - "ab" (até 26/10/2026): com --ab, só as variantes b/c viram thumb_NN_b/c (a fica no template do 07),
     pro "Testar e comparar" do Studio medir template x colagem (resultado: 16_thumb_ab.py);
     o crédito da foto do banco entra na descrição
   - "padrao": com --aplicar, copia pra thumbs/thumb_NN_a/b/c.png e põe o crédito da foto do
@@ -21,7 +27,7 @@ Modo (config/thumb.json → "colagem"):
 Nunca mexe em bloco agendado/publicado/arquivado (nem em teste), a não ser com --saida=<pasta>
 (prévia fora do outputs/).
 
-Uso: uv run py scripts/07b_colagem.py <stem> [--bloco=N] [--sem-llm] [--sem-editor] [--aplicar | --ab] [--saida=DIR]
+Uso: uv run py scripts/07b_colagem.py <stem> [--bloco=N] [--sem-llm] [--sem-editor] [--aplicar | --ab] [--saida=DIR] [--forcar]
   --sem-editor: texto = texto_thumb do bloco (o 11 usa pra refazer a colagem depois de reescrever)
   Com --bloco=N, sai com 2 se a colagem do bloco não saiu (ou não foi aplicada).
 Custo: ~US$ 0.03 por bloco (~US$ 0.15 por live, medido em 22/10/2026). Logado com agente="editor".
@@ -231,12 +237,24 @@ def aplicar(pasta: Path, saida_dir: Path, bid: int, reg: dict, letras=LETRAS) ->
         desc.write_text(trocar_creditos(texto, bid, reg.get("creditos", [])), encoding="utf-8")
 
 
+def pausada() -> bool:
+    import _paths
+    try:
+        return json.loads(_paths.THUMB_JSON.read_text(encoding="utf-8")).get("colagem") == "pausada"
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
 def main(argv: list[str]) -> int:
     pos = [a for a in argv if not a.startswith("--")]
     flags = dict(a[2:].split("=", 1) if "=" in a else (a[2:], True) for a in argv if a.startswith("--"))
     if not pos:
         print(__doc__)
         return 1
+    if pausada() and not flags.get("forcar"):
+        print("[!] thumb colagem pausada (config/thumb.json → colagem: \"pausada\"): nada feito. "
+              "A thumb que sobe é a clássica (07). --forcar roda mesmo assim (dev da v2).")
+        return 3
     sem_llm, modo_ab = bool(flags.get("sem-llm")), bool(flags.get("ab"))
     aplicar_padrao = bool(flags.get("aplicar")) or modo_ab
     letras = LETRAS_AB if modo_ab else LETRAS

@@ -1,6 +1,7 @@
 """Step 16 (off-pipeline): resultado do "Testar e comparar" das thumbs → state/thumb_ab.json
-(agente="analista"). Junta os testes do modo ab (config/thumb.json: a = template, b/c = colagem)
-pra decidir o estilo padrão com dado, não no olho.
+(agente="analista"). Junta os testes do modo ab (config/thumb.json → modo: "ab": a/b/c = 3
+versões da clássica com frames e textos diferentes; até 26/10/2026, a = template e b/c =
+colagem) pra decidir com dado, não no olho.
 
 Uso:
   uv run py scripts/16_thumb_ab.py registrar <stem> <vídeo> <a|b|c|empate> [--a=41.2 --b=35 --c=23.8] [--nota="..."]
@@ -12,7 +13,10 @@ Uso:
              thumb (opcional, o Studio mostra). O estilo de cada letra é lido das thumbs do bloco
              na hora (thumb_NN_a/b/c vs a colagem aplicada): registre antes de regerar thumbs.
              Registrar de novo o mesmo vídeo substitui.
-  placar:    vitórias por estilo, só nos testes com os 2 estilos (bloco sem colagem não conta).
+             O texto de cada letra (thumbs/candidatos_NN.json) também fica guardado.
+  placar:    vitórias por estilo, só nos testes com os 2 estilos (bloco sem colagem não conta),
+             e, nos testes só da clássica, vitórias por letra (a = texto_thumb do 03,
+             b/c = alternativas do editor).
 
 O YouTube não expõe o resultado do "Testar e comparar" na Data API nem na Analytics API
 (out/2026): por isso é à mão. Se um dia expuser, o 12 chama registrar() direto.
@@ -45,6 +49,15 @@ def estilos(pasta: Path, bid: int) -> dict[str, str]:
     return {t.stem[-1]: estilo for t, estilo in thumbs_do_teste(pasta, bid, None)}
 
 
+def textos(pasta: Path, bid: int) -> dict[str, str]:
+    """{letra: texto} das thumbs clássicas do bloco (gravado pelo 07 na fila); {} sem fila."""
+    try:
+        fila = json.loads((pasta / "thumbs" / f"candidatos_{bid:02d}.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return fila.get("textos", {}) if isinstance(fila, dict) else {}
+
+
 def registrar(stem_ou_pasta: str, bid: int, vencedora: str, watch: dict[str, float] | None = None,
               nota: str = "") -> dict:
     vencedora = vencedora.lower()
@@ -60,6 +73,7 @@ def registrar(stem_ou_pasta: str, bid: int, vencedora: str, watch: dict[str, flo
     teste = {"stem": stem, "bloco": bid, "vencedora": vencedora,
              "estilo_vencedor": por_letra.get(vencedora, "empate"),
              "estilos": por_letra, "misto": len(set(por_letra.values())) > 1,
+             "textos": {l: t for l, t in textos(pasta, bid).items() if l in por_letra},
              "watch_time_pct": watch or {}, "nota": nota,
              "youtube_id": (ler_bloco(stem, bid) or {}).get("youtube_id"),
              "registrado": datetime.now().astimezone().isoformat(timespec="seconds")}
@@ -80,6 +94,20 @@ def placar(dados: dict | None = None) -> dict:
     for t in mistos:
         contagem[t["estilo_vencedor"] if t["estilo_vencedor"] in contagem else "empate"] += 1
     return {**contagem, "testes": len(mistos), "fora": len(testes) - len(mistos)}
+
+
+def placar_classica(dados: dict | None = None) -> dict:
+    """{a, b, c, empate, testes}: testes só da clássica (sem colagem), vitórias por letra."""
+    testes = [t for t in (dados or ler()).get("testes", {}).values() if not t.get("misto")]
+    contagem = {"a": 0, "b": 0, "c": 0, "empate": 0}
+    for t in testes:
+        contagem[t["vencedora"] if t.get("vencedora") in contagem else "empate"] += 1
+    return {**contagem, "testes": len(testes)}
+
+
+def linha_classica(c: dict) -> str:
+    return (f"clássica, {c['testes']} teste(s): a (texto do 03) {c['a']} · b {c['b']} · "
+            f"c {c['c']} (b/c = textos do editor) · empate {c['empate']}")
 
 
 def sugestao(p: dict) -> str:
@@ -104,7 +132,7 @@ def main(argv: list[str]) -> int:
             print(f"[!] {e}", file=sys.stderr)
             return 1
         print(f"OK {t['stem']} vídeo {t['bloco']:02d}: venceu {t['vencedora']} ({t['estilo_vencedor']})"
-              + ("" if t["misto"] else " — teste sem colagem, não conta no placar") + f" → {SAIDA}")
+              + ("" if t["misto"] else " — teste da clássica (frames/textos)") + f" → {SAIDA}")
         return 0
     if pos[:1] == ["placar"]:
         p = placar()
@@ -112,6 +140,7 @@ def main(argv: list[str]) -> int:
               f"template {p['template']} · colagem {p['colagem']} · empate {p['empate']}"
               + (f" · {p['fora']} sem colagem (não contam)" if p["fora"] else ""))
         print(sugestao(p))
+        print(linha_classica(placar_classica()))
         return 0
     print(__doc__)
     return 1

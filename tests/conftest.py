@@ -21,6 +21,12 @@ def _sem_modo_evento_real(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _sem_thumb_json_real(tmp_path, monkeypatch):
+    """O config/thumb.json real (modo ab, colagem pausada) nunca vaza pros testes."""
+    monkeypatch.setattr(_paths, "THUMB_JSON", tmp_path / "config" / "thumb.json")
+
+
+@pytest.fixture(autouse=True)
 def _orcamento_isolado(tmp_path, monkeypatch):
     """A trava de custo por live nunca lê o config/painel.json nem o state/ reais."""
     monkeypatch.setattr(_custo, "CONFIG_PAINEL", tmp_path / "config" / "painel.json")

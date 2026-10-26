@@ -16,6 +16,7 @@ ROOT = Path(__file__).parent.parent
 OUTPUTS = ROOT / "outputs"
 UPLOAD_JSON = ROOT / "config" / "upload.json"
 CANAIS_JSON = ROOT / "config" / "canais.json"
+THUMB_JSON = ROOT / "config" / "thumb.json"
 _DATE_PREFIX = re.compile(r"^\d{4}-\d{2}-\d{2}_")
 
 
@@ -27,6 +28,17 @@ def auditoria_aprovada() -> bool:
         return json.loads(UPLOAD_JSON.read_text(encoding="utf-8")).get("auditoria_aprovada") is True
     except (OSError, ValueError, AttributeError):
         return False
+
+
+def modo_thumb() -> str:
+    """config/thumb.json → "modo": 'ab' (a/b/c = 3 versões da clássica com frames e textos
+    diferentes, pro "Testar e comparar") ou 'classica' (a/b/c = 3 frames, mesmo texto).
+    Arquivo ausente/ilegível ou outro valor = 'classica'."""
+    try:
+        modo = json.loads(THUMB_JSON.read_text(encoding="utf-8")).get("modo")
+    except (OSError, ValueError, AttributeError):
+        return "classica"
+    return "ab" if modo == "ab" else "classica"
 
 
 def modo_evento(hoje: date | None = None, cfg: dict | None = None) -> dict | None:

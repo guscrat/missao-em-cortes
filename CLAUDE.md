@@ -15,7 +15,7 @@ Postura: simpática ao partido com independência crítica; títulos ousados **s
 | Skill | Quando |
 |---|---|
 | `editorial-missao` | título, `texto_thumb`, descrição, segmentação (03/08), revisor (11), editor, grafias, Curador (13) |
-| `thumb-colagem` | thumbs: template pelo rosto (07), colagem (07b), banco de personagens/licenças, identidade visual |
+| `thumb-colagem` | thumbs: clássica pelo rosto (07, padrão; modo ab = 3 frames + 3 textos), colagem (07b, **pausada**), banco de personagens/licenças, identidade visual |
 | `youtube-compliance` | YPP, crédito da fonte, trava da auditoria, OAuth (2 projetos), upload (09), métricas (12), canal (14), `publicacao.txt` |
 | `release` | git flow, as duas pastas, testador/revisor, PR, merge, release pra main, status de sexta |
 | `painel-eventos` | banco `state/pipeline.db`, eventos/custo por agente, status de bloco, kanban, arquivamento, `tarefa.py`/hooks |
@@ -66,7 +66,7 @@ Vídeo final: `[Cold open 15-30s] → [Intro 3s] → [Card 3s] → [Corte 8-30mi
 
 Overlays da live saem por **zoom por fonte** (`config/zoom.json`); stem sem entrada roda sem zoom e avisa. Calibrar: `calibrar_zoom.py <video> --salvar=<stem>`, depois `pipeline.py <stem> --desde=4`. Detalhes em `docs/pipeline.md`.
 
-Agentes off-pipeline (detalhes nas skills): Curador 13 às 17h decide o que processar · revisor 11 aprova/quarentena/descarta · 10 gera Shorts · 09 sobe longos e Shorts (`--shorts`, **travado até a auditoria**; dia D: `dia_d.py` + skill) · 12/14/15 só leem o canal (15 = placar do YPP, 1x/dia pelo Curador) · 16 registra o resultado do "Testar e comparar" das thumbs (modo `ab`: a = template, b/c = colagem).
+Agentes off-pipeline (detalhes nas skills): Curador 13 às 17h decide o que processar · revisor 11 aprova/quarentena/descarta · 10 gera Shorts · 09 sobe longos e Shorts (`--shorts`, **travado até a auditoria**; dia D: `dia_d.py` + skill) · 12/14/15 só leem o canal (15 = placar do YPP, 1x/dia pelo Curador) · 16 registra o resultado do "Testar e comparar" das thumbs (modo `ab`: a/b/c = 3 clássicas com frames e textos diferentes; colagem pausada).
 
 ## Regras transversais
 

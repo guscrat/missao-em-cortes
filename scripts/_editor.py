@@ -178,6 +178,69 @@ def texto_colagem(client, pedido: str) -> tuple[list[list[str]] | None, object]:
     return [o for o in opcoes if opcao_valida(o)][:3], resp
 
 
+MAX_TEXTO_THUMB = 28
+
+SCHEMA_THUMB_AB = {
+    "type": "object",
+    "properties": {"opcoes": {"type": "array", "items": {"type": "string"}}},
+    "required": ["opcoes"],
+    "additionalProperties": False,
+}
+
+SISTEMA_THUMB_AB = f"""Você é o editor do canal "Missão em Cortes", que publica cortes de lives \
+e entrevistas do Partido Missão. A thumb deste corte vai pro "Testar e comparar" do YouTube \
+com 3 textos. O primeiro já existe (TEXTO DA THUMB ATUAL). Escreva mais 2 opções \
+DIFERENTES dele e entre si, com outro ângulo (ex.: uma em pergunta, outra afirmando o \
+gancho mais forte), pra o teste dizer qual tipo de texto funciona.
+
+Regras:
+- 2 a 5 palavras de impacto, no máximo {MAX_TEXTO_THUMB} caracteres, em MAIÚSCULAS.
+- Só afirme o que o resumo e os ganchos sustentam. Nada de atribuir ao speaker frase, alvo \
+ou promessa que ele não disse. Números, datas, fatos e nomes batem EXATAMENTE com o pedido; \
+nome de pessoa sempre na grafia oficial da lista.
+- NUNCA destaque palavrão nem termo que possa soar como ofensa a um grupo (raça, etnia, \
+gênero, orientação sexual, religião, origem, deficiência etc.), MESMO que esteja na fala.
+- Diferente do título do YouTube (não repita a frase)."""
+
+
+def montar_pedido_thumb_ab(titulo: str, texto_thumb: str, bloco: dict) -> str:
+    """Sem a transcrição (barato): resumo + ganchos (frases do trecho). O revisor confere as
+    3 contra a transcrição depois."""
+    linhas = [f"TÍTULO DO YOUTUBE: {titulo}", f"TEXTO DA THUMB ATUAL: {texto_thumb}",
+              f"RESUMO DO TRECHO: {bloco.get('resumo', '')}",
+              "GANCHOS (frases ditas no trecho):", *[f"- {g}" for g in bloco.get("ganchos") or []],
+              "", GRAFIAS_PEDIDO, _grafias.para_prompt()]
+    return "\n".join(linhas)
+
+
+def textos_thumb_ab(client, pedido: str, atual: str) -> tuple[list[str] | None, object]:
+    """([até 2 textos válidos e diferentes do atual] ou None se recusou, resposta)."""
+    resp = client.beta.messages.create(
+        model=MODELO,
+        max_tokens=4000,
+        system=SISTEMA_THUMB_AB,
+        messages=[{"role": "user", "content": pedido}],
+        output_config={"effort": "low",
+                       "format": {"type": "json_schema", "schema": SCHEMA_THUMB_AB}},
+        betas=["server-side-fallback-2026-07-01"],
+        extra_body={"fallbacks": "default"},
+    )
+    if resp.stop_reason == "refusal":
+        return None, resp
+    # Resposta paga mas ilegível volta [] (não exceção) pra o custo ainda ser logado
+    texto = next((b.text for b in resp.content if b.type == "text"), None)
+    try:
+        opcoes = [_grafias.corrigir(o.strip().upper()) for o in json.loads(texto)["opcoes"]]
+    except (TypeError, ValueError, KeyError, AttributeError):
+        return [], resp
+    vistos, validas = {atual.strip().upper()}, []
+    for o in opcoes:
+        if o and len(o) <= MAX_TEXTO_THUMB and o not in vistos:
+            vistos.add(o)
+            validas.append(o)
+    return validas[:2], resp
+
+
 def custo(resp) -> tuple[int, int, float]:
     u = _custo.uso(resp, MODELO)
     return u["tokens_in"], u["tokens_out"], u["custo_usd"]
@@ -233,6 +296,23 @@ def refazer_colagem_ab(pasta: Path, bid: int) -> list[str]:
     return ["colagem (b/c) não saiu com o texto novo e falhou ao voltar pro template"]
 
 
+def refazer_classica_ab(pasta: Path, bid: int, feita: str) -> list[str]:
+    """Modo ab da clássica: as outras variantes (b/c) ainda têm os textos alternativos do
+    texto_thumb antigo. Refaz cada uma no mesmo frame; o 07 cai pro texto_thumb novo (as
+    alternativas valem só pro texto de que saíram), sem chamar o editor de novo."""
+    from _paths import modo_thumb
+    if modo_thumb() != "ab":
+        return []
+    for letra in "abc":
+        if letra == feita or not (pasta / "thumbs" / f"thumb_{bid:02d}_{letra}.png").exists():
+            continue
+        r = subprocess.run([sys.executable, str(SCRIPTS / "07_thumb.py"), pasta.name,
+                            f"--bloco={bid}", f"--variante={letra}"], capture_output=True)
+        if r.returncode:
+            return [f"falhou ao refazer a thumb {letra} com o texto novo"]
+    return []
+
+
 def refazer_artes(pasta: Path, bid: int, thumb: Path | None) -> list[str]:
     """Refaz a thumb escolhida e o Short com o texto novo. Devolve avisos (não derruba)."""
     nn, avisos = f"{bid:02d}", []
@@ -257,6 +337,7 @@ def refazer_artes(pasta: Path, bid: int, thumb: Path | None) -> list[str]:
             cmd.append(f"--variante={variante}")
         if subprocess.run(cmd, capture_output=True).returncode:
             avisos.append("falhou ao refazer a thumb")
+        avisos += refazer_classica_ab(pasta, bid, variante)
         avisos += refazer_colagem_ab(pasta, bid)
     if any((pasta / "shorts").glob(f"short_{nn}_*.mp4")):
         r = subprocess.run([*py, str(SCRIPTS / "10_shorts.py"), pasta.name, f"--bloco={bid}"],

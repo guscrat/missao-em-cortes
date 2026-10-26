@@ -5,7 +5,8 @@ Uso: uv run py scripts/pipeline.py <stem> [--polir] [--sem-llm] [--sem-legendas]
 
   --polir     inclui o polimento (04b, ~$0.20 de API) e monta com --polido
   --sem-llm   com --polir: 04b só remove silêncios programáticos (custo $0,
-              sem cortes de fillers/problemas técnicos)
+              sem cortes de fillers/problemas técnicos); no 07, thumb ab sem os textos
+              alternativos do editor (b/c com o texto_thumb)
   --sem-legendas  desliga a legenda karaokê nesta live (padrão: LIGADA — roda o 04c, $0,
                   e monta com --legendado)
   --desde=N   retoma a partir do step N (aceita 4b e 4c). Ex: --desde=4 pra re-cortar
@@ -19,7 +20,8 @@ Uso: uv run py scripts/pipeline.py <stem> [--polir] [--sem-llm] [--sem-legendas]
 Sem --desde, detecta sozinho: pula o step 2 se a transcrição já existe.
 Cada step é o script de sempre rodado em sequência (mesma saída no terminal);
 para na primeira falha e mostra o --desde pra retomar de onde parou.
-Custo de API: step 3 (~$0.20/h de live, $0 ao reprocessar) + step 4b se --polir (~$0.20; $0 com --sem-llm). 4c: $0.
+Custo de API: step 3 (~$0.20/h de live, $0 ao reprocessar) + step 4b se --polir (~$0.20; $0 com --sem-llm) + step 7 no modo ab da thumb
+(~$0.01/bloco, textos b/c; $0 com --sem-llm). 4c: $0.
 
 O download (01_baixar.py) fica de fora de propósito — rode antes, uma vez.
 """
@@ -93,7 +95,7 @@ steps = [
     (5.0, "05_cards.py", [alvo]),
     (6.0, "06_montar.py", [alvo] + (["--polido"] if polir else [])
                           + (["--legendado"] if legendas else [])),
-    (7.0, "07_thumb.py", [alvo]),
+    (7.0, "07_thumb.py", [alvo] + (["--sem-llm"] if sem_llm else [])),
     (8.0, "08_descricao.py", [alvo]),
 ]
 

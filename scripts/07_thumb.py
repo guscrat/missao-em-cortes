@@ -16,6 +16,7 @@ Uso: uv run py scripts/07_thumb.py <stem>
      uv run py scripts/07_thumb.py <stem> --bloco=N --titulo="TEXTO CURTO"  # texto da thumb na mao
      uv run py scripts/07_thumb.py <stem> --bloco=N --variante=b  # so a variante b (usado pelo editor)
      uv run py scripts/07_thumb.py <stem> --bloco=N --proximo     # proximo frame da fila em thumb_NN_a (usado pelo revisor)
+     uv run py scripts/07_thumb.py <stem> --sem-llm                # modo ab sem o editor ($0): b/c com o texto_thumb
 
 Frames pelo rosto (_thumb_rosto.py, OpenCV, gratis): amostra o cold open e o corte, da nota
 pelo rosto (tamanho, luz, nitidez) e as variantes a/b/c sao os 3 melhores. O recorte poe o
@@ -26,6 +27,13 @@ frame com rosto).
 Texto da thumb: usa o campo curto texto_thumb do blocos.json (2-5 palavras, gerado
 pelo LLM); na falta dele, cai pro tema. NUNCA usa o titulo_sugerido (titulo de
 YouTube, frase longa que estourava a thumb). --titulo= sobrescreve pra um bloco.
+
+Modo ab (config/thumb.json → "modo": "ab"): a/b/c sao 3 versoes da classica com frames E
+textos diferentes, pro "Testar e comparar" do Studio. a = texto_thumb; b/c = 2 alternativas
+do editor (~US$ 0.01/bloco, so na rodada completa), guardadas no blocos.json em
+texto_thumb_ab junto com o texto de que sairam (texto_thumb_ab_de): se o texto_thumb mudar
+(editor), b/c caem pro texto_thumb novo. O texto de cada letra fica na fila (textos), que e
+de onde o revisor le.
 
 Modo manual (--t): pra lives com tela compartilhada, onde os frames automaticos
 (25/50/75% do cold open) caem na tela em vez do speaker. Voce abre o corte, acha
@@ -38,7 +46,8 @@ from pathlib import Path
 import json
 import subprocess
 from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageFilter
-from _paths import achar_pasta, stem_de
+from _paths import achar_pasta, modo_thumb, stem_de
+import _custo
 import _grafias
 import _thumb_rosto as tr
 
@@ -62,6 +71,7 @@ fonte_manual = "corte"
 TITULO_OVERRIDE = None
 variante = None
 proximo = "--proximo" in flags
+sem_llm = "--sem-llm" in flags
 for f in flags:
     if f.startswith("--bloco="):
         bloco_manual = int(f.split("=", 1)[1])
@@ -147,14 +157,14 @@ def quebrar_texto(texto, max_chars=14):
         linhas.append(' '.join(linha))
     return linhas
 
-def titulo_curto(bloco):
+def titulo_curto(bloco, texto=None):
     """Texto da thumb. Prefere o campo curto texto_thumb (2-5 palavras, do LLM);
     cai pro tema (3-6 palavras). NUNCA usa titulo_sugerido — esse e o titulo de
     YouTube (frase longa), que estoura a thumb e tem que ser truncado. --titulo=
-    sobrescreve tudo (override manual)."""
+    sobrescreve tudo (override manual). `texto`: a alternativa da variante (modo ab)."""
     if TITULO_OVERRIDE is not None:
         return TITULO_OVERRIDE.strip().upper()
-    t = bloco.get("texto_thumb") or bloco.get("tema", "")
+    t = texto or bloco.get("texto_thumb") or bloco.get("tema", "")
     return _grafias.corrigir(t.split("|")[0].strip().upper())   # grafia oficial, também em CAIXA ALTA
 
 def colar_frame(canvas, frame_path, rosto=None, overlays=()):
@@ -230,7 +240,7 @@ def aplicar_gradiente_inferior(canvas, altura_fade=420, alpha_max=235):
     base.alpha_composite(overlay)
     return base.convert("RGB")
 
-def gerar_thumb(bloco, output_png, frame_png=None, rosto=None, overlays=()):
+def gerar_thumb(bloco, output_png, frame_png=None, rosto=None, overlays=(), texto=None):
     canvas = Image.new("RGB", (LARGURA, ALTURA), PRETO)
 
     if frame_png and frame_png.exists():
@@ -248,7 +258,7 @@ def gerar_thumb(bloco, output_png, frame_png=None, rosto=None, overlays=()):
     desenhar_texto_com_sombra(draw, (40, 70), "EM CORTES", fonte_logo_w, BRANCO, offset=2)
 
     # Titulo principal (amarelo) - layout adaptativo
-    titulo = titulo_curto(bloco)
+    titulo = titulo_curto(bloco, texto)
     linhas, fonte_size, line_h = layout_titulo(titulo)
     fonte_titulo = get_font(fonte_size)
     fonte_sub = get_font(int(fonte_size * 0.42))
@@ -346,13 +356,70 @@ def garantir_overlays(bid, fila):
     return fila
 
 
-def thumb_do_candidato(b, letra, cand, overlays):
+def texto_base(b):
+    return b.get("texto_thumb") or b.get("tema", "")
+
+
+def texto_da_variante(b, letra):
+    """Modo ab: b/c usam as alternativas do editor, se saíram do texto_thumb atual.
+    None = o texto_thumb (a, modo clássica, ou alternativa velha/faltando)."""
+    if letra == "a" or modo_thumb() != "ab" or b.get("texto_thumb_ab_de") != texto_base(b):
+        return None
+    alts = b.get("texto_thumb_ab") or []
+    i = LETRAS.index(letra) - 1
+    return alts[i] if i < len(alts) else None
+
+
+def gerar_textos_ab(b, client):
+    """Pede ao editor 2 textos alternativos pro b/c (modo ab). Grava no bloco; True se mudou.
+    Sem LLM, orçamento estourado, recusa ou erro → b/c ficam com o texto_thumb."""
+    base = texto_base(b)
+    if (modo_thumb() != "ab" or sem_llm or TITULO_OVERRIDE is not None or not base
+            or b.get("texto_thumb_ab_de") == base):
+        return False
+    import _editor
+    from _eventos import evento
+    try:
+        _custo.checar_orcamento(stem, "07_thumb")
+        opcoes, resp = _editor.textos_thumb_ab(client(), _editor.montar_pedido_thumb_ab(
+            b.get("titulo_sugerido", ""), base, b), base)
+    except Exception as e:  # noqa: BLE001 — texto alternativo não derruba a thumb
+        print(f"  [aviso] textos do teste A/B não saíram ({type(e).__name__}): b/c com o texto_thumb")
+        return False
+    tin, tout, usd = _editor.custo(resp)
+    evento(stem, "07_thumb", "llm", agente="editor", bloco_id=b["id"], tokens_in=tin,
+           tokens_out=tout, custo_usd=usd, mensagem=f"{resp.model} (textos thumb ab)",
+           **_custo.cache(resp))
+    print(f"  textos do teste A/B (US$ {usd:.3f}): {' | '.join(opcoes or []) or 'nenhum válido'}")
+    if not opcoes:
+        return False
+    b["texto_thumb_ab"], b["texto_thumb_ab_de"] = opcoes, base
+    return True
+
+
+def thumb_do_candidato(b, letra, cand, overlays, fila):
     tmp = OUT_DIR / f"_frame_{b['id']:02d}_{letra}.png"
     extrair_frame(CORTES_DIR / cand["video"], cand["t"], tmp)
-    gerar_thumb(b, OUT_DIR / f"thumb_{b['id']:02d}_{letra}.png", tmp, cand.get("rosto"), overlays)
+    texto = texto_da_variante(b, letra)
+    gerar_thumb(b, OUT_DIR / f"thumb_{b['id']:02d}_{letra}.png", tmp, cand.get("rosto"), overlays,
+                texto)
     tmp.unlink(missing_ok=True)
+    fila.setdefault("textos", {})[letra] = titulo_curto(b, texto)   # o revisor lê daqui
     print(f"    {letra}: {cand['fonte']} @ {cand['t']:.1f}s · nota {cand['nota']:.4f}"
-          + ("" if cand.get("rosto") else " (sem rosto)"))
+          + ("" if cand.get("rosto") else " (sem rosto)") + f" · {fila['textos'][letra]}")
+
+
+_client = None
+
+
+def client():
+    global _client
+    if _client is None:
+        import anthropic
+        from dotenv import load_dotenv
+        load_dotenv()
+        _client = anthropic.Anthropic()
+    return _client
 
 
 blocos_iter = [x for x in data["blocos"] if x["id"] == bloco_manual] if bloco_manual is not None else data["blocos"]
@@ -369,13 +436,15 @@ if proximo:
         sys.exit(2)
     print(f"[Bloco {b['id']}] frame {i + 1} da fila")
     garantir_overlays(b["id"], fila)
-    thumb_do_candidato(b, "a", fila["candidatos"][i], fila["overlays"])
+    thumb_do_candidato(b, "a", fila["candidatos"][i], fila["overlays"], fila)
     fila["variantes"]["a"] = i
     fila["proximo"] = i + 1
     gravar_fila(b["id"], fila)
     sys.exit(0)
 
-print(f"Gerando thumbs ({'variante ' + variante if variante else 'a/b/c'}) em {OUT_DIR}\n")
+print(f"Gerando thumbs ({'variante ' + variante if variante else 'a/b/c'}"
+      f"{', teste A/B: 3 frames + 3 textos' if modo_thumb() == 'ab' else ''}) em {OUT_DIR}\n")
+textos_novos = False
 for b in blocos_iter:
     print(f"[Bloco {b['id']}] {b['tema']}")
     fila = ler_fila(b["id"]) if variante else None   # editor: mesmo frame, texto novo
@@ -387,16 +456,20 @@ for b in blocos_iter:
         print()
         continue
     garantir_overlays(b["id"], fila)
+    if not variante:                  # editor/revisor (--variante) não gastam: caem pro texto_thumb
+        textos_novos |= gerar_textos_ab(b, client)
     for k, letra in enumerate(LETRAS):
         if variante and letra != variante:
             continue
         i = fila["variantes"].get(letra, k)
         if i >= len(fila["candidatos"]):
             continue
-        thumb_do_candidato(b, letra, fila["candidatos"][i], fila["overlays"])
+        thumb_do_candidato(b, letra, fila["candidatos"][i], fila["overlays"], fila)
         fila["variantes"][letra] = i
     gravar_fila(b["id"], fila)
     print()
 
+if textos_novos:
+    BLOCOS_JSON.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 print(f"OK Thumbs salvas em {OUT_DIR}")
 print("Escolha a melhor variante (a/b/c).")
