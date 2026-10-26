@@ -4,7 +4,7 @@
 
 ## O projeto
 
-Canal de YouTube de cortes de lives, entrevistas, debates e eventos do **Partido Missão (legenda 14)**, partido brasileiro de direita liberal fundado em 2025, ligado ao MBL (Renan Santos, Kim Kataguiri, Arthur do Val, Guto Zacarias, Amanda Vettorazzo). Cada vídeo longo vira **vários cortes de 5-7 min**, um ponto por corte, otimizados pro YouTube Partner Program.
+Canal de YouTube de cortes de lives, entrevistas, debates e eventos do **Partido Missão (legenda 14)**, partido brasileiro de direita liberal fundado em 2025, ligado ao MBL (Renan Santos, Kim Kataguiri, Arthur do Val, Guto Zacarias, Amanda Vettorazzo). Cada vídeo longo vira **vários cortes de 8-30 min** (o tamanho é o do assunto: **coerência acima da duração**, nunca cortar no meio da fala) + um Short por bloco (até 3 min), otimizados pro YouTube Partner Program.
 
 **Canal:** https://www.youtube.com/channel/UCRJDgbBEndOdbNaiwzFju2g (handle `@missaoemcortes-14`; o `@missaoemcortes` NÃO é nosso).
 
@@ -44,7 +44,7 @@ tests/            pytest, tudo mockado
 Scripts (`scripts/`):
 - **Pipeline:** `pipeline.py` (orquestrador) · `01_baixar` · `02_transcribe` · `03_segmentar` · `04_cortar` · `04b_polir` · `04c_legendas` · `05_cards` · `06_montar` · `08_descricao`
 - **Off-pipeline:** `07_thumb` · `07b_colagem` · `09_upload` · `10_shorts` · `11_revisor` · `12_metricas` · `13_curador` · `14_canal` · `15_placar` · `16_thumb_ab` · `dia_d` · `calibrar_zoom` · `personagens` · `sincronizar_estado` · `tarefa` · `hook_agente` · `curador_oculto` (Agendador → Curador sem janela)
-- **Helpers (`_*.py`):** `_paths` (resolve pasta por stem, falha alto se ambíguo) · `_ffmpeg` (formato canônico) · `_eventos` (banco) · `_descricoes` · `_legenda` · `_grafias` · `_editor` · `_colagem` · `_thumb_rosto` · `_publicacao` · `_google` · `_youtube_leitura` · `_canal`
+- **Helpers (`_*.py`):** `_paths` (resolve pasta por stem, falha alto se ambíguo) · `_ffmpeg` (formato canônico) · `_eventos` (banco) · `_descricoes` · `_legenda` · `_grafias` · `_editor` · `_colagem` · `_thumb_rosto` · `_publicacao` · `_google` · `_youtube_leitura` · `_canal` · `_fronteira` (ponto de corte natural: fim de frase + pausa, faixas de duração)
 
 ## Pipeline
 
@@ -60,9 +60,9 @@ Scripts (`scripts/`):
 | 6 | Montagem final | `uv run py scripts/06_montar.py <stem> [--polido] [--legendado]` | grátis |
 | 8 | Descrições | `uv run py scripts/08_descricao.py <stem>` | grátis |
 
-**Orquestrador:** `uv run py scripts/pipeline.py <stem> [--polir] [--sem-llm] [--sem-legendas] [--desde=N]` roda 2→8, para na primeira falha e mostra o `--desde` pra retomar (pula o 2 se a transcrição existe; `--desde=4c` retoma do 04c). O download fica de fora. Steps 3-8 recebem só o **stem**.
+**Orquestrador:** `uv run py scripts/pipeline.py <stem> [--polir] [--sem-llm] [--sem-legendas] [--desde=N] [--bloco=N]` roda 2→8, para na primeira falha e mostra o `--desde` pra retomar (pula o 2 se a transcrição existe; `--desde=4c` retoma do 04c; `--bloco=N` refaz só 4→4b→4c→6 de um bloco). O download fica de fora. Steps 3-8 recebem só o **stem**.
 
-Vídeo final: `[Cold open 15-30s] → [Intro 3s] → [Card 3s] → [Corte 5-7min] → [Outro 5s]`.
+Vídeo final: `[Cold open 15-30s] → [Intro 3s] → [Card 3s] → [Corte 8-30min] → [Outro 5s]`.
 
 Overlays da live saem por **zoom por fonte** (`config/zoom.json`); stem sem entrada roda sem zoom e avisa. Calibrar: `calibrar_zoom.py <video> --salvar=<stem>`, depois `pipeline.py <stem> --desde=4`. Detalhes em `docs/pipeline.md`.
 

@@ -1,11 +1,11 @@
 # Missão em Cortes
 
-Pipeline local que transforma lives e entrevistas longas (1-2h) do **Partido Missão (14)** em vários cortes de 5-7 minutos prontos pro YouTube: transcrição local na GPU, segmentação temática via Claude, corte/montagem com ffmpeg e geração semi-automática de thumbs e descrições.
+Pipeline local que transforma lives e entrevistas longas (1-2h) do **Partido Missão (14)** em vários cortes de 8 a 30 minutos (guiados pelo assunto) e Shorts de até 3 min prontos pro YouTube: transcrição local na GPU, segmentação temática via Claude, corte/montagem com ffmpeg e geração semi-automática de thumbs e descrições.
 
 Estrutura de cada vídeo final:
 
 ```
-[Cold open 15-30s] → [Intro 3s] → [Card de contexto 3s] → [Corte 5-7min] → [Outro 5s]
+[Cold open 15-30s] → [Intro 3s] → [Card de contexto 3s] → [Corte 8-30min] → [Outro 5s]
 ```
 
 ## Requisitos
