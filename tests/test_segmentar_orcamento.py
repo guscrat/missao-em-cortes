@@ -53,50 +53,56 @@ def test_assinatura_tem_hash_prompt_e_modelo(ns):
 
 def test_decidir_refazer_chama(ns, tmp_path):
     _bruta(tmp_path, _atual(ns))
-    assert ns["decidir_segmentacao"](_atual(ns), True) == ("chamar", "--refazer")
+    assert ns["decidir_segmentacao"](_atual(ns), True) == ("chamar", "--refazer", False)
 
 
 def test_decidir_sem_bruta_primeira_vez(ns):
-    acao, motivo = ns["decidir_segmentacao"](_atual(ns), False)
+    acao, motivo, avisar = ns["decidir_segmentacao"](_atual(ns), False)
     assert acao == "chamar" and "primeira" in motivo
 
 
 def test_decidir_sem_bruta_com_parcial_diz_incompleta(ns, tmp_path):
     (tmp_path / "segmentacao_bruta_parcial.json").write_text("{}", encoding="utf-8")
-    acao, motivo = ns["decidir_segmentacao"](_atual(ns), False)
+    acao, motivo, avisar = ns["decidir_segmentacao"](_atual(ns), False)
     assert acao == "chamar" and "incompleta" in motivo
 
 
 def test_decidir_bruta_ilegivel_chama(ns, tmp_path):
     (tmp_path / "segmentacao_bruta.json").write_text("{quebrado", encoding="utf-8")
-    acao, motivo = ns["decidir_segmentacao"](_atual(ns), False)
+    acao, motivo, avisar = ns["decidir_segmentacao"](_atual(ns), False)
+    assert acao == "chamar" and "ilegível" in motivo
+
+
+def test_decidir_bruta_que_nao_e_objeto_chama(ns, tmp_path):
+    (tmp_path / "segmentacao_bruta.json").write_text("[1, 2]", encoding="utf-8")
+    acao, motivo, _ = ns["decidir_segmentacao"](_atual(ns), False)
     assert acao == "chamar" and "ilegível" in motivo
 
 
 def test_decidir_mesma_assinatura_reaproveita(ns, tmp_path):
     _bruta(tmp_path, _atual(ns))
-    acao, _ = ns["decidir_segmentacao"](_atual(ns), False)
-    assert acao == "reaproveitar"
+    acao, _, avisar = ns["decidir_segmentacao"](_atual(ns), False)
+    assert acao == "reaproveitar" and not avisar
 
 
 def test_decidir_transcricao_mudou_chama(ns, tmp_path):
     _bruta(tmp_path, {**_atual(ns), "transcricao": "outra"})
-    acao, motivo = ns["decidir_segmentacao"](_atual(ns), False)
+    acao, motivo, avisar = ns["decidir_segmentacao"](_atual(ns), False)
     assert acao == "chamar" and "transcrição mudou" in motivo
 
 
 @pytest.mark.parametrize("campo", ["prompt", "modelo"])
 def test_decidir_prompt_ou_modelo_mudou_reaproveita_com_aviso(ns, tmp_path, campo):
     _bruta(tmp_path, {**_atual(ns), campo: "antigo"})
-    acao, motivo = ns["decidir_segmentacao"](_atual(ns), False)
-    assert acao == "reaproveitar" and "mudou desde" in motivo and campo in motivo
+    acao, motivo, avisar = ns["decidir_segmentacao"](_atual(ns), False)
+    assert acao == "reaproveitar" and avisar and campo in motivo
 
 
 def test_decidir_legada_transcricao_mais_nova_chama(ns, tmp_path):
     _bruta(tmp_path)
     os.utime(tmp_path / "segmentacao_bruta.json", (1000, 1000))
     os.utime(tmp_path / "transcricao.txt", (2000, 2000))
-    acao, motivo = ns["decidir_segmentacao"](_atual(ns), False)
+    acao, motivo, avisar = ns["decidir_segmentacao"](_atual(ns), False)
     assert acao == "chamar" and "mais nova" in motivo
 
 
@@ -104,23 +110,22 @@ def test_decidir_legada_transcricao_mais_velha_reaproveita(ns, tmp_path):
     _bruta(tmp_path)
     os.utime(tmp_path / "segmentacao_bruta.json", (2000, 2000))
     os.utime(tmp_path / "transcricao.txt", (1000, 1000))
-    acao, motivo = ns["decidir_segmentacao"](_atual(ns), False)
+    acao, motivo, avisar = ns["decidir_segmentacao"](_atual(ns), False)
     assert acao == "reaproveitar" and "sem assinatura" in motivo
 
 
-# ── cache de 1h só em reprocessamento ──────────────────────────────────────
+# ── cache de 1h só no --refazer / retomada ─────────────────────────────────
 
-def _roda_llm(tmp_path, monkeypatch, pre_existente=None):
+def _roda_llm(tmp_path, monkeypatch, pre_existente=None, cache_1h=False):
     n, msgs, _ = tj.carregar(tmp_path, monkeypatch, 5, [{"blocos": [tj.bloco(1, 4)]}])
     if pre_existente:
         (tmp_path / pre_existente).write_text("{}", encoding="utf-8")
-    data = n["chamar_llm"]()
+    data = n["chamar_llm"](cache_1h=cache_1h)
     return data, msgs.pedidos[0]
 
 
-@pytest.mark.parametrize("pre", ["segmentacao_bruta.json", "segmentacao_bruta_parcial.json"])
-def test_reprocessamento_usa_cache_1h_na_transcricao(tmp_path, monkeypatch, pre):
-    _, pedido = _roda_llm(tmp_path, monkeypatch, pre)
+def test_refazer_usa_cache_1h_na_transcricao(tmp_path, monkeypatch):
+    _, pedido = _roda_llm(tmp_path, monkeypatch, "segmentacao_bruta.json", cache_1h=True)
     assert pedido["system"][0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
     assert "<transcricao>" in pedido["system"][0]["text"]
     assert "cache_control" not in pedido["system"][1]

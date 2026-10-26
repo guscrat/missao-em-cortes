@@ -14,8 +14,8 @@ A resposta bruta do LLM fica em segmentacao_bruta.json, com a assinatura do que 
     validação (é o que ajusta os pontos de corte). Prompt/modelo mudaram: reaproveita e avisa.
   - transcrição mudou (ou não há resposta completa) → chama a API (necessário).
   --refazer força uma segmentação nova (paga); --reaproveitar força o reaproveitamento.
-Reprocessamento pago (já existia resposta) põe a transcrição no cache de 1 h: outro --refazer
-na mesma hora (ex: iterando o prompt) lê do cache (0.1x) em vez de pagar o input cheio.
+--refazer (ou retomar uma segmentação que ficou incompleta) põe a transcrição no cache de 1 h:
+outro --refazer na mesma hora (ex: iterando o prompt) lê do cache (0.1x) em vez do input cheio.
 """
 import hashlib
 import json
@@ -80,34 +80,37 @@ def assinatura(transcricao: str, prompt: str) -> dict:
     return {"transcricao": h(transcricao), "prompt": h(prompt), "modelo": MODELO}
 
 
-def decidir_segmentacao(atual: dict, refazer: bool) -> tuple[str, str]:
-    """('reaproveitar'|'chamar', motivo). Só chama a API quando é necessário."""
+def decidir_segmentacao(atual: dict, refazer: bool) -> tuple[str, str, bool]:
+    """('reaproveitar'|'chamar', motivo, avisar). Só chama a API quando é necessário."""
     if refazer:
-        return "chamar", "--refazer"
+        return "chamar", "--refazer", False
     if not BRUTA.exists():
         return "chamar", ("a segmentação anterior ficou incompleta" if BRUTA_PARCIAL.exists()
-                          else "primeira segmentação desta live")
+                          else "primeira segmentação desta live"), False
     try:
-        antiga = json.loads(BRUTA.read_text(encoding="utf-8")).get("_assinatura")
+        bruta = json.loads(BRUTA.read_text(encoding="utf-8"))
     except ValueError:
-        return "chamar", f"{BRUTA.name} ilegível"
+        bruta = None
+    if not isinstance(bruta, dict):
+        return "chamar", f"{BRUTA.name} ilegível", False
+    antiga = bruta.get("_assinatura")
     if not antiga:   # resposta de antes da assinatura: a data diz se a transcrição mudou
         if INPUT.stat().st_mtime > BRUTA.stat().st_mtime:
-            return "chamar", "a transcrição é mais nova que a segmentação"
-        return "reaproveitar", "mesma transcrição (segmentação sem assinatura)"
+            return "chamar", "a transcrição é mais nova que a segmentação", False
+        return "reaproveitar", "mesma transcrição (segmentação sem assinatura)", False
     if antiga.get("transcricao") != atual["transcricao"]:
-        return "chamar", "a transcrição mudou"
+        return "chamar", "a transcrição mudou", False
     mudou = [k for k in ("prompt", "modelo") if antiga.get(k) != atual[k]]
     if mudou:
         return "reaproveitar", (f"{' e '.join(mudou)} mudou desde a segmentação: os blocos "
-                                f"são os da regra antiga; --refazer pra segmentar de novo (pago)")
-    return "reaproveitar", "mesma transcrição, prompt e modelo"
+                                f"são os da regra antiga; --refazer pra segmentar de novo (pago)"), True
+    return "reaproveitar", "mesma transcrição, prompt e modelo", False
 
 
 def pedir_blocos(client, prompt_sistema: str, texto: str, ini: float, fim: float,
                  ultima: bool, n_janela: int, cache_1h: bool = False) -> tuple[dict, dict]:
     """Uma chamada (uma janela). (data, uso).
-    A transcrição vai ANTES do prompt: num reprocessamento ela entra no cache de 1 h e
+    A transcrição vai ANTES do prompt: no --refazer ela entra no cache de 1 h e
     continua valendo mesmo se o prompt for editado entre uma rodada e outra (o cache é por
     prefixo). Primeira segmentação: sem cache (cada janela é lida uma vez só)."""
     contexto = "" if n_janela == 1 and ultima else (
@@ -143,13 +146,12 @@ def pedir_blocos(client, prompt_sistema: str, texto: str, ini: float, fim: float
     return extrair_json(response.content[0].text.strip()), _custo.uso(response, MODELO)
 
 
-def chamar_llm() -> dict:
+def chamar_llm(cache_1h: bool = False) -> dict:
     """Segmenta a live inteira: janela a janela, a próxima começando no fim do último bloco
     da anterior (nenhum assunto corta na emenda). Live até 70 min: uma chamada."""
     from anthropic import Anthropic
     prompt_sistema = PROMPT.read_text(encoding="utf-8")
     transcricao = INPUT.read_text(encoding="utf-8")
-    cache_1h = BRUTA.exists() or BRUTA_PARCIAL.exists()   # reprocessamento
     linhas = linhas_com_tempo(transcricao)
     words_json = PASTA / "words.json"
     palavras = (json.loads(words_json.read_text(encoding="utf-8")).get("words", [])
@@ -250,17 +252,18 @@ def inicio_s(b: dict) -> float:
 
 if reaproveitar and not BRUTA.exists():
     sys.exit(f"[!] --reaproveitar sem {BRUTA.name} — rode o step 3 sem a flag.")
-acao, motivo = ("reaproveitar", "--reaproveitar") if reaproveitar else decidir_segmentacao(
+acao, motivo, avisar = ("reaproveitar", "--reaproveitar", False) if reaproveitar else decidir_segmentacao(
     assinatura(INPUT.read_text(encoding="utf-8"), PROMPT.read_text(encoding="utf-8")), refazer)
 if acao == "reaproveitar":
     data = json.loads(BRUTA.read_text(encoding="utf-8"))
     print(f"Reaproveitando os blocos já escolhidos em {BRUTA.name} ({motivo}) — sem API, $0. "
           f"Âncora, encaixe e validação refeitos.")
-    if "mudou desde" in motivo:
+    if avisar:
         print(f"[aviso] {motivo}")
 else:
     print(f"Segmentando com a API ({motivo})")
-    data = chamar_llm()
+    # cache de 1 h só quando outra rodada paga na mesma hora é provável (--refazer, retomada)
+    data = chamar_llm(cache_1h=refazer or BRUTA_PARCIAL.exists())
 data.pop("_assinatura", None)   # não vai pro blocos.json
 
 # Validação mínima
