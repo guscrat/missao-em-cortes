@@ -4,7 +4,7 @@
   "duracao_min": 20,
   "duracao_max": 240,
   "por_canal": 8,
-  "modo_evento": true,
+  "modo_evento": false,
   "modo_evento_desde": "2026-10-25",
   "modo_evento_ate": "2026-10-27",
   "modo_evento_tema": "lives de reação ao resultado do 2º turno da eleição presidencial (25/10/2026)",
