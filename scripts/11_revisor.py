@@ -456,7 +456,10 @@ def conferir_classica_ab(client, anthropic, stem, pasta, bid, titulo) -> float:
             continue
         t0 = time.time()
         try:
+            _custo.checar_orcamento(stem, "11_revisor")   # estourado: sem conferir, sai do teste
             r, resp = checar_thumb(client, thumb, titulo, textos.get(letra, ""))
+        except _custo.OrcamentoEstourado:
+            r, problema = None, "não conferida: orçamento da live estourado"
         except (anthropic.APIError, json.JSONDecodeError) as e:
             r, problema = None, f"falhou ao avaliar ({type(e).__name__})"
         else:

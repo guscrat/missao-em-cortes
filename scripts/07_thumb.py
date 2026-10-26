@@ -49,9 +49,11 @@ from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageFilter
 from _paths import achar_pasta, modo_thumb, stem_de
 import _custo
 import _grafias
+from _eventos import ler_bloco
 import _thumb_rosto as tr
 
 ROOT = Path(__file__).parent.parent
+NAO_MEXER = {"agendado", "publicado", "arquivado"}   # thumb já foi pro YouTube (ou saiu)
 
 args = [a for a in sys.argv[1:] if not a.startswith("--")]
 flags = [a for a in sys.argv[1:] if a.startswith("--")]
@@ -383,7 +385,7 @@ def gerar_textos_ab(b, client):
         _custo.checar_orcamento(stem, "07_thumb")
         opcoes, resp = _editor.textos_thumb_ab(client(), _editor.montar_pedido_thumb_ab(
             b.get("titulo_sugerido", ""), base, b), base)
-    except Exception as e:  # noqa: BLE001 — texto alternativo não derruba a thumb
+    except (Exception, _custo.OrcamentoEstourado) as e:  # noqa: BLE001 — não derruba a thumb
         print(f"  [aviso] textos do teste A/B não saíram ({type(e).__name__}): b/c com o texto_thumb")
         return False
     tin, tout, usd = _editor.custo(resp)
@@ -391,9 +393,8 @@ def gerar_textos_ab(b, client):
            tokens_out=tout, custo_usd=usd, mensagem=f"{resp.model} (textos thumb ab)",
            **_custo.cache(resp))
     print(f"  textos do teste A/B (US$ {usd:.3f}): {' | '.join(opcoes or []) or 'nenhum válido'}")
-    if not opcoes:
-        return False
-    b["texto_thumb_ab"], b["texto_thumb_ab_de"] = opcoes, base
+    # recusa/nenhum válido também grava (vazio): rodar de novo não paga outra vez
+    b["texto_thumb_ab"], b["texto_thumb_ab_de"] = opcoes or [], base
     return True
 
 
@@ -446,6 +447,10 @@ print(f"Gerando thumbs ({'variante ' + variante if variante else 'a/b/c'}"
       f"{', teste A/B: 3 frames + 3 textos' if modo_thumb() == 'ab' else ''}) em {OUT_DIR}\n")
 textos_novos = False
 for b in blocos_iter:
+    status = (ler_bloco(stem, b["id"]) or {}).get("status")
+    if status in NAO_MEXER:
+        print(f"[Bloco {b['id']}] já {status}: thumb não mexe\n")
+        continue
     print(f"[Bloco {b['id']}] {b['tema']}")
     fila = ler_fila(b["id"]) if variante else None   # editor: mesmo frame, texto novo
     if fila is None:
