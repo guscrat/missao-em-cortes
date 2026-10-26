@@ -26,6 +26,8 @@ Quem decide é o código, não o modelo (regra de produto da quarentena):
     MAX_TROCAS_THUMB vezes. Nenhum serviu → "descartado". Thumb manual reprovada →
     "quarentena" (foi escolhida à mão: refazer com 07_thumb.py --t=)
   - tudo ok → "aprovado"
+  - modo ab (config/thumb.json: a = template, b/c = colagem): aprovado → confere também a arte
+    das colagens b/c (~US$ 0.01 cada); reprovou → b/c voltam pro template (sai do teste A/B)
 Nunca mexe em bloco já "agendado", "publicado" ou "arquivado". --sem-editor desliga as reescritas.
 Resultado completo em outputs/<pasta>/revisao.json.
 
@@ -177,12 +179,15 @@ def sistema_revisor() -> list[dict]:
 
 
 def texto_da_thumb(pasta: Path, bid: int, texto_thumb: str) -> str:
-    """O texto que está NA thumb que sobe: com a colagem aplicada (modo padrão), os textos das
-    variantes a/b/c (vão todas pro "Testar e comparar"), separados por ' | '."""
-    reg = _colagem.colagem_aplicada(pasta / "thumbs", bid)
-    if not reg:
-        return texto_thumb
-    textos = [_colagem.sem_marcas(" ".join(v["texto"])) for v in reg.get("variantes", {}).values()]
+    """O texto que está NAS thumbs que sobem (a/b/c vão todas pro "Testar e comparar"),
+    separados por ' | ': o da colagem onde ela foi aplicada (modos padrão e ab), o do template
+    (texto_thumb) no resto."""
+    textos = []
+    for letra in "abc":
+        thumb = pasta / "thumbs" / f"thumb_{bid:02d}_{letra}.png"
+        if thumb.exists():
+            v = _colagem.variante_aplicada(thumb)
+            textos.append(_colagem.sem_marcas(" ".join(v["texto"])) if v else texto_thumb)
     return " | ".join(dict.fromkeys(textos)) or texto_thumb
 
 
@@ -367,6 +372,35 @@ def trocar_thumb(client, anthropic, stem, pasta, bid, nn, titulo, texto_thumb,
             f"último problema: {problemas[-1]})", problemas, usd_total)
 
 
+def conferir_colagem_ab(client, anthropic, stem, pasta, bid, titulo) -> float:
+    """Modo ab: o revisor avaliou a 'a' (template), mas as colagens b/c também sobem no
+    "Testar e comparar". Confere a arte delas (~US$ 0.01 cada); reprovou → b/c voltam pro
+    template (o bloco segue aprovado, só sai do teste). Devolve o custo."""
+    usd_total = 0.0
+    for thumb in _colagem.colagem_ab(pasta / "thumbs", bid):
+        texto = _colagem.sem_marcas(" ".join(_colagem.variante_aplicada(thumb)["texto"]))
+        t0 = time.time()
+        try:
+            r, resp = checar_thumb(client, thumb, titulo, texto)
+        except (anthropic.APIError, json.JSONDecodeError) as e:
+            r, problema = None, f"falhou ao avaliar ({type(e).__name__})"
+        else:
+            tin, tout, usd = custo(resp)
+            usd_total += usd
+            evento(stem, "11_revisor", "llm", agente="revisor", bloco_id=bid, tokens_in=tin,
+                   tokens_out=tout, custo_usd=usd, mensagem=f"{resp.model} (colagem ab)",
+                   duracao_s=time.time() - t0, **_custo.cache(resp))
+            problema = "revisor recusou analisar" if r is None else r["thumb_problema"]
+        if r is not None and r["thumb_ok"]:
+            continue
+        ok = _editor.voltar_template(pasta, bid, ("b", "c"))
+        msg = f"colagem {thumb.stem[-1]} reprovada ({problema}) → b/c " +               ("voltaram pro template" if ok else "NÃO voltaram pro template (falhou o 07)")
+        print(f"  {bid:02d}: {msg}")
+        evento(stem, "11_revisor", "aviso", agente="revisor", bloco_id=bid, mensagem=msg[:300])
+        break
+    return usd_total
+
+
 def chamar_gu(stem: str, nn: str, motivo: str) -> None:
     """Título reprovou em todas as reescritas: decisão do Gu (chat + faixa amarela)."""
     print(f"\n  >>> DECISÃO DO GU ({stem} bloco {nn}): {motivo}\n")
@@ -469,7 +503,7 @@ def main(argv: list[str]) -> int:
         if r is None:
             continue
         if status == "quarentena" and checagens and checagens["titulo_fiel"] \
-                and not checagens["thumb_ok"] and _colagem.colagem_aplicada(pasta / "thumbs", bid):
+                and not checagens["thumb_ok"]                 and _colagem.variante_aplicada(escolher_thumb(pasta / "thumbs", nn)):
             # colagem reprovada na arte: as 3 variantes voltam pro template (o --proximo só
             # trocaria a 'a') e o bloco é revisado de novo, com o texto do template
             print(f"  {nn}: colagem reprovada ({checagens['thumb_problema']}) → template atual")
@@ -493,6 +527,11 @@ def main(argv: list[str]) -> int:
             custo_bloco += usd_t
             if status == "aprovado":
                 checagens = {**checagens, "thumb_ok": True, "thumb_problema": ""}
+        if status == "aprovado":
+            usd_ab = conferir_colagem_ab(client, anthropic, stem, pasta, bid, titulo)
+            total += usd_ab
+            custo_bloco += usd_ab
+            texto_thumb = texto_da_thumb(pasta, bid, texto_base)
 
         upsert_bloco(stem, bid, status=status, forcar_status=True, motivo=motivo)
         thumb = escolher_thumb(pasta / "thumbs", nn)

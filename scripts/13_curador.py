@@ -22,7 +22,8 @@ Fluxo:
      01_baixar → pipeline.py --polir → 11_revisor → 10_shorts (aprovados) → publicacao.txt.
      ~US$ 0,65 por vídeo. Fila com mais de DIAS_ARQUIVAR dias expira.
      Thumb colagem (config/thumb.json): "teste" roda o 07b_colagem no fim, em thumbs/colagem/
-     (~US$ 0,15/vídeo, não mexe nas thumbs que sobem); "padrao" roda com --aplicar antes do revisor.
+     (~US$ 0,15/vídeo, não mexe nas thumbs que sobem); "padrao" roda com --aplicar antes do revisor;
+     "ab" roda com --ab antes do revisor (a = template, b/c = colagem, pro "Testar e comparar").
   Modo evento (config/canais.json → modo_evento, ex.: 2º turno): até modo_evento_ate
      processa 1 vídeo por rodada MESMO com o canal coberto, só da fila a partir de
      modo_evento_desde, e o Claude prioriza modo_evento_tema. Depois do "ate" desliga sozinho.
@@ -433,12 +434,12 @@ def cadastrar_zoom(stem: str, zoom: str | None) -> bool:
 
 
 def modo_colagem() -> str:
-    """config/thumb.json → 'desligado' | 'teste' | 'padrao' (sem arquivo: desligado)."""
+    """config/thumb.json → 'desligado' | 'teste' | 'ab' | 'padrao' (sem arquivo: desligado)."""
     try:
         modo = json.loads((ROOT / "config" / "thumb.json").read_text(encoding="utf-8")).get("colagem")
     except (OSError, ValueError, AttributeError):
         return "desligado"
-    return modo if modo in ("teste", "padrao") else "desligado"
+    return modo if modo in ("teste", "ab", "padrao") else "desligado"
 
 
 ROTULOS = {"01_baixar.py": "baixando", "pipeline.py": "pipeline", "11_revisor.py": "revisor",
@@ -470,8 +471,9 @@ def processar(item: dict) -> dict:
               ("pipeline.py", stem, "--polir"),
               ("11_revisor.py", stem)]
     for script, *args in etapas:
-        if script == "11_revisor.py" and colagem == "padrao":   # revisor já avalia a colagem
-            if not rodar("07b_colagem.py", stem, "--aplicar"):
+        if script == "11_revisor.py" and colagem in ("padrao", "ab"):   # revisor já avalia a colagem
+            flag = "--aplicar" if colagem == "padrao" else "--ab"   # ab: só b/c; a fica no template
+            if not rodar("07b_colagem.py", stem, flag):
                 res["avisos"].append(f"{stem}: thumb colagem falhou, ficou o template atual")
         if not rodar(script, *args):
             res["erro"] = f"{script} falhou"
@@ -594,6 +596,10 @@ def escrever_resumo(rodada: dict) -> str:
         linhas += [f"- **{p['aprovados']} corte(s)** de {p['canal']}: {p['titulo']} → "
                    f"`{p['publicacao']}`" for p in prontos]
         linhas.append("")
+    if rodada.get("thumb_ab"):
+        linhas += ["## Thumb A/B (Testar e comparar)", f"- {rodada['thumb_ab']}",
+                   "- Resultado novo: `uv run py scripts/16_thumb_ab.py registrar <stem> <vídeo> "
+                   "<a|b|c|empate>`", ""]
     colagens = [p for p in rodada["processados"] if p.get("colagem")]
     if colagens:
         linhas.append("## Thumb colagem (teste)")
@@ -712,6 +718,17 @@ def sincronizar_canal(dry_run: bool = False) -> str | None:
     return None
 
 
+def placar_thumb_ab() -> str | None:
+    """Modo ab: uma linha com o placar do "Testar e comparar" (16_thumb_ab) pro resumo."""
+    if modo_colagem() != "ab":
+        return None
+    import importlib
+    ab = importlib.import_module("16_thumb_ab")
+    p = ab.placar()
+    return (f"template {p['template']} x colagem {p['colagem']} (empate {p['empate']}) em "
+            f"{p['testes']} teste(s) — {ab.sugestao(p)}")
+
+
 def atualizar_placar() -> str | None:
     """Placar do canal (15_placar → state/placar.json, aba Hoje do painel), 1x/dia junto com
     a rodada. Nunca abre o navegador e nunca derruba a rodada: devolve o aviso."""
@@ -770,7 +787,8 @@ def _rodada(cfg: dict, dry_run: bool, sem_pipeline: bool, forcar: bool) -> int:
     agora = datetime.now().isoformat(timespec="seconds")
     rodada = {"quando": agora, "custo": 0.0, "estoque": estoque, "escolhidos": [],
               "fila": [], "recusados": [], "processados": [], "aviso_canal": aviso_canal,
-              "aviso_placar": aviso_placar, "modo_evento": evento_on}
+              "aviso_placar": aviso_placar, "modo_evento": evento_on,
+              "thumb_ab": placar_thumb_ab()}
     if novos:
         from anthropic import Anthropic
         from dotenv import load_dotenv

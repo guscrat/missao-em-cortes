@@ -202,17 +202,33 @@ def _colagem_aplicada(thumb: Path) -> dict | None:
     return _colagem.variante_aplicada(thumb)
 
 
-def voltar_template(pasta: Path, bid: int) -> bool:
-    """Tira a colagem do bloco: refaz a/b/c no template atual (07) e tira da descrição o crédito
-    da foto do banco (a foto saiu da thumb). True se o 07 rodou."""
-    r = subprocess.run([sys.executable, str(SCRIPTS / "07_thumb.py"), pasta.name, f"--bloco={bid}"],
-                       capture_output=True)
-    if r.returncode:
-        return False
+def voltar_template(pasta: Path, bid: int, letras: tuple[str, ...] = ()) -> bool:
+    """Tira a colagem do bloco: refaz no template atual (07) as variantes `letras` (vazio = a/b/c;
+    modo ab = b/c) e tira da descrição o crédito da foto do banco (a foto saiu da thumb).
+    True se o 07 rodou."""
+    base = [sys.executable, str(SCRIPTS / "07_thumb.py"), pasta.name, f"--bloco={bid}"]
+    for cmd in [[*base, f"--variante={l}"] for l in letras] or [base]:
+        if subprocess.run(cmd, capture_output=True).returncode:
+            return False
     desc = pasta / "descricoes.txt"
     if desc.exists():
         desc.write_text(trocar_creditos(desc.read_text(encoding="utf-8"), bid, []), encoding="utf-8")
     return True
+
+
+def refazer_colagem_ab(pasta: Path, bid: int) -> list[str]:
+    """Modo ab: a 'a' (template) já foi refeita; as colagens b/c ainda têm o texto antigo.
+    Refaz com o texto_thumb novo (--sem-editor); não saiu → b/c voltam pro template."""
+    import _colagem
+    if not _colagem.colagem_ab(pasta / "thumbs", bid):
+        return []
+    r = subprocess.run([sys.executable, str(SCRIPTS / "07b_colagem.py"), pasta.name,
+                        f"--bloco={bid}", "--ab", "--sem-editor"], capture_output=True)
+    if not r.returncode:
+        return []
+    if voltar_template(pasta, bid, ("b", "c")):
+        return ["colagem (b/c) não saiu com o texto novo: voltou pro template atual"]
+    return ["colagem (b/c) não saiu com o texto novo e falhou ao voltar pro template"]
 
 
 def refazer_artes(pasta: Path, bid: int, thumb: Path | None) -> list[str]:
@@ -239,6 +255,7 @@ def refazer_artes(pasta: Path, bid: int, thumb: Path | None) -> list[str]:
             cmd.append(f"--variante={variante}")
         if subprocess.run(cmd, capture_output=True).returncode:
             avisos.append("falhou ao refazer a thumb")
+        avisos += refazer_colagem_ab(pasta, bid)
     if any((pasta / "shorts").glob(f"short_{nn}_*.mp4")):
         r = subprocess.run([*py, str(SCRIPTS / "10_shorts.py"), pasta.name, f"--bloco={bid}"],
                            capture_output=True)
