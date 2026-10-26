@@ -52,7 +52,7 @@ Scripts (`scripts/`):
 |---|---|---|---|
 | 1 | Download | `uv run py scripts/01_baixar.py URL <stem>` | grátis |
 | 2 | Transcrição | `uv run py scripts/02_transcribe.py inputs/<stem>.mp4` | grátis (local, ~6-12min) |
-| 3 | Segmentação (janelas de 60 min + âncora pelo texto) | `uv run py scripts/03_segmentar.py <stem> [--reaproveitar]` | ~$0.20/h de live ($0 com --reaproveitar) |
+| 3 | Segmentação (janelas de 60 min + âncora pelo texto) | `uv run py scripts/03_segmentar.py <stem> [--refazer]` | ~$0.20/h de live; rodar de novo reaproveita os blocos ($0) |
 | 4 | Cortes (+ cold open) | `uv run py scripts/04_cortar.py <stem>` | grátis |
 | 4b* | Polimento (jump cut) | `uv run py scripts/04b_polir.py <stem> [--sem-llm]` | ~$0.18 / $0 |
 | 4c | Legenda karaokê (padrão) | `uv run py scripts/04c_legendas.py <stem> [--polido]` | grátis |
@@ -60,7 +60,7 @@ Scripts (`scripts/`):
 | 6 | Montagem final | `uv run py scripts/06_montar.py <stem> [--polido] [--legendado]` | grátis |
 | 8 | Descrições | `uv run py scripts/08_descricao.py <stem>` | grátis |
 
-**Orquestrador:** `uv run py scripts/pipeline.py <stem> [--polir] [--sem-llm] [--sem-legendas] [--desde=N] [--bloco=N]` roda 2→8, para na primeira falha e mostra o `--desde` pra retomar (pula o 2 se a transcrição existe; `--desde=4c` retoma do 04c; `--bloco=N` refaz só 4→4b→4c→6 de um bloco). O download fica de fora. Steps 3-8 recebem só o **stem**.
+**Orquestrador:** `uv run py scripts/pipeline.py <stem> [--polir] [--sem-llm] [--sem-legendas] [--desde=N] [--bloco=N] [--refazer]` roda 2→8, para na primeira falha e mostra o `--desde` pra retomar (pula o 2 se a transcrição existe; `--desde=4c` retoma do 04c; `--bloco=N` refaz só 4→4b→4c→6 de um bloco). O download fica de fora. Steps 3-8 recebem só o **stem**.
 
 Vídeo final: `[Cold open 15-30s] → [Intro 3s] → [Card 3s] → [Corte 8-30min] → [Outro 5s]`.
 
@@ -71,6 +71,7 @@ Agentes off-pipeline (detalhes nas skills): Curador 13 às 17h decide o que proc
 ## Regras transversais
 
 - **Custo transparente:** toda chamada de API loga estimativa de custo e registra evento `llm` no banco (skill `painel-eventos`).
+- **Orçamento por live:** chamada paga de uma live passa antes por `_custo.checar_orcamento(stem, etapa)`. Painel avisa a partir de US$ 1; a partir de US$ 2 as etapas pagas param até `uv run py scripts/_custo.py liberar <stem>` (limiares em `config/painel.json`).
 - **Perguntar SEMPRE antes de:** publicar no YouTube pela primeira vez numa feature nova · gastar API paga fora de teste · ação destrutiva (apagar arquivo/branch, force push, reset) · mudar segredo/credencial.
 - **Pasta principal sempre na `develop`**; código novo em worktree/feature branch (skill `release`).
 - Nunca mexer em bloco `agendado`/`publicado`/`arquivado`.
