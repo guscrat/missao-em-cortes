@@ -20,6 +20,7 @@ Fluxo:
      ("canal coberto até DD/MM"). Shorts não entram na conta.
      Aí processa 1 vídeo só, o de maior prioridade (empate: o mais recente):
      01_baixar → pipeline.py --polir → 11_revisor → 10_shorts (aprovados) → publicacao.txt.
+     Shorts só com config/upload.json → auditoria_aprovada true (antes disso ninguém posta).
      ~US$ 0,65 por vídeo. Fila com mais de DIAS_ARQUIVAR dias expira.
      Thumb colagem (config/thumb.json): "teste" roda o 07b_colagem no fim, em thumbs/colagem/
      (~US$ 0,15/vídeo, não mexe nas thumbs que sobem); "padrao" roda com --aplicar antes do revisor;
@@ -47,7 +48,7 @@ from pathlib import Path
 
 import _custo
 from _eventos import evento, upsert_video, conectar
-from _paths import modo_evento
+from _paths import auditoria_aprovada, modo_evento
 from sincronizar_estado import DIAS_ARQUIVAR    # janela do conteúdo antigo (15 dias)
 
 ROOT = Path(__file__).parent.parent
@@ -482,7 +483,8 @@ def processar(item: dict) -> dict:
             evento(stem, "curador_pipeline", "falha", agente="curador", mensagem=res["erro"])
             return res
     pasta = achar_pasta(stem)
-    for bloco in aprovados(pasta):                 # Short só de corte aprovado ($0, ~1 min cada)
+    # Short só de corte aprovado ($0, ~1 min cada) e só depois da auditoria: até lá não sobe
+    for bloco in aprovados(pasta) if auditoria_aprovada() else []:
         if not rodar("10_shorts.py", stem, f"--bloco={bloco['id']}"):
             res["avisos"].append(f"{stem}: Short do bloco {bloco['id']} falhou "
                                  f"(10_shorts.py {stem} --bloco={bloco['id']})")

@@ -28,6 +28,7 @@ def _mock_publicacao(raiz, monkeypatch, aprov=()):
 
 def test_colagem_teste_roda_depois_dos_shorts(raiz, monkeypatch):
     _thumb_cfg(raiz, '{"colagem": "teste"}')
+    monkeypatch.setattr(cu, "auditoria_aprovada", lambda: True)
     chamadas = []
     monkeypatch.setattr(cu, "rodar", lambda script, *a: chamadas.append((script, *a)) or True)
     _mock_publicacao(raiz, monkeypatch, aprov=[1])
