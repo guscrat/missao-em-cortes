@@ -127,6 +127,38 @@ def trocar_creditos(texto: str, bloco_id: int, linhas: list[str]) -> str:
     return texto
 
 
+_MOMENTO = re.compile(r"^• (.+)$", re.M)
+
+
+def momentos(descricao: str) -> list[str]:
+    """Os itens de "Principais momentos:" de uma descrição (linhas '• ...')."""
+    return [m.strip() for m in _MOMENTO.findall(descricao.replace("\r\n", "\n"))]
+
+
+def remover_momentos(texto: str, bloco_id: int, itens: list[str]) -> str:
+    """Tira de UM bloco as linhas '• item' de `itens` (o revisor achou fora do trecho). Se
+    não sobra nenhum, tira o cabeçalho "Principais momentos:" junto."""
+    texto = texto.replace("\r\n", "\n")
+    fora = {" ".join(i.split()) for i in itens}
+    cabecalhos = list(_CABECALHO_BLOCO.finditer(texto))
+    for i, cab in enumerate(cabecalhos):
+        if int(cab.group(1)) != bloco_id:
+            continue
+        fim = cabecalhos[i + 1].start() if i + 1 < len(cabecalhos) else len(texto)
+        trecho = texto[cab.end():fim]
+        miolo = _CORPO.search(trecho)
+        if not miolo:
+            return texto
+        linhas = [l for l in miolo.group(1).split("\n")
+                  if not (l.startswith("• ") and " ".join(l[2:].split()) in fora)]
+        if not any(l.startswith("• ") for l in linhas):
+            linhas = [l for l in linhas if l.strip() != "Principais momentos:"]
+        corpo = re.sub(r"\n{3,}", "\n\n", "\n".join(linhas))
+        trecho = trecho[:miolo.start(1)] + corpo + trecho[miolo.end(1):]
+        return texto[:cab.end()] + trecho + texto[fim:]
+    return texto
+
+
 def trocar_titulo(texto: str, bloco_id: int, novo: str) -> str:
     """Troca o título (e a contagem de chars) de UM bloco, sem mexer no resto do txt."""
     texto = texto.replace("\r\n", "\n")

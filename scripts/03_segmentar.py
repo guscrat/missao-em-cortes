@@ -267,6 +267,7 @@ def gravar_duracao(b: dict, ini: float, fim: float) -> None:
     b["faixa_duracao"] = fr.faixa((fim - ini) / 60)
 
 
+PROPAGANDA = fr.termos_propaganda()   # config/propaganda.json
 erros, avisos = [], []
 validos = []  # (id, ini, fim, bloco) dos blocos parseáveis, pro check de sobreposição
 for b in data["blocos"]:
@@ -294,6 +295,13 @@ for b in data["blocos"]:
         if not e[f"{ponta}_ok"]:
             avisos.append(f"bloco {bid}: sem ponto natural de {ponta} a até "
                           f"{fr.JANELA_BLOCO_S:.0f}s (o revisor confere)")
+    # nenhum corte abre com propaganda/patrocínio da live: começa na 1ª frase depois dela
+    pp = fr.pular_propaganda(palavras, ini, *PROPAGANDA)
+    if pp:
+        ini = pp[0]
+        b["timestamp_inicio"] = fr.segundos_para_ts(ini)
+        avisos.append(f"bloco {bid}: abria com propaganda da live (\"…{pp[1][-60:]}\") — "
+                      f"começa depois dela")
     validos.append((bid, ini, fim, b))
 
     gravar_duracao(b, ini, fim)
