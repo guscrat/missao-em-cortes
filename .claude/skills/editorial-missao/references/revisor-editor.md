@@ -15,7 +15,7 @@
 
 ## Checagem 0a — abertura sem propaganda (código, $0, antes da fronteira)
 
-`conferir_abertura` → `_fronteira.pular_propaganda` com os termos de `config/propaganda.json` (`termos` abrem uma propaganda se aparecem nos primeiros 30s; `continua` só emendam uma já aberta, a até 40s uma da outra; desiste se passar de 4 min). Achou → o início vai pra 1ª frase depois da propaganda, grava no `blocos.json`/banco (`gravar_tempos`) e refaz o bloco (`pipeline.py --bloco=N`). Sem a propaganda o corte fica < 8 min ou falhou ao refazer → `quarentena`. Resultado em `revisao.json` → `abertura` (`pulado_s`, `trecho`). O `--dry-run` só mostra.
+`conferir_abertura` → `_fronteira.pular_propaganda` com os termos de `config/propaganda.json` (`termos` abrem uma propaganda se aparecem nos primeiros 30s; `continua` só emendam uma já aberta, a até 40s uma da outra; desiste se passar de 2,5 min). Achou → o início vai pra 1ª frase depois da propaganda, grava no `blocos.json`/banco (`gravar_tempos`) e refaz o bloco (`pipeline.py --bloco=N`). Sem a propaganda o corte fica < 8 min ou falhou ao refazer → `quarentena`. Resultado em `revisao.json` → `abertura` (`pulado_s`, `trecho`). O `--dry-run` só mostra.
 
 ## Checagem 0 — fronteira (código, $0, antes da chamada paga)
 
@@ -27,7 +27,7 @@
 2. **Thumb ok** — a thumb **final**: rosto inteiro, visível e iluminado, sem sombra/degradê em cima, texto legível e coerente, sem tela compartilhada.
 3. **Tela compartilhada** — maior parte do corte mostra tela em vez de gente.
 4. **Corte sem sentido** — o trecho não se sustenta sozinho.
-5. **`momentos_fora`** — os itens de "Principais momentos" da descrição (lidos do `descricoes.txt`) que **não** estão na transcrição do trecho (fala de outro momento da live, inventada ou distorcida; paráfrase fiel do trecho passa). Não muda o status: o código (`limpar_momentos`) tira esses itens do `descricoes.txt` (só essas linhas; sem nenhum sobra, sai o cabeçalho) e dos `ganchos` do `blocos.json`. Registro em `revisao.json` → `momentos_removidos`.
+5. **`momentos_fora`** — os itens de "Principais momentos" da descrição (lidos do `descricoes.txt`) que **não** estão na transcrição do trecho (fala de outro momento da live, inventada ou distorcida; paráfrase fiel do trecho passa). Não muda o status: o código (`limpar_momentos`) tira esses itens do `descricoes.txt` (só essas linhas; sem nenhum sobra, sai o cabeçalho) e dos `ganchos` do `blocos.json`. Registro em `revisao.json` → `momentos_removidos`. Se 2+ e mais da metade estavam fora, o bloco aprovado vai pra `quarentena` (sinal de tempos do bloco trocados). A transcrição conferida exclui o campo `remover` do bloco (o que o 04b corta).
 
 ## Decisão (código, não modelo)
 

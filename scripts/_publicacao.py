@@ -17,6 +17,7 @@ Curador (13) no fim de cada vídeo; dá pra rodar à mão:
 de hoje que já passou sai como "publicar JÁ" (o dia continua com os vídeos dele).
 """
 import json
+import re
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -121,7 +122,8 @@ def horas(grade: list[str] | None, dias: list[date], agora: datetime | None = No
         i = vistos.get(d, 0)
         vistos[d] = i + 1
         h = grade[min(i, len(grade) - 1)]
-        passou = d == agora.date() and int(h.rstrip("h").split(":")[0]) <= agora.hour
+        hh, mm = [int(n) for n in (re.findall(r"\d+", h) + ["0", "0"])[:2]]   # 12h, 19h30, 19:30
+        passou = d == agora.date() and (hh, mm) <= (agora.hour, agora.minute)
         saida.append(f"JÁ ({h} passou)" if passou else h)
     return saida
 
