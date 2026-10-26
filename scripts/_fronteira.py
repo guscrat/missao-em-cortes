@@ -13,6 +13,9 @@ Início natural = a palavra anterior é um fim de frase (pontuação ou pausa lo
 Custo: $0 (sem API).
 """
 import bisect
+import difflib
+import re
+import unicodedata
 
 FIM_FRASE = (".", "!", "?")
 PAUSA_FIM_S = 0.5        # silêncio mínimo depois da última palavra do corte
@@ -139,6 +142,49 @@ def encaixar(palavras: list[dict], ini: float, fim: float, janela_s: float,
                            None if dur_max is None else base + dur_max)
     return {"inicio": base, "fim": fim if novo_fim is None else novo_fim,
             "inicio_ok": novo_ini is not None, "fim_ok": novo_fim is not None}
+
+
+ANCORA_JANELA_S = 12 * 60   # em janelas de 60 min o LLM erra poucos minutos (numa chamada
+                            # só pra live de 3h20, chegou a errar 10-20 min)
+ANCORA_TOKENS = 8           # palavras da frase usadas na busca (começo ou fim dela)
+ANCORA_MIN = 0.7            # semelhança mínima (difflib) pra aceitar o achado
+
+
+def _norm(palavra: str) -> str:
+    t = unicodedata.normalize("NFKD", palavra.lower()).encode("ascii", "ignore").decode()
+    return re.sub(r"[^a-z0-9]", "", t)
+
+
+def ancorar(palavras: list[dict], frase: str, t: float, ponta: str,
+            janela_s: float = ANCORA_JANELA_S) -> float | None:
+    """Tempo real de uma frase que o LLM citou literalmente, procurada no words.json a até
+    janela_s do tempo t que ele deu. ponta='inicio': começo da 1ª palavra (usa as primeiras
+    ANCORA_TOKENS palavras da frase); 'fim': fim da última (usa as últimas). Entre achados
+    de semelhança parecida (mesma casa decimal), ganha o mais perto de t: frase repetida
+    ("Não comprem.") não puxa pra longe. Frase curta demais ou nada parecido: None."""
+    toks = [x for x in (_norm(p) for p in frase.split()) if x]
+    if len(toks) < 3 or not palavras:
+        return None
+    toks = toks[:ANCORA_TOKENS] if ponta == "inicio" else toks[-ANCORA_TOKENS:]
+    n, alvo = len(toks), set(toks)
+    perto = [k for k, w in enumerate(palavras) if abs(w["start"] - t) <= janela_s]
+    if len(perto) < n:
+        return None
+    lo = perto[0]
+    norm = [_norm(palavras[k]["word"]) for k in perto]
+    melhor = None
+    for i in range(len(norm) - n + 1):
+        trecho = norm[i:i + n]
+        if len(alvo.intersection(trecho)) < ANCORA_MIN * n:   # filtro barato antes do difflib
+            continue
+        r = difflib.SequenceMatcher(None, toks, trecho, autojunk=False).ratio()
+        if r < ANCORA_MIN:
+            continue
+        tt = palavras[lo + i]["start"] if ponta == "inicio" else palavras[lo + i + n - 1]["end"]
+        chave = (round(r, 1), -abs(tt - t))
+        if melhor is None or chave > melhor[0]:
+            melhor = (chave, tt)
+    return None if melhor is None else melhor[1]
 
 
 def segundos_para_ts(t: float) -> str:

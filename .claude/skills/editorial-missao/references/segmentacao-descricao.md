@@ -14,7 +14,14 @@ A LLM recebe a transcrição completa com timestamps e retorna JSON com os **blo
 - `short` (até 3 min, ideal 30-90s, ideia completa terminando numa frase de impacto: `gancho`, `frase_final`)
 - `cold_open` (trecho de 15-30s de maior impacto dentro do bloco, com timestamps próprios)
 
-Depois da resposta, o 03 **encaixa os tempos** (bloco, cold open e Short) no fim de frase + pausa mais perto pelo `words.json` (`_fronteira.encaixar`, até 30s no bloco e 10s nos trechos, respeitando 8-30 min e o teto de 175s do Short) e grava os tempos exatos (`HH:MM:SS.ss`), a `duracao_minutos` real e a `faixa_duracao`. Também grava `duracao_min` no banco. Avisa: bloco fora de 8-30 min, sem ponto natural perto, todos na mesma faixa; Short inválido/fora do bloco/acima de 3 min é removido (o 10 cai pro cold open).
+**O LLM não sabe copiar timestamp em transcrição longa** (26/10/2026, live de 3h20 do Renan: errou 2-20 min, e título, frases e tempos de um mesmo bloco se contradiziam; o validador barrou 2 rodadas). Por isso:
+
+- **Janelas de 60 min**: live acima de 70 min é segmentada em sequência; cada chamada recebe só um trecho e devolve os blocos que *terminam* nele; a próxima começa no fim real do último bloco. Bloco que termina a menos de 3 min do fim de uma janela (não a última) sai e vai inteiro pra próxima. Prompt de sistema em cache. ~+25% de input (US$ 0,62 na live de 3h20, 4 chamadas).
+- **Âncora pelo texto** (`_fronteira.ancorar`): a frase literal (abertura/encerramento do bloco, `frase` do cold open, `gancho`/`frase_final` do Short) é procurada no words.json a até 12 min do tempo dito (sem acento/pontuação, difflib ≥ 0,7; entre achados parecidos, o mais perto). Desvio > 1 min vira aviso.
+- **Regras no código**: com os tempos reais, bloco **< 8 min sai** e sobreposição grande (mesmo assunto nas duas pontas de uma emenda) fica com o de maior `score_potencial`, os dois registrados em `descartados` no blocos.json, com o motivo; cold open fora do bloco usa os primeiros ~22s do Short; ids renumerados em ordem de tempo.
+- A resposta paga fica em `segmentacao_bruta.json`; **`03_segmentar.py <stem> --reaproveitar`** refaz tudo isso a partir dela por **$0**.
+
+Depois da âncora, o 03 **encaixa os tempos** (bloco, cold open e Short) no fim de frase + pausa mais perto pelo `words.json` (`_fronteira.encaixar`, até 30s no bloco e 10s nos trechos, respeitando 8-30 min e o teto de 175s do Short) e grava os tempos exatos (`HH:MM:SS.ss`), a `duracao_minutos` real e a `faixa_duracao`. Também grava `duracao_min` no banco. Avisa: bloco fora de 8-30 min, sem ponto natural perto, todos na mesma faixa; Short inválido/fora do bloco/acima de 3 min é removido (o 10 cai pro cold open).
 
 O 03 valida os timestamps (fim>início, cold_open dentro do bloco, fim≤duração do vídeo). Inválido → salva `blocos_invalido.json` e sai com erro em vez de gravar lixo. Falha de parse → dump em `outputs/_debug/`. Loga custo em $.
 

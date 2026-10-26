@@ -52,7 +52,7 @@ Scripts (`scripts/`):
 |---|---|---|---|
 | 1 | Download | `uv run py scripts/01_baixar.py URL <stem>` | grátis |
 | 2 | Transcrição | `uv run py scripts/02_transcribe.py inputs/<stem>.mp4` | grátis (local, ~6-12min) |
-| 3 | Segmentação | `uv run py scripts/03_segmentar.py <stem>` | ~$0.20 |
+| 3 | Segmentação (janelas de 60 min + âncora pelo texto) | `uv run py scripts/03_segmentar.py <stem> [--reaproveitar]` | ~$0.20/h de live ($0 com --reaproveitar) |
 | 4 | Cortes (+ cold open) | `uv run py scripts/04_cortar.py <stem>` | grátis |
 | 4b* | Polimento (jump cut) | `uv run py scripts/04b_polir.py <stem> [--sem-llm]` | ~$0.18 / $0 |
 | 4c | Legenda karaokê (padrão) | `uv run py scripts/04c_legendas.py <stem> [--polido]` | grátis |
