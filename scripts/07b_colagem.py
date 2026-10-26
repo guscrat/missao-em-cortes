@@ -283,6 +283,8 @@ def main(argv: list[str]) -> int:
             continue
         print(f"[Bloco {bid}] {b.get('tema', '')}")
         t0 = time.time()
+        if not sem_llm:
+            _custo.checar_orcamento(stem, "07b_colagem")
         evento(stem, "07b_colagem", "inicio", agente="editor", bloco_id=bid)
         titulo = descricoes.get(bid, {}).get("titulo") or b.get("titulo_sugerido", "")
         transcricao = " ".join(w["word"] for w in palavras_na_janela(

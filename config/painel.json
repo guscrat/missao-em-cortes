@@ -1,5 +1,7 @@
 {
-  "_comment": "Painel (painel/hoje.py). orcamento_mensal_usd = teto de API paga no mês (soma do custo_usd dos eventos, todos os agentes); cota_alerta_pct = % da cota diária do YouTube (config/upload.json → cota_limite_dia) que acende o alerta.",
+  "_comment": "Painel (painel/hoje.py). orcamento_mensal_usd = teto de API paga no mês (soma do custo_usd dos eventos, todos os agentes); cota_alerta_pct = % da cota diária do YouTube (config/upload.json → cota_limite_dia) que acende o alerta. alerta_live_usd = custo de API de uma live que acende o aviso; trava_live_usd = acima disso as etapas pagas da live param até liberar (uv run py scripts/_custo.py liberar <stem>).",
   "orcamento_mensal_usd": 10,
-  "cota_alerta_pct": 80
+  "cota_alerta_pct": 80,
+  "alerta_live_usd": 1,
+  "trava_live_usd": 2
 }

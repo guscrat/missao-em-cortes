@@ -1,6 +1,6 @@
 """Lê a transcrição, manda pro Claude e gera JSON com blocos temáticos.
 
-Uso: uv run py scripts/03_segmentar.py <stem> [--reaproveitar]
+Uso: uv run py scripts/03_segmentar.py <stem> [--refazer | --reaproveitar]
 
 Os tempos do LLM não são confiáveis em live longa (na de 3h20 do Renan erraram ~10 min na
 segunda metade). Por isso cada ponta é ANCORADA PELO TEXTO: a frase literal que o LLM cita
@@ -8,9 +8,16 @@ segunda metade). Por isso cada ponta é ANCORADA PELO TEXTO: a frase literal que
 no words.json perto do tempo dito (_fronteira.ancorar), e só depois encaixada no fim de frase
 + pausa mais perto (_fronteira.encaixar).
 
-A resposta bruta do LLM fica em segmentacao_bruta.json. --reaproveitar refaz a validação a
-partir dela, sem chamar a API ($0): útil quando o 03 barrou a resposta por timestamp inválido.
+A resposta bruta do LLM fica em segmentacao_bruta.json, com a assinatura do que a gerou
+(hash da transcrição e do prompt + modelo). Rodar o 03 de novo NÃO paga outra segmentação:
+  - mesma transcrição → reaproveita os blocos já escolhidos ($0) e refaz só âncora, encaixe e
+    validação (é o que ajusta os pontos de corte). Prompt/modelo mudaram: reaproveita e avisa.
+  - transcrição mudou (ou não há resposta completa) → chama a API (necessário).
+  --refazer força uma segmentação nova (paga); --reaproveitar força o reaproveitamento.
+Reprocessamento pago (já existia resposta) põe a transcrição no cache de 1 h: outro --refazer
+na mesma hora (ex: iterando o prompt) lê do cache (0.1x) em vez de pagar o input cheio.
 """
+import hashlib
 import json
 import sys
 sys.stdout.reconfigure(encoding='utf-8')
@@ -30,12 +37,14 @@ DESVIO_AVISO_S = 60   # âncora longe disso do tempo do LLM: avisa (o LLM errou 
 
 args = [a for a in sys.argv[1:] if not a.startswith("--")]
 reaproveitar = "--reaproveitar" in sys.argv[1:]
+refazer = "--refazer" in sys.argv[1:]
 input_arg = args[0] if args else "live_teste"
 PASTA = achar_pasta(input_arg)
 stem = stem_de(PASTA)
 INPUT = PASTA / "transcricao.txt"
 OUTPUT = PASTA / "blocos.json"
 BRUTA = PASTA / "segmentacao_bruta.json"
+BRUTA_PARCIAL = PASTA / "segmentacao_bruta_parcial.json"
 
 
 JANELA_MIN = 60        # live maior que isso é segmentada em janelas (o LLM perde o relógio)
@@ -65,10 +74,42 @@ def janelas(linhas: list[tuple[float, str]], inicio: float) -> tuple[str, float,
     return texto, inicio, min(fim, total), ultima
 
 
+def assinatura(transcricao: str, prompt: str) -> dict:
+    """O que define a segmentação: mudou isso, os blocos escolhidos podem mudar."""
+    h = lambda t: hashlib.sha256(t.encode("utf-8")).hexdigest()[:16]   # noqa: E731
+    return {"transcricao": h(transcricao), "prompt": h(prompt), "modelo": MODELO}
+
+
+def decidir_segmentacao(atual: dict, refazer: bool) -> tuple[str, str]:
+    """('reaproveitar'|'chamar', motivo). Só chama a API quando é necessário."""
+    if refazer:
+        return "chamar", "--refazer"
+    if not BRUTA.exists():
+        return "chamar", ("a segmentação anterior ficou incompleta" if BRUTA_PARCIAL.exists()
+                          else "primeira segmentação desta live")
+    try:
+        antiga = json.loads(BRUTA.read_text(encoding="utf-8")).get("_assinatura")
+    except ValueError:
+        return "chamar", f"{BRUTA.name} ilegível"
+    if not antiga:   # resposta de antes da assinatura: a data diz se a transcrição mudou
+        if INPUT.stat().st_mtime > BRUTA.stat().st_mtime:
+            return "chamar", "a transcrição é mais nova que a segmentação"
+        return "reaproveitar", "mesma transcrição (segmentação sem assinatura)"
+    if antiga.get("transcricao") != atual["transcricao"]:
+        return "chamar", "a transcrição mudou"
+    mudou = [k for k in ("prompt", "modelo") if antiga.get(k) != atual[k]]
+    if mudou:
+        return "reaproveitar", (f"{' e '.join(mudou)} mudou desde a segmentação: os blocos "
+                                f"são os da regra antiga; --refazer pra segmentar de novo (pago)")
+    return "reaproveitar", "mesma transcrição, prompt e modelo"
+
+
 def pedir_blocos(client, prompt_sistema: str, texto: str, ini: float, fim: float,
-                 ultima: bool, n_janela: int) -> tuple[dict, dict]:
-    """Uma chamada (uma janela). O prompt de sistema vai pro cache: as janelas saem em
-    sequência, < 5 min entre uma e outra. (data, uso)."""
+                 ultima: bool, n_janela: int, cache_1h: bool = False) -> tuple[dict, dict]:
+    """Uma chamada (uma janela). (data, uso).
+    A transcrição vai ANTES do prompt: num reprocessamento ela entra no cache de 1 h e
+    continua valendo mesmo se o prompt for editado entre uma rodada e outra (o cache é por
+    prefixo). Primeira segmentação: sem cache (cada janela é lida uma vez só)."""
     contexto = "" if n_janela == 1 and ultima else (
         f"TRECHO DA LIVE: de {fr.segundos_para_ts(ini)[:8]} a {fr.segundos_para_ts(fim)[:8]} "
         f"(a live é longa e é analisada em partes, em sequência).\n"
@@ -77,15 +118,20 @@ def pedir_blocos(client, prompt_sistema: str, texto: str, ini: float, fim: float
            "assunto, se ainda não terminou quando o trecho acaba, NÃO entra: ele será analisado "
            "inteiro no próximo trecho, que começa onde terminar o seu último bloco.\n")
         + "\n")
+    bloco_transcricao = {"type": "text",
+                         "text": f"Transcrição da live a ser analisada:\n\n<transcricao>\n"
+                                 f"{texto}\n</transcricao>"}
+    if cache_1h:
+        bloco_transcricao["cache_control"] = {"type": "ephemeral", "ttl": "1h"}
     response = client.messages.create(
         model=MODELO,
         max_tokens=12000,
-        system=[{"type": "text", "text": prompt_sistema, "cache_control": {"type": "ephemeral"}}],
+        system=[bloco_transcricao, {"type": "text", "text": prompt_sistema}],
         messages=[
             {
                 "role": "user",
                 "content": (
-                    f"{contexto}Transcrição da live a ser analisada:\n\n{texto}\n\n"
+                    f"{contexto}Segmente a transcrição acima.\n\n"
                     "INSTRUÇÃO CRÍTICA: Responda APENAS com o JSON conforme o schema "
                     "especificado no prompt do sistema. Não adicione markdown (```), "
                     "não adicione texto antes ou depois. Comece a resposta diretamente "
@@ -103,6 +149,7 @@ def chamar_llm() -> dict:
     from anthropic import Anthropic
     prompt_sistema = PROMPT.read_text(encoding="utf-8")
     transcricao = INPUT.read_text(encoding="utf-8")
+    cache_1h = BRUTA.exists() or BRUTA_PARCIAL.exists()   # reprocessamento
     linhas = linhas_com_tempo(transcricao)
     words_json = PASTA / "words.json"
     palavras = (json.loads(words_json.read_text(encoding="utf-8")).get("words", [])
@@ -117,7 +164,8 @@ def chamar_llm() -> dict:
             texto, ini, fim, ultima = janelas(linhas, cursor)
             print(f"Chamando Claude (trecho {n}: {fr.segundos_para_ts(ini)[:8]} → "
                   f"{fr.segundos_para_ts(fim)[:8]})...")
-            data, uso = pedir_blocos(client, prompt_sistema, texto, ini, fim, ultima, n)
+            _custo.checar_orcamento(stem, "03_segmentar")
+            data, uso = pedir_blocos(client, prompt_sistema, texto, ini, fim, ultima, n, cache_1h)
             usos.append(uso)
             print(f"  {len(data.get('blocos', []))} bloco(s) · ~${uso['custo_usd']:.2f}")
             novos = [b for b in data.get("blocos", []) if inicio_s(b) >= ini - 60]
@@ -147,7 +195,8 @@ def chamar_llm() -> dict:
         # que veio fica salvo (parcial, sem --reaproveitar automático)
         for i, b in enumerate(blocos, 1):
             b["id"] = i
-        data = {"blocos": blocos, "observacoes": " ".join(observacoes)}
+        data = {"blocos": blocos, "observacoes": " ".join(observacoes),
+                "_assinatura": assinatura(transcricao, prompt_sistema)}
         if usos:
             uso = _custo.somar(usos)
             print(f"Custo: input {uso['tokens_in']:,} tok · output {uso['tokens_out']:,} tok "
@@ -155,9 +204,11 @@ def chamar_llm() -> dict:
             evento(stem, "03_segmentar", "llm", agente="editor", **uso,
                    mensagem=f"{MODELO} ({len(usos)} trecho(s)){'' if completo else ' — INCOMPLETO'}")
         # a resposta paga fica guardada antes de qualquer ajuste (--reaproveitar parte dela)
-        destino = BRUTA if completo else BRUTA.with_name("segmentacao_bruta_parcial.json")
+        destino = BRUTA if completo else BRUTA_PARCIAL
         if usos:
             destino.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+            if completo and BRUTA_PARCIAL.exists():
+                BRUTA_PARCIAL.unlink()   # a completa substitui a parcial
             if not completo:
                 print(f"[!] falhou no trecho {n}: o que veio até aqui está em {destino.name}")
     return data
@@ -197,13 +248,20 @@ def inicio_s(b: dict) -> float:
         return float("inf")   # ilegível: entra, e a validação lá embaixo reprova
 
 
-if reaproveitar:
-    if not BRUTA.exists():
-        sys.exit(f"[!] --reaproveitar sem {BRUTA.name} — rode o step 3 sem a flag.")
+if reaproveitar and not BRUTA.exists():
+    sys.exit(f"[!] --reaproveitar sem {BRUTA.name} — rode o step 3 sem a flag.")
+acao, motivo = ("reaproveitar", "--reaproveitar") if reaproveitar else decidir_segmentacao(
+    assinatura(INPUT.read_text(encoding="utf-8"), PROMPT.read_text(encoding="utf-8")), refazer)
+if acao == "reaproveitar":
     data = json.loads(BRUTA.read_text(encoding="utf-8"))
-    print(f"Reaproveitando {BRUTA.name} (sem chamar a API, $0)")
+    print(f"Reaproveitando os blocos já escolhidos em {BRUTA.name} ({motivo}) — sem API, $0. "
+          f"Âncora, encaixe e validação refeitos.")
+    if "mudou desde" in motivo:
+        print(f"[aviso] {motivo}")
 else:
+    print(f"Segmentando com a API ({motivo})")
     data = chamar_llm()
+data.pop("_assinatura", None)   # não vai pro blocos.json
 
 # Validação mínima
 assert "blocos" in data, "Resposta sem chave 'blocos'"
@@ -431,8 +489,8 @@ if erros:
     for e in erros:
         print(f"   - {e}")
     sys.exit(f"\nResposta salva em {dump} pra inspeção. blocos.json NÃO foi gravado — "
-             f"corrija {BRUTA.name} à mão e rode com --reaproveitar ($0), ou rode o step 3 "
-             f"de novo (paga outra chamada).")
+             f"corrija {BRUTA.name} à mão e rode o step 3 de novo (reaproveita, $0), ou "
+             f"rode com --refazer (paga outra segmentação).")
 
 # ids em ordem de tempo e sem buraco (viram corte_01, corte_02... nos arquivos)
 data["blocos"].sort(key=lambda b: ts_s(b["timestamp_inicio"]))
