@@ -8,7 +8,7 @@ description: Thumbnails do Missão em Cortes — o template pelo rosto (07_thumb
 Duas thumbs convivem:
 
 1. **Template** (`07_thumb.py`) — frame do vídeo escolhido pelo rosto + manchete à esquerda. É o que sobe hoje e o que o revisor troca sozinho (`--proximo`).
-2. **Colagem** (`07b_colagem.py`) — estilo canal de react: apresentador recortado sem fundo + 2 cenas + círculo/seta + texto em 2 linhas. Em **modo teste** (gera ao lado, não sobe). Virar `padrao` depois do próximo vídeo real **e do ok do Gu**.
+2. **Colagem** (`07b_colagem.py`) — estilo canal de react: apresentador recortado sem fundo + 2 cenas + círculo/seta + texto em 2 linhas. Em **modo `ab`** (`config/thumb.json`): `a` = template, `b`/`c` = colagem, as 3 sobem no "Testar e comparar" do Studio e o resultado é registrado com `16_thumb_ab.py`. O estilo padrão sai do placar desse script + ok do Gu.
 
 ## Identidade visual
 
@@ -31,12 +31,14 @@ Duas thumbs convivem:
 uv run py scripts/07_thumb.py <stem>                         # a/b/c de todos os blocos
 uv run py scripts/07_thumb.py <stem> --bloco=N --t=MM:SS     # manual (tela compartilhada)
 uv run py scripts/07_thumb.py <stem> --bloco=N --titulo="TEXTO CURTO"
-uv run py scripts/07b_colagem.py <stem> [--bloco=N] [--aplicar] [--saida=DIR]
+uv run py scripts/07b_colagem.py <stem> [--bloco=N] [--aplicar | --ab] [--saida=DIR]
+uv run py scripts/16_thumb_ab.py registrar <stem> <vídeo> <a|b|c|empate>   # resultado do Testar e comparar
+uv run py scripts/16_thumb_ab.py placar
 uv run py scripts/personagens.py lista|baixar
 ```
 
 ## Onde está o detalhe
 
 - `references/template.md` — 07: escolha do frame pelo rosto, layout, overlays, modo manual, fila `candidatos_NN.json`.
-- `references/colagem.md` — 07b: layout, cenas, escolha por visão (Haiku), textos do editor, fallback, modos teste/padrão e interação com revisor/descrição.
+- `references/colagem.md` — 07b: layout, cenas, escolha por visão (Haiku), textos do editor, fallback, modos teste/ab/padrão, placar do A/B (16) e interação com revisor/descrição.
 - `references/personagens.md` — banco de fotos: regras de licença, o que baixa sozinho, quem está/não está no banco.

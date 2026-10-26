@@ -34,6 +34,10 @@ O revisor reconhece a colagem aplicada (cópia idêntica em `thumbs/colagem/`, `
 - Título reprovado: o editor reescreve e a colagem é refeita com o texto novo (`07b --bloco=N --aplicar --sem-editor`, que usa o `texto_thumb` do bloco e sai com 2 se a colagem não sair); se não sair, as 3 variantes voltam pro template.
 - Colagem reprovada só na arte: as 3 variantes voltam pro template (`_editor.voltar_template`, que também tira o crédito da foto da descrição) e o bloco é revisado de novo com o texto do template (+~US$ 0,05); se a thumb do template reprovar, segue a troca de frame normal (`--proximo`).
 
+## Modo `ab` (teste A/B template x colagem)
+
+`thumb_NN_a` é o template e `b`/`c` são colagem (`07b --ab`). O revisor avalia a `a` como sempre (troca de frame normal se reprovar) e confere os textos das 3 variantes (`texto_da_thumb`: o da colagem onde ela foi aplicada, o `texto_thumb` no resto). Bloco aprovado: confere também a **arte** de b e c (`conferir_colagem_ab`, ~US$ 0,01 cada); reprovou → b/c voltam pro template (`voltar_template(..., ("b", "c"))`, tira o crédito) e o bloco segue aprovado, só sai do teste. Título reescrito pelo editor: a `a` é refeita no template e b/c com `07b --ab --sem-editor` (não saiu → template).
+
 ## Outros detalhes
 
 - `--sem-editor` desliga as reescritas. `--dry-run` mostra a fila e o custo estimado sem chamar a API.

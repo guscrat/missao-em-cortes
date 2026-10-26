@@ -1,4 +1,4 @@
 {
-  "_comment": "Thumb colagem (scripts/07b_colagem.py). colagem: 'desligado' | 'teste' | 'padrao'. teste = o Curador gera a colagem em thumbs/colagem/ de cada vídeo novo e cita no resumo, sem mexer nas thumbs que sobem. padrao = o Curador roda a colagem com --aplicar ANTES do revisor: vira thumb_NN_a/b/c (template atual como fallback por bloco) e o crédito da foto do banco entra na descrição.",
-  "colagem": "teste"
+  "_comment": "Thumb colagem (scripts/07b_colagem.py). colagem: 'desligado' | 'teste' | 'ab' | 'padrao'. teste = o Curador gera a colagem em thumbs/colagem/ de cada vídeo novo e cita no resumo, sem mexer nas thumbs que sobem. ab = o Curador roda a colagem com --ab ANTES do revisor: thumb_NN_a fica no template, b/c viram colagem, pra o 'Testar e comparar' do Studio decidir (resultado: 16_thumb_ab.py). padrao = o Curador roda a colagem com --aplicar ANTES do revisor: vira thumb_NN_a/b/c (template atual como fallback por bloco) e o crédito da foto do banco entra na descrição.",
+  "colagem": "ab"
 }

@@ -32,8 +32,10 @@ Registro em `thumbs/colagem/colagem.json` (cenas, textos, créditos, custo). **N
 
 ## Modos (`config/thumb.json` → `colagem`)
 
-- **`teste`** (atual): o Curador roda o 07b no fim de cada vídeo novo em `thumbs/colagem/`, **sem mexer** nas thumbs que sobem; o resumo aponta a pasta pra comparar.
+- **`teste`**: o Curador roda o 07b no fim de cada vídeo novo em `thumbs/colagem/`, **sem mexer** nas thumbs que sobem; o resumo aponta a pasta pra comparar.
+- **`ab`** (atual, desde 26/10/2026): teste A/B com dado. O Curador roda `07b --ab` **antes** do revisor: só as variantes b/c da colagem viram `thumb_NN_b/c` (b = seta, c = círculo com outra expressão) e `thumb_NN_a` fica no **template**. Crédito da foto na descrição igual ao padrão. O revisor avalia a `a` e confere a arte de b/c (reprovou → b/c voltam pro template; ver `editorial-missao/references/revisor-editor.md`). O `publicacao.txt` lista as 3 thumbs de cada vídeo, marcadas template/colagem, pra subir no **"Testar e comparar"** do Studio. Bloco sem colagem (fallback) sobe 3 templates e não conta no placar.
+  - **Resultado:** o YouTube não expõe o "Testar e comparar" na API, então é à mão: `uv run py scripts/16_thumb_ab.py registrar <stem> <vídeo> <a|b|c|empate> [--a=% --b=% --c=%]` (estilo de cada letra lido das thumbs na hora → `state/thumb_ab.json`, evento `analista`). `16_thumb_ab.py placar` mostra template x colagem (só testes mistos) e sugere o padrão a partir de 5 testes com vencedor e ≥ 2/3 das vitórias; o mesmo placar sai no resumo do Curador.
 - **`padrao`**: o Curador roda com `--aplicar` **antes** do revisor. A colagem vira `thumb_NN_a/b/c.png` e o crédito da foto do banco entra no fim da descrição do bloco (`_descricoes.trocar_creditos`, que troca o crédito antigo se a colagem for refeita com outra foto). O `08_descricao` **repõe** o crédito ao regerar o txt. Interação com o revisor: ver `editorial-missao/references/revisor-editor.md`.
 - **`desligado`** (ou sem o arquivo): nada.
 
-Virar pra `padrao`: depois do próximo vídeo real processado + ok do Gu.
+Virar pra `padrao` (ou `desligado`, se o template ganhar): pelo placar do `16_thumb_ab.py` + ok do Gu.

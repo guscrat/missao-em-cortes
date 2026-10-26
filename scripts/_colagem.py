@@ -172,6 +172,15 @@ def colagem_aplicada(thumbs: Path, bid: int) -> dict | None:
     return reg if isinstance(reg, dict) and reg.get("status") == "ok" else None
 
 
+def colagem_ab(thumbs: Path, bid: int) -> list[Path]:
+    """Modo ab: as thumbs b/c do bloco que são colagem aplicada enquanto a 'a' (a que o revisor
+    avalia) é o template; [] fora disso (padrão, teste, bloco sem colagem)."""
+    nn = f"{bid:02d}"
+    if variante_aplicada(thumbs / f"thumb_{nn}_a.png"):
+        return []
+    return [p for p in (thumbs / f"thumb_{nn}_{l}.png" for l in "bc") if variante_aplicada(p)]
+
+
 # ── personagens ─────────────────────────────────────────────────────────────
 
 def normalizar(texto: str) -> str:
