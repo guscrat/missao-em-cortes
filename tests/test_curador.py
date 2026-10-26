@@ -674,6 +674,7 @@ def test_reprocessar_da_fila_reusa_stem_anterior(raiz, rodada):
 
 
 def test_processar_gera_short_dos_aprovados(raiz, monkeypatch):
+    monkeypatch.setattr(cu, "auditoria_aprovada", lambda: True)
     chamadas = []
     monkeypatch.setattr(cu, "rodar", lambda script, *a: chamadas.append((script, *a)) or True)
     import _paths, _publicacao
@@ -686,7 +687,23 @@ def test_processar_gera_short_dos_aprovados(raiz, monkeypatch):
     assert [c[0] for c in chamadas][:3] == ["01_baixar.py", "pipeline.py", "11_revisor.py"]
 
 
+def test_sem_auditoria_nao_gera_short_mas_gera_publicacao(raiz, monkeypatch):
+    monkeypatch.setattr(cu, "auditoria_aprovada", lambda: False)
+    chamadas = []
+    monkeypatch.setattr(cu, "rodar", lambda script, *a: chamadas.append(script) or True)
+    import _paths, _publicacao
+    gerar_chamado = []
+    monkeypatch.setattr(_paths, "achar_pasta", lambda stem: raiz / "outputs" / stem)
+    monkeypatch.setattr(_publicacao, "aprovados", lambda pasta: [{"id": 4}, {"id": 1}])
+    monkeypatch.setattr(_publicacao, "gerar",
+                        lambda pasta: gerar_chamado.append(pasta) or (pasta / "publicacao.txt", [1, 2]))
+    res = cu.processar({**_item("a"), "stem": "renan_x"})
+    assert "10_shorts.py" not in chamadas
+    assert gerar_chamado and res["ok"] and res["aprovados"] == 2
+
+
 def test_short_que_falha_vira_aviso(raiz, monkeypatch):
+    monkeypatch.setattr(cu, "auditoria_aprovada", lambda: True)
     monkeypatch.setattr(cu, "rodar", lambda script, *a: script != "10_shorts.py")
     import _paths, _publicacao
     monkeypatch.setattr(_paths, "achar_pasta", lambda stem: raiz / "outputs" / stem)
