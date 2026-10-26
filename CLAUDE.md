@@ -32,7 +32,7 @@ Python 3.10+ com **uv** · **faster-whisper** `medium` (GPU CUDA, cai pra CPU) �
 inputs/           <stem>.mp4 + <stem>.url (URL da fonte, salva pelo 01)
 outputs/<AAAA-MM-DD>_<stem>/   uma pasta por vídeo (transcrição, blocos.json, cortes/, thumbs/, shorts/, finalizados/...)
 assets/           intro/outro (Canva), fonts/Anton, logoCanal.png, personagens/ (fotos + licencas.json)
-config/           zoom.json · canais.json · upload.json · thumb.json · grafias.json
+config/           zoom.json · canais.json · upload.json · thumb.json · grafias.json · propaganda.json (termos de propaganda da live: nenhum corte abre com ela)
 prompts/          segmentacao.md
 state/            pipeline.db, curador_resumo.md, canal.json... (gitignored)
 secrets/          tokens/clients OAuth (gitignored, repo é público)

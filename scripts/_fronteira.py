@@ -193,7 +193,7 @@ def ancorar(palavras: list[dict], frase: str, t: float, ponta: str,
 
 ABERTURA_S = 30            # propaganda que aparece até aqui do início = o corte abre com ela
 EMENDA_S = 40              # outra menção a até isso da anterior = a mesma propaganda
-MAX_PROPAGANDA_S = 240     # passou disso, não é abertura: é o bloco (o revisor/Gu decide)
+MAX_PROPAGANDA_S = 150     # passou disso, não é abertura: é o bloco (o revisor/Gu decide)
 PROPAGANDA_JSON = Path(__file__).parent.parent / "config" / "propaganda.json"
 
 

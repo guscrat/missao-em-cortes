@@ -214,6 +214,25 @@ def palavras_do_corte(bloco, corte):
     return palavras, dur
 
 
+def intervalos_fixos(bloco):
+    """Trechos que o bloco manda remover (campo `remover` do blocos.json, tempos ABSOLUTOS da
+    live: ex. propaganda da live no meio do assunto), relativos ao início do corte. Entram
+    sempre, sem a proteção de início/fim e sem passar pelo LLM."""
+    remover = bloco.get("remover") or []
+    if not remover:
+        return []
+    todas = []
+    if WORDS_JSON.exists():
+        with WORDS_JSON.open(encoding="utf-8") as f:
+            todas = json.load(f).get("words", [])
+    inicio_s, _ = fr.janela(todas, hhmmss_para_segundos(bloco["timestamp_inicio"]),
+                            hhmmss_para_segundos(bloco["timestamp_fim"]))
+    return [{"t_inicio": round(hhmmss_para_segundos(r["inicio"]) - inicio_s, 3),
+             "t_fim": round(hhmmss_para_segundos(r["fim"]) - inicio_s, 3),
+             "motivo": r.get("motivo") or "trecho removido (campo remover do bloco)",
+             "fixo": True} for r in remover]
+
+
 # Silêncios são detectados PROGRAMATICAMENTE (gap entre palavras consecutivas):
 # determinístico e grátis. O LLM fica só com o que exige julgamento (fillers,
 # problemas técnicos, speaker procurando conteúdo).
@@ -402,6 +421,12 @@ for b in data["blocos"]:
         palavras, dur = palavras_do_corte(b, corte)
         print(f"  corte tem {dur:.1f}s de vídeo")
 
+        fixos = intervalos_fixos(b)
+        if fixos:   # nem vai pro LLM (economiza token): já sai inteiro
+            print(f"  {len(fixos)} trecho(s) fixo(s) do campo remover "
+                  f"({sum(iv['t_fim'] - iv['t_inicio'] for iv in fixos):.0f}s)")
+            palavras = [w for w in palavras
+                        if not any(iv["t_inicio"] <= w["start"] < iv["t_fim"] for iv in fixos)]
         silencios = detectar_silencios(palavras)
         if silencios:
             t_sil = sum(iv["t_fim"] - iv["t_inicio"] for iv in silencios)
@@ -409,7 +434,7 @@ for b in data["blocos"]:
                   f"automaticamente ({t_sil:.1f}s, sem API)")
 
         if sem_llm:
-            intervalos = mesclar_intervalos(proteger(silencios, palavras, dur))
+            intervalos = mesclar_intervalos(proteger(silencios, palavras, dur) + fixos)
         else:
             print(f"  Chamando Claude (conservador)...")
             try:
@@ -418,7 +443,8 @@ for b in data["blocos"]:
             except Exception as e:
                 print(f"  ERRO Claude: {e}. Pulando este bloco.")
                 continue
-            intervalos = mesclar_intervalos(proteger(silencios + intervalos_llm, palavras, dur))
+            intervalos = mesclar_intervalos(proteger(silencios + intervalos_llm, palavras, dur)
+                                            + fixos)
 
     if not intervalos:
         print(f"  Nenhum trecho pra cortar — copiando original")

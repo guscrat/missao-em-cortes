@@ -183,3 +183,25 @@ def test_empate_de_score_fica_o_primeiro_com_motivo_certo(pasta):
     assert r.returncode == 0, r.stdout + r.stderr
     assert [b["tema"] for b in d["blocos"]] == ["tema 1"]
     assert "mesmo score" in d["descartados"][0]["motivo"]
+
+
+def test_bloco_que_abre_com_propaganda_comeca_depois_dela(pasta):
+    # a 1a frase do bloco (10 min) traz "valet": o corte deve abrir na frase seguinte
+    ws = json.loads((pasta / "words.json").read_text(encoding="utf-8"))
+    i = idx(10)
+    for w in ws["words"]:
+        if w["word"] == f"t{i}k5":
+            w["word"] = "valet"
+    (pasta / "words.json").write_text(json.dumps(ws), encoding="utf-8")
+    r, d = rodar(pasta, [bloco(1, 10, 20)])
+    assert r.returncode == 0, r.stdout + r.stderr
+    b = d["blocos"][0]
+    assert abs(secs(b["timestamp_inicio"]) - t_frase(i + 1)) < 0.5
+    assert "abria com propaganda da live" in r.stdout
+
+
+def test_bloco_sem_propaganda_nao_move_o_inicio(pasta):
+    r, d = rodar(pasta, [bloco(1, 10, 20)])
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert abs(secs(d["blocos"][0]["timestamp_inicio"]) - t_frase(idx(10))) < 0.5
+    assert "abria com propaganda" not in r.stdout

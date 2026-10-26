@@ -658,7 +658,10 @@ def main(argv: list[str]) -> int:
         texto_thumb = texto_da_thumb(pasta, bid, texto_base)
         ini = hhmmss_para_segundos(b["timestamp_inicio"])
         fim = hhmmss_para_segundos(b["timestamp_fim"])
-        transcricao = " ".join(w["word"] for w in palavras_na_janela(todas, ini, fim))
+        removidos_s = [(hhmmss_para_segundos(r["inicio"]), hhmmss_para_segundos(r["fim"]))
+                       for r in b.get("remover") or []]   # cortado pelo 04b: não está no vídeo
+        transcricao = " ".join(w["word"] for w in palavras_na_janela(todas, ini, fim)
+                               if not any(a <= w["start"] < z for a, z in removidos_s))
         momentos = momentos_da_descricao(descricoes.get(bid, {}).get("descricao", ""))
         tentativas, custo_bloco = [], 0.0
         while True:
@@ -731,6 +734,12 @@ def main(argv: list[str]) -> int:
                   + " | ".join(removidos))
             evento(stem, "11_revisor", "aviso", agente="revisor", bloco_id=bid,
                    mensagem=f"momentos fora do trecho removidos: {' | '.join(removidos)}"[:300])
+            if status == "aprovado" and len(removidos) >= 2 and len(removidos) * 2 > len(momentos):
+                # a maior parte da descrição fala de outro trecho: sinal de tempos do bloco
+                # trocados (o LLM do 03 deu tempos de um trecho e frases de outro)
+                status = "quarentena"
+                motivo = (f"{len(removidos)} de {len(momentos)} momentos da descrição eram de fora "
+                          f"do trecho (removidos) — confira se os tempos do bloco estão certos")
         upsert_bloco(stem, bid, status=status, forcar_status=True, motivo=motivo)
         thumb = escolher_thumb(pasta / "thumbs", nn)
         revisao[nn] = {"status": status, "motivo": motivo, "checagens": checagens,
