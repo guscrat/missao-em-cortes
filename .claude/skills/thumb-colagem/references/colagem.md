@@ -1,5 +1,14 @@
 # Step 7b — thumb colagem (07b_colagem.py)
 
+> **PAUSADA desde 26/10/2026** (`config/thumb.json` → `"colagem": "pausada"`). A v1 pôs a seta no Kim numa thumb sobre o Marçal e o resultado geral não ficou bom. A thumb que sobe é a clássica (07, ver `template.md`). O 07b sai com código 3 sem fazer nada; `--forcar` roda mesmo assim, só pra desenvolver a v2. O Curador não chama mais.
+>
+> **Regras da v2 (quando voltar):**
+> 1. **Só imagens do próprio vídeo.** Sem o banco de fotos estáticas de personagens (`assets/personagens/`) como cena.
+> 2. **Seta/círculo só com certeza de quem é:** o apresentador, ou uma cena com o **nome da pessoa escrito na tela** (legenda, tarja, crachá, @ do post) que bate com quem o texto cita. **Na dúvida, sem seta.**
+> 3. O revisor já reprova seta/círculo em pessoa que não dá pra confirmar que é a citada no texto (`CRITERIO_THUMB` do 11).
+>
+> Abaixo, como a v1 funciona (referência pra v2).
+
 `uv run py scripts/07b_colagem.py <stem> [--bloco=N] [--sem-llm] [--sem-editor] [--aplicar] [--saida=DIR]`
 
 `agente="editor"`, ~US$ 0,03/bloco, ~US$ 0,15/live. Gera 3 variantes a/b/c pro "Testar e comparar" do Studio. Núcleo em `scripts/_colagem.py`.

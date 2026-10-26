@@ -5,10 +5,8 @@ description: Thumbnails do Missão em Cortes — o template pelo rosto (07_thumb
 
 # Thumbs — Missão em Cortes
 
-Duas thumbs convivem:
-
-1. **Template** (`07_thumb.py`) — frame do vídeo escolhido pelo rosto + manchete à esquerda. É o que sobe hoje e o que o revisor troca sozinho (`--proximo`).
-2. **Colagem** (`07b_colagem.py`) — estilo canal de react: apresentador recortado sem fundo + 2 cenas + círculo/seta + texto em 2 linhas. Em **modo `ab`** (`config/thumb.json`): `a` = template, `b`/`c` = colagem, as 3 sobem no "Testar e comparar" do Studio e o resultado é registrado com `16_thumb_ab.py`. O estilo padrão sai do placar desse script + ok do Gu.
+1. **Clássica / template** (`07_thumb.py`) — frame do vídeo escolhido pelo rosto + manchete à esquerda. **É o padrão** (desde 26/10/2026) e o que o revisor troca sozinho (`--proximo`). Em **modo `ab`** (`config/thumb.json` → `"modo": "ab"`, ligado): `a/b/c` são 3 versões da clássica com **frames e textos diferentes** (`a` = `texto_thumb`, `b`/`c` = alternativas do editor), as 3 sobem no "Testar e comparar" do Studio e o resultado é registrado com `16_thumb_ab.py`. `"modo": "classica"` = 3 frames com o mesmo texto.
+2. **Colagem** (`07b_colagem.py`) — **PAUSADA** (`"colagem": "pausada"`): a v1 pôs a seta no Kim numa thumb sobre o Marçal. O 07b sai com 3 sem fazer nada (`--forcar` só pra desenvolver a v2). Regras da v2 em `references/colagem.md`.
 
 ## Identidade visual
 
@@ -24,14 +22,15 @@ Duas thumbs convivem:
 - **Nunca** mexer em bloco `agendado`/`publicado`/`arquivado`.
 - Foto de terceiro só com licença aberta conferida (CC0, PD, CC BY). Crédito vai na descrição.
 - Thumb regerada de bloco **já aprovado**: o Gu revisa no olho, sem passar pelo revisor.
+- **Seta/círculo só com certeza de quem é**: o apresentador, ou cena com o nome da pessoa escrito na tela. Na dúvida, sem seta. O revisor reprova seta/círculo em pessoa que não dá pra confirmar que é a citada no texto.
 
 ## Comandos rápidos
 
 ```
-uv run py scripts/07_thumb.py <stem>                         # a/b/c de todos os blocos
+uv run py scripts/07_thumb.py <stem> [--sem-llm]             # a/b/c de todos os blocos (modo ab: 3 frames + 3 textos)
 uv run py scripts/07_thumb.py <stem> --bloco=N --t=MM:SS     # manual (tela compartilhada)
 uv run py scripts/07_thumb.py <stem> --bloco=N --titulo="TEXTO CURTO"
-uv run py scripts/07b_colagem.py <stem> [--bloco=N] [--aplicar | --ab] [--saida=DIR]
+uv run py scripts/07b_colagem.py <stem> [--bloco=N] [--aplicar | --ab] [--saida=DIR] --forcar   # PAUSADA
 uv run py scripts/16_thumb_ab.py registrar <stem> <vídeo> <a|b|c|empate>   # resultado do Testar e comparar
 uv run py scripts/16_thumb_ab.py placar
 uv run py scripts/personagens.py lista|baixar
@@ -39,6 +38,6 @@ uv run py scripts/personagens.py lista|baixar
 
 ## Onde está o detalhe
 
-- `references/template.md` — 07: escolha do frame pelo rosto, layout, overlays, modo manual, fila `candidatos_NN.json`.
-- `references/colagem.md` — 07b: layout, cenas, escolha por visão (Haiku), textos do editor, fallback, modos teste/ab/padrão, placar do A/B (16) e interação com revisor/descrição.
+- `references/template.md` — 07: escolha do frame pelo rosto, layout, overlays, modo manual, fila `candidatos_NN.json`, modo ab (3 frames + 3 textos).
+- `references/colagem.md` — 07b (pausada; regras da v2 no topo): layout, cenas, escolha por visão (Haiku), textos do editor, fallback, modos teste/ab/padrão, placar do A/B (16) e interação com revisor/descrição.
 - `references/personagens.md` — banco de fotos: regras de licença, o que baixa sozinho, quem está/não está no banco.

@@ -23,6 +23,15 @@
 
 Campo curto `texto_thumb` do `blocos.json` (2-5 palavras, gerado no step 3); na falta, `tema` (3-6 palavras). **Nunca** o `titulo_sugerido`. Se não couber em 4 linhas, o script **avisa**. Override: `--titulo="TEXTO CURTO"` (exige `--bloco=N`).
 
+## Modo ab (padrão desde 26/10/2026): 3 frames + 3 textos
+
+`config/thumb.json` → `"modo": "ab"` (`"classica"` = 3 frames com o mesmo texto). As 3 variantes sobem no "Testar e comparar" do Studio:
+
+- **a** = 1º frame + `texto_thumb` (do 03, ou do editor se o revisor reescreveu).
+- **b/c** = 2º/3º frames + 2 textos alternativos do editor (`_editor.textos_thumb_ab`, opus effort low, só resumo + ganchos do bloco, sem transcrição, **~US$ 0,01/bloco**, evento `llm` com `agente="editor"`, passa pelo `checar_orcamento`). Saem **só na rodada completa** (sem `--variante`/`--proximo`/`--titulo`) e ficam no `blocos.json` em `texto_thumb_ab` + `texto_thumb_ab_de` (o `texto_thumb` de que saíram). Rodar de novo não gasta.
+- `texto_thumb` mudou (editor) → as alternativas ficam velhas e b/c caem pro `texto_thumb` novo (o editor refaz b/c com `--variante`, sem LLM). `--sem-llm` (também via `pipeline.py --sem-llm`), orçamento estourado, recusa ou erro → b/c com o `texto_thumb`.
+- O texto desenhado em cada letra fica na fila (`candidatos_NN.json` → `textos`): o revisor confere os 3 contra a transcrição e a arte de b/c (`conferir_classica_ab`; reprovada vira `thumb_NN_<l>_reprovada.png` e sai do teste). O `16_thumb_ab.py registrar` guarda os textos junto do resultado; o `placar` mostra vitórias por letra (a = texto do 03 x b/c = editor).
+
 ## Modo manual (`--bloco=N --t=MM:SS`)
 
 Quando os frames automáticos caem em **tela compartilhada** (lives onde o speaker mostra matéria/pesquisa, ex: `renan_2turn_x_lula`): abra o corte, ache um segundo com o speaker na câmera e rode `uv run py scripts/07_thumb.py <stem> --bloco=N --t=MM:SS` (aceita `MM:SS`, `HH:MM:SS` ou segundos) → `thumb_NN_manual.png`.

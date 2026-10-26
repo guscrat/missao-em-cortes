@@ -36,6 +36,16 @@
 - **Só a thumb reprovada** → `07_thumb.py --bloco=N --proximo` põe na `thumb_NN_a` o próximo frame com rosto da fila (`thumbs/candidatos_NN.json`) e o revisor reavalia **só a thumb** (~US$ 0,01 por troca, effort low). No máximo 3 trocas (`MAX_TROCAS_THUMB`); nenhum frame serviu → `descartado`. Thumb **manual** reprovada fica em `quarentena` (refazer com `07_thumb.py --t=`).
 - Tudo ok → `aprovado`. Recusa do modelo vira quarentena ("revisar à mão").
 
+## Seta/círculo na thumb (desde 26/10/2026)
+
+`CRITERIO_THUMB` (vale pro revisor completo e pro `checar_thumb`): seta ou círculo destacando uma pessoa só passa se der pra ter **certeza, sem reconhecer rosto**, de que é a pessoa citada no texto da thumb/título: é o apresentador, ou o nome dela está **escrito** na cena destacada. Nome de outra pessoa na cena, ou nada escrito que confirme → **reprova** (na dúvida, reprova). Origem: a colagem pôs a seta no Kim numa thumb sobre o Marçal.
+
+## Modo `ab` da clássica (padrão desde 26/10/2026)
+
+`config/thumb.json` → `"modo": "ab"`: a/b/c são 3 clássicas com frames e textos diferentes (skill `thumb-colagem`, `template.md`). `texto_da_thumb` lê o texto de cada letra da fila (`candidatos_NN.json` → `textos`) e manda os 3 separados por " | ": **todos** precisam ser fiéis. Bloco aprovado → `conferir_classica_ab` confere a arte de b e c (~US$ 0,01 cada); reprovada vira `thumb_NN_<l>_reprovada.png` e sai do "Testar e comparar" (o bloco segue aprovado). Título reescrito pelo editor: a thumb escolhida é refeita e as outras letras também (`refazer_classica_ab`), com o `texto_thumb` novo.
+
+> As seções de colagem abaixo valem pra quando a colagem voltar (v2). Hoje ela está **pausada**.
+
 ## Thumb colagem aplicada (modo `padrao` do 07b)
 
 O revisor reconhece a colagem aplicada (cópia idêntica em `thumbs/colagem/`, `_colagem.colagem_aplicada`), confere os textos das **3 variantes** contra a fala (números, fatos e nomes têm que bater; grafia fora da oficial reprova) e aceita cena de tela ao fundo nesse formato.

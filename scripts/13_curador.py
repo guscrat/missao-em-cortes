@@ -24,6 +24,8 @@ Fluxo:
      Thumb colagem (config/thumb.json): "teste" roda o 07b_colagem no fim, em thumbs/colagem/
      (~US$ 0,15/vídeo, não mexe nas thumbs que sobem); "padrao" roda com --aplicar antes do revisor;
      "ab" roda com --ab antes do revisor (a = template, b/c = colagem, pro "Testar e comparar").
+     "pausada" (desde 26/10/2026) = desligada. O "Testar e comparar" agora é da clássica
+     (config/thumb.json → modo: "ab", feito pelo 07 dentro do pipeline).
   Modo evento (config/canais.json → modo_evento, ex.: 2º turno): até modo_evento_ate
      processa 1 vídeo por rodada MESMO com o canal coberto, só da fila a partir de
      modo_evento_desde, e o Claude prioriza modo_evento_tema. Depois do "ate" desliga sozinho.
@@ -719,12 +721,17 @@ def sincronizar_canal(dry_run: bool = False) -> str | None:
 
 
 def placar_thumb_ab() -> str | None:
-    """Modo ab: uma linha com o placar do "Testar e comparar" (16_thumb_ab) pro resumo."""
-    if modo_colagem() != "ab":
+    """Modo ab (colagem ou clássica): uma linha com o placar do "Testar e comparar"
+    (16_thumb_ab) pro resumo."""
+    from _paths import modo_thumb
+    colagem = modo_colagem() == "ab"
+    if not colagem and modo_thumb() != "ab":
         return None
     import importlib
     try:
         ab = importlib.import_module("16_thumb_ab")
+        if not colagem:
+            return ab.linha_classica(ab.placar_classica())
         p = ab.placar()
         sugestao = ab.sugestao(p)
     except Exception as e:  # noqa: BLE001 — placar é só informativo, nunca derruba a rodada

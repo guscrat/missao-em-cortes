@@ -36,8 +36,12 @@ Quem decide é o código, não o modelo (regra de produto da quarentena):
     MAX_TROCAS_THUMB vezes. Nenhum serviu → "descartado". Thumb manual reprovada →
     "quarentena" (foi escolhida à mão: refazer com 07_thumb.py --t=)
   - tudo ok → "aprovado"
-  - modo ab (config/thumb.json: a = template, b/c = colagem): aprovado → confere também a arte
-    das colagens b/c (~US$ 0.01 cada); reprovou → b/c voltam pro template (sai do teste A/B)
+  - modo ab (config/thumb.json → modo: "ab", a/b/c = 3 versões da clássica): aprovado →
+    confere também a arte de b/c (~US$ 0.01 cada); reprovou → a variante vira
+    thumb_NN_<l>_reprovada.png e sai do "Testar e comparar". Colagem ab antiga (b/c =
+    colagem): reprovou → b/c voltam pro template
+  - seta/círculo em pessoa que não dá pra confirmar (pelo nome escrito na cena ou por ser o
+    apresentador) que é a citada no texto → thumb reprovada
 Nunca mexe em bloco já "agendado", "publicado" ou "arquivado". --sem-editor desliga as reescritas.
 Resultado completo em outputs/<pasta>/revisao.json.
 
@@ -108,7 +112,7 @@ no meio de palavra, e coerente com o título? Reprove se o fundo é tela compart
 documento, se não há rosto, se o rosto está escuro, cortado ou coberto, ou se o texto está \
 truncado ou sem sentido. EXCEÇÃO, thumb colagem (apresentador recortado com contorno branco na \
 frente + 2 cenas do assunto ao fundo, círculo ou seta vermelha): as cenas ao fundo podem ser \
-tela, vídeo ou foto; o que vale é o rosto do APRESENTADOR inteiro e o texto legível."""
+tela, vídeo ou foto; o que vale é o rosto do APRESENTADOR inteiro e o texto legível. SETA OU CÍRCULO destacando uma pessoa: só passa se der pra ter CERTEZA, sem reconhecer rosto, de que a pessoa destacada é a citada no texto da thumb ou no título: ela é o apresentador (quem fala, em primeiro plano) ou o nome dela está ESCRITO na cena destacada (legenda, tarja, crachá, @ do post). Reprove se a cena destacada traz o nome de OUTRA pessoa (ex.: seta numa cena com a tarja "KIM KATAGUIRI" numa thumb sobre o Marçal) ou se nada escrito confirma quem é: na dúvida, reprove e diga isso em thumb_problema."""
 
 SISTEMA = """Você é o revisor de conteúdo do canal "Missão em Cortes", que publica cortes de \
 lives e entrevistas do Partido Missão. Linha editorial: simpática ao partido, com independência \
@@ -123,7 +127,7 @@ ficar falso, ou prometem um assunto que o trecho não entrega. Gancho forte, par
 simplificação são OK. Números, datas, fatos e nomes têm que bater EXATAMENTE com a \
 transcrição (ex.: "3 INQUÉRITOS" quando a fala diz 2 reprova). Nome de pessoa fora da \
 grafia oficial (lista GRAFIAS OFICIAIS no fim destas instruções) também reprova. Se \
-vierem várias variantes de texto da thumb separadas por " | " (teste A/B da thumb colagem), TODAS precisam passar: aponte qual \
+vierem várias variantes de texto da thumb separadas por " | " (teste A/B do "Testar e comparar"), TODAS precisam passar: aponte qual \
 falhou. Reprove TAMBÉM se o título ou o texto da thumb destacam palavrão ou \
 termo que possa soar como ofensa a um grupo (raça, etnia, gênero, orientação sexual, \
 religião, origem, deficiência etc.), MESMO que esteja na fala: diga isso em titulo_problema.
@@ -200,16 +204,27 @@ def sistema_revisor() -> list[dict]:
              "cache_control": {"type": "ephemeral"}}]
 
 
+def textos_classica(pasta: Path, bid: int) -> dict[str, str]:
+    """{letra: texto} que o 07 desenhou em cada thumb clássica (fila candidatos_NN.json)."""
+    try:
+        fila = json.loads((pasta / "thumbs" / f"candidatos_{bid:02d}.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    textos = fila.get("textos") if isinstance(fila, dict) else None
+    return textos if isinstance(textos, dict) else {}
+
+
 def texto_da_thumb(pasta: Path, bid: int, texto_thumb: str) -> str:
     """O texto que está NAS thumbs que sobem (a/b/c vão todas pro "Testar e comparar"),
-    separados por ' | ': o da colagem onde ela foi aplicada (modos padrão e ab), o do template
-    (texto_thumb) no resto."""
-    textos = []
+    separados por ' | ': o da colagem onde ela foi aplicada, o que o 07 desenhou na clássica
+    (modo ab: textos diferentes), texto_thumb na falta."""
+    textos, classica = [], textos_classica(pasta, bid)
     for letra in "abc":
         thumb = pasta / "thumbs" / f"thumb_{bid:02d}_{letra}.png"
         if thumb.exists():
             v = _colagem.variante_aplicada(thumb)
-            textos.append(_colagem.sem_marcas(" ".join(v["texto"])) if v else texto_thumb)
+            textos.append(_colagem.sem_marcas(" ".join(v["texto"])) if v
+                          else classica.get(letra) or texto_thumb)
     return " | ".join(dict.fromkeys(textos)) or texto_thumb
 
 
@@ -424,6 +439,42 @@ def conferir_colagem_ab(client, anthropic, stem, pasta, bid, titulo) -> float:
         print(f"  {bid:02d}: {msg}")
         evento(stem, "11_revisor", "aviso", agente="revisor", bloco_id=bid, mensagem=msg[:300])
         break
+    return usd_total
+
+
+def conferir_classica_ab(client, anthropic, stem, pasta, bid, titulo) -> float:
+    """Modo ab da clássica: o revisor avaliou a 'a', mas b/c (outros frames e textos) também
+    sobem no "Testar e comparar". Confere a arte de cada uma (~US$ 0.01); reprovada → vira
+    thumb_NN_<l>_reprovada.png e sai do teste (o bloco segue aprovado). Devolve o custo."""
+    from _paths import modo_thumb
+    if modo_thumb() != "ab":
+        return 0.0
+    usd_total, textos = 0.0, textos_classica(pasta, bid)
+    for letra in "bc":
+        thumb = pasta / "thumbs" / f"thumb_{bid:02d}_{letra}.png"
+        if not thumb.exists() or _colagem.variante_aplicada(thumb):
+            continue
+        t0 = time.time()
+        try:
+            _custo.checar_orcamento(stem, "11_revisor")   # estourado: sem conferir, sai do teste
+            r, resp = checar_thumb(client, thumb, titulo, textos.get(letra, ""))
+        except _custo.OrcamentoEstourado:
+            r, problema = None, "não conferida: orçamento da live estourado"
+        except (anthropic.APIError, json.JSONDecodeError) as e:
+            r, problema = None, f"falhou ao avaliar ({type(e).__name__})"
+        else:
+            tin, tout, usd = custo(resp)
+            usd_total += usd
+            evento(stem, "11_revisor", "llm", agente="revisor", bloco_id=bid, tokens_in=tin,
+                   tokens_out=tout, custo_usd=usd, mensagem=f"{resp.model} (thumb ab {letra})",
+                   duracao_s=time.time() - t0, **_custo.cache(resp))
+            problema = "revisor recusou analisar" if r is None else r["thumb_problema"]
+        if r is not None and r["thumb_ok"]:
+            continue
+        thumb.replace(thumb.with_name(f"{thumb.stem}_reprovada.png"))
+        msg = f"thumb {letra} reprovada ({problema}) → fora do Testar e comparar"
+        print(f"  {bid:02d}: {msg}")
+        evento(stem, "11_revisor", "aviso", agente="revisor", bloco_id=bid, mensagem=msg[:300])
     return usd_total
 
 
@@ -723,7 +774,8 @@ def main(argv: list[str]) -> int:
             if status == "aprovado":
                 checagens = {**checagens, "thumb_ok": True, "thumb_problema": ""}
         if status == "aprovado":
-            usd_ab = conferir_colagem_ab(client, anthropic, stem, pasta, bid, titulo)
+            usd_ab = (conferir_colagem_ab(client, anthropic, stem, pasta, bid, titulo)
+                      + conferir_classica_ab(client, anthropic, stem, pasta, bid, titulo))
             total += usd_ab
             custo_bloco += usd_ab
             texto_thumb = texto_da_thumb(pasta, bid, texto_base)

@@ -28,9 +28,9 @@ dias = (último longo agendado no canal − hoje) + longos prontos ÷ `longos_po
 
 Só se a cobertura estiver **abaixo do mínimo** (ou com `--forcar`). Processa **1 vídeo**, o de maior prioridade da fila (empate: o mais recente):
 
-`01_baixar` → `pipeline.py --polir` → `11_revisor` → `10_shorts` (só dos aprovados, $0) → `publicacao.txt` → `07b_colagem` (modo `teste`, ~US$ 0,15, em `thumbs/colagem/`; no modo `padrao` roda com `--aplicar` **antes** do revisor).
+`01_baixar` → `pipeline.py --polir` (o 07 dentro dele faz as 3 clássicas do "Testar e comparar" no modo `ab`, ~US$ 0,01/bloco) → `11_revisor` → `10_shorts` (só dos aprovados, $0) → `publicacao.txt`. A colagem (07b) está **pausada** desde 26/10/2026 (`config/thumb.json` → `"colagem": "pausada"`): o Curador não chama.
 
-Custa ~US$ 0,65 por vídeo (+0,15 da colagem). O resto continua na fila; item com mais de 15 dias vira `expirado`.
+Custa ~US$ 0,65 por vídeo. O resto continua na fila; item com mais de 15 dias vira `expirado`.
 
 ## Modo evento (ex.: 2º turno)
 
