@@ -67,7 +67,7 @@ Confirmação final do "público" (no horário agendado + ~30 min): `dia_d.py ve
 
 ## 4. Liberar os Shorts (2/dia, com vídeo relacionado)
 
-Até a auditoria o Curador não gera Short: lives processadas depois de 26/10 não têm. Antes do
+Até a auditoria o Curador não gera Short: lives processadas com a flag false não têm. Antes do
 09, gere os dos aprovados que ainda vão subir (`10_shorts.py <stem> --bloco=N`, $0, ~1 min cada).
 
 ```
