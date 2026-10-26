@@ -553,7 +553,8 @@ def resumir_ocupado(ocupado: list[str]) -> str:
         return "?"
     alvo = next((a.strip('"') for a in linha[m.end():].split()
                  if not a.lstrip('"').startswith(("-", "http"))), "")
-    return f"{Path(m.group(0)).name} {alvo}".strip()
+    nome = re.split(r"[\\/]", m.group(0))[-1]       # Path().name não separa \ no Linux
+    return f"{nome} {alvo}".strip()
 
 
 def esperar_livre(espera_min: int = ESPERA_OCUPADO_MIN, intervalo_s: int = CHECA_OCUPADO_S,
