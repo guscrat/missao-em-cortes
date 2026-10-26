@@ -37,6 +37,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import unicodedata
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -59,6 +60,8 @@ TRAVA_HORAS = 12             # rodada mais velha que isso = morreu no meio: libe
 SAIDA_TRAVADO = 75           # outra rodada em andamento (o curador_oculto não acusa falha)
 PROGRESSO = ROOT / "state" / "curador_progresso.json"   # painel: "rodando desde 17:00 — etapa X"
 MAX_TENTATIVAS = 3           # falhou antes de baixar: volta pra fila até isso, depois desiste
+ESPERA_OCUPADO_MIN = 30      # outro processamento rodando: espera até isso, depois pula
+CHECA_OCUPADO_S = 60
 PRIORIDADE_EVENTO = 6        # modo evento: abaixo disso não fura o estoque (previsão velha)
 
 MODELO = "claude-opus-5-5"
@@ -502,6 +505,73 @@ def processar_seguro(item: dict) -> dict:
                 "ok": False, "aprovados": 0, "publicacao": None, "avisos": [], "erro": erro}
 
 
+# --- outro processamento em andamento ---------------------------------------------------
+
+# Scripts que pesam (GPU/disco/API) ou mexem nas pastas de outputs. 09 (upload) e 12-15
+# (só leitura) não contam; o próprio 13 nem casa.
+PESADOS_RE = re.compile(r"scripts[\\/](?:0[1-8]\w*|10_shorts|11_revisor|pipeline)\.py", re.I)
+CREATE_NO_WINDOW = 0x08000000
+
+
+def _listar_processos() -> list[tuple[int, str]]:
+    """[(pid, linha de comando)] de todos os processos. Windows via CIM (sem psutil)."""
+    if sys.platform == "win32":
+        cmd = ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+               "Get-CimInstance Win32_Process | ForEach-Object "
+               "{ \"$($_.ProcessId) $($_.CommandLine)\" }"]
+        flags = CREATE_NO_WINDOW
+    else:
+        cmd, flags = ["ps", "-eo", "pid=,args="], 0
+    saida = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=60, check=True,
+                           creationflags=flags).stdout
+    procs = []
+    for linha in saida.splitlines():
+        pid, _, args = linha.strip().partition(" ")
+        if pid.isdigit():
+            procs.append((int(pid), args))
+    return procs
+
+
+def processamento_em_andamento(listar=_listar_processos) -> list[str]:
+    """Linhas de comando de pipeline rodando fora desta rodada (manual, outra sessão...).
+    Chamado antes do 01_baixar desta rodada, então nenhum filho nosso aparece aqui.
+    Não deu pra listar = segue (só avisa): travar o canal por erro de leitura é pior."""
+    try:
+        procs = listar()
+    except (OSError, subprocess.SubprocessError) as e:
+        print(f"[aviso] não consegui listar os processos ({e}); sigo sem checar", file=sys.stderr)
+        return []
+    return [args for pid, args in procs if pid != os.getpid() and PESADOS_RE.search(args)]
+
+
+def resumir_ocupado(ocupado: list[str]) -> str:
+    """'01_baixar.py renan_x': script + 1º argumento que não é flag nem URL."""
+    linha = ocupado[-1]
+    m = PESADOS_RE.search(linha)
+    if not m:
+        return "?"
+    alvo = next((a.strip('"') for a in linha[m.end():].split()
+                 if not a.lstrip('"').startswith(("-", "http"))), "")
+    nome = re.split(r"[\\/]", m.group(0))[-1]       # Path().name não separa \ no Linux
+    return f"{nome} {alvo}".strip()
+
+
+def esperar_livre(espera_min: int = ESPERA_OCUPADO_MIN, intervalo_s: int = CHECA_OCUPADO_S,
+                  checar=processamento_em_andamento, dormir=time.sleep) -> list[str]:
+    """Espera o outro processamento acabar (até espera_min). Devolve o que ainda roda
+    ([] = livre pra processar)."""
+    ocupado = checar()
+    fim = time.monotonic() + espera_min * 60
+    while ocupado and time.monotonic() < fim:
+        quem = resumir_ocupado(ocupado)
+        marcar_etapa(f"esperando outro processamento terminar ({quem})")
+        print(f"[espera] outro processamento rodando: {quem}", flush=True)
+        dormir(intervalo_s)
+        ocupado = checar()
+    return ocupado
+
+
 # --- resumo -------------------------------------------------------------------------------
 
 def escrever_resumo(rodada: dict) -> str:
@@ -550,6 +620,8 @@ def escrever_resumo(rodada: dict) -> str:
     avisos = [a for p in rodada["processados"] for a in p["avisos"]]
     if rodada.get("aviso_canal"):
         avisos.insert(0, rodada["aviso_canal"])
+    if rodada.get("pulado"):
+        avisos.insert(0, rodada["pulado"])
     if rodada.get("aviso_placar"):
         avisos.append(rodada["aviso_placar"])
     if rodada.get("falha_llm"):
@@ -743,6 +815,14 @@ def _rodada(cfg: dict, dry_run: bool, sem_pipeline: bool, forcar: bool) -> int:
             vid = proximo_da_fila(estado, evento_on["desde"], PRIORIDADE_EVENTO)
         if vid is None and precisa:
             vid = proximo_da_fila(estado)
+    if vid and (ocupado := esperar_livre()):
+        # nunca dois processamentos ao mesmo tempo: o vídeo fica na fila (sem gastar tentativa)
+        rodada["pulado"] = (f"pulei o processamento: outro já estava rodando "
+                            f"({resumir_ocupado(ocupado)}) após {ESPERA_OCUPADO_MIN} min de "
+                            f"espera; \"{estado[vid]['titulo'][:60]}\" segue na fila")
+        evento(None, "curador_pulado", "aviso", agente="curador", mensagem=rodada["pulado"][:300])
+        print(f"\n[!] {rodada['pulado']}")
+        vid = None
     if vid:
         e = estado[vid]
         canal = _canal_de(cfg, e["canal"])

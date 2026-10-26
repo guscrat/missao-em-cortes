@@ -156,6 +156,21 @@ def _falhas_sem_ok(eventos: pd.DataFrame, desde: pd.Timestamp) -> pd.DataFrame:
     return ultimo[ultimo["status"] == "falha"]
 
 
+def _alerta_pulado(eventos: pd.DataFrame, agora: pd.Timestamp) -> list[tuple[str, str, str]]:
+    """Curador pulou o processamento (outro já rodava) e nenhum processamento dele veio depois."""
+    if eventos.empty:
+        return []
+    ev = eventos[(eventos["agente"] == "curador") & (eventos["ts"] >= agora - JANELA_FALHA)]
+    pulos = ev[(ev["etapa"] == "curador_pulado") & (ev["status"] == "aviso")]
+    if pulos.empty:
+        return []
+    ultimo = pulos.sort_values("ts").iloc[-1]
+    if (ev[ev["etapa"] == "curador_pipeline"]["ts"] > ultimo["ts"]).any():
+        return []
+    msg = ultimo["mensagem"] if isinstance(ultimo["mensagem"], str) else ""
+    return [("aviso", "Curador pulou o processamento", f"{msg} ({ultimo['ts']:%d/%m %Hh%M})")]
+
+
 def alertas_curador(eventos: pd.DataFrame, agora: pd.Timestamp,
                     log: Path | None = None) -> list[tuple[str, str, str]]:
     log = log or STATE / "curador.log"
@@ -172,6 +187,7 @@ def alertas_curador(eventos: pd.DataFrame, agora: pd.Timestamp,
         else:
             alvo = f" em {f.stem}" if isinstance(f.stem, str) and f.stem else ""
             saida.append(("erro", "Curador falhou", f"{msg or f.etapa}{alvo} ({quando})"))
+    saida += _alerta_pulado(eventos, agora)
     try:
         rodou = datetime.fromtimestamp(log.stat().st_mtime)
         linhas = log.read_text(encoding="utf-8", errors="replace").splitlines()
