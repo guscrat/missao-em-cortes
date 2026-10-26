@@ -1,10 +1,15 @@
-"""Step 10 (off-pipeline): Shorts 9:16 a partir dos cold opens.
+"""Step 10 (off-pipeline): Shorts 9:16 a partir do trecho `short` de cada bloco.
 
 Uso:
     uv run py scripts/10_shorts.py <stem> [--bloco=N]
 
-Pra cada bloco com cold_open no blocos.json:
-  1. Recorta a janela do cold open direto do vídeo ORIGINAL (inputs/<stem>.mp4, 1080p):
+Regra editorial: até 3 min (limite do YouTube), ideal 30-90s, sempre fechando uma ideia
+(gancho → desenvolvimento → frase de impacto); nada de cortar no meio da fala. O 03 escolhe
+o trecho e encaixa no fim de frase; aqui só confere (avisa se o fim não fecha frase).
+blocos.json antigo sem `short`: usa o cold open.
+
+Pra cada bloco com short (ou cold_open) no blocos.json:
+  1. Recorta a janela direto do vídeo ORIGINAL (inputs/<stem>.mp4, 1080p):
      o cold_NN.mp4 é 720p e já zoomado, ficaria borrado esticado pra 1080x1920
   2. Acha o rosto (OpenCV, local, grátis) em frames a cada 0.5s e centraliza a janela
      9:16 nele. A janela fica SEMPRE dentro da área anti-overlay do config/zoom.json,
@@ -26,6 +31,7 @@ import unicodedata
 sys.stdout.reconfigure(encoding='utf-8')
 from pathlib import Path
 
+import _fronteira as fr
 from _descricoes import manchete
 from _ffmpeg import AENC, VENC
 from _legenda import (AMARELO_14, PRETO, agrupar_linhas, cabecalho_ass, dialogo, estilo,
@@ -38,7 +44,8 @@ INPUTS = ROOT / "inputs"
 ZOOM_JSON = ROOT / "config" / "zoom.json"
 
 LARGURA, ALTURA = 1080, 1920
-COLD_PADDING_S = 0.5     # igual ao 04_cortar
+COLD_PADDING_S = fr.COLD_PADDING_S
+MAX_SHORT_S = 179.0      # limite do YouTube é 3 min (vídeo inteiro, com padding e fade)
 FADE_S = 0.3
 AMOSTRA_S = 0.5          # 1 frame a cada meio segundo pra achar o rosto
 TAXA_MIN_ROSTO = 0.3     # abaixo disso: avisa (tela compartilhada/plateia)
@@ -228,13 +235,27 @@ def main(argv: list[str]) -> int:
         bid, nn = b["id"], f"{b['id']:02d}"
         if so_bloco is not None and bid != so_bloco:
             continue
-        co = b.get("cold_open")
+        # o "short" do 03 fecha uma ideia (gancho → desenvolvimento → frase de impacto);
+        # blocos.json antigo sem ele: o cold open
+        co = b.get("short") or b.get("cold_open")
         if not co:
-            print(f"  [aviso] bloco {bid}: sem cold_open no blocos.json — pulando")
+            print(f"  [aviso] bloco {bid}: sem short nem cold_open no blocos.json — pulando")
             continue
-        ini = max(0.0, hhmmss_para_segundos(co["timestamp_inicio"]) - COLD_PADDING_S)
-        fim = hhmmss_para_segundos(co["timestamp_fim"]) + COLD_PADDING_S
+        ini, fim = fr.janela(todas, hhmmss_para_segundos(co["timestamp_inicio"]),
+                             hhmmss_para_segundos(co["timestamp_fim"]),
+                             COLD_PADDING_S, COLD_PADDING_S)
         dur = fim - ini
+        if dur > MAX_SHORT_S:
+            print(f"  [!] bloco {bid}: trecho de {dur:.0f}s passa do limite de Short "
+                  f"({MAX_SHORT_S:.0f}s) — pulando (corrija o 'short' no blocos.json)")
+            falhas += 1
+            continue
+        fronteira = fr.checar(todas, hhmmss_para_segundos(co["timestamp_inicio"]),
+                              hhmmss_para_segundos(co["timestamp_fim"]),
+                              COLD_PADDING_S, COLD_PADDING_S)
+        if not fronteira["fim_ok"]:
+            print(f"  [aviso] bloco {bid}: o Short não termina em fim de frase "
+                  f"(\"…{fronteira['ultimas']}\") — revise")
 
         cx, taxa = centro_rosto(video, ini, fim, regiao)
         crop = janela_9x16(regiao, cx)

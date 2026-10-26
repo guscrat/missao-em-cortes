@@ -4,6 +4,12 @@ Uso:
     uv run py scripts/11_revisor.py <stem> --dry-run     # mostra o que vai revisar e o custo estimado
     uv run py scripts/11_revisor.py <stem> [--bloco=N]
 
+Antes de qualquer chamada paga, a checagem de FRONTEIRA (código, $0, _fronteira.py): o corte
+começa no começo de frase e termina em fim de frase com pausa depois (últimas palavras do
+words.json)? Reprovou → reajusta sozinho: leva a ponta pro fim de frase mais perto (até 30s),
+grava no blocos.json e refaz o bloco (pipeline.py --bloco=N, ~US$ 0.03 do 04b). Sem ponto
+natural perto ou falhou ao refazer → "quarentena" (ajuste à mão).
+
 Pra cada bloco montado, UMA chamada ao Claude (com visão) recebe:
   - o título que vai pro YouTube (descricoes.txt; edição manual vale) e o texto da thumb
   - a transcrição do trecho (words.json)
@@ -48,6 +54,7 @@ from pathlib import Path
 import _colagem
 import _custo
 import _editor
+import _fronteira
 import _grafias
 from _descricoes import ler_descricoes
 from _eventos import atualizar_tarefa, evento, ler_bloco, upsert_bloco
@@ -402,6 +409,80 @@ def conferir_colagem_ab(client, anthropic, stem, pasta, bid, titulo) -> float:
     return usd_total
 
 
+def flags_refazer(pasta: Path, nn: str) -> list[str]:
+    """Flags do pipeline.py que refazem o bloco do mesmo jeito que ele foi feito."""
+    cortes = pasta / "cortes"
+    polido = any(cortes.glob(f"corte_{nn}_*_polido.mp4"))
+    legendado = any((cortes / "legendados").glob(f"corte_{nn}_*.mp4"))
+    return (["--polir"] if polido else []) + ([] if legendado else ["--sem-legendas"])
+
+
+def refazer_bloco(pasta: Path, bid: int) -> bool:
+    """pipeline.py --bloco=N: re-corta, pole, legenda e monta só esse bloco (04b com LLM:
+    ~US$ 0.03, logado pelo próprio 04b)."""
+    cmd = [sys.executable, str(SCRIPTS / "pipeline.py"), pasta.name, f"--bloco={bid}",
+           *flags_refazer(pasta, f"{bid:02d}")]
+    try:
+        return subprocess.run(cmd, capture_output=True, timeout=1800).returncode == 0
+    except subprocess.TimeoutExpired:
+        return False
+
+
+def conferir_fronteira(stem: str, pasta: Path, b: dict, todas: list[dict],
+                       reajustar: bool = True) -> tuple[dict, str | None]:
+    """Regra editorial: corte começa e termina em ponto natural (fim de frase + pausa).
+    Checagem por código (words.json), $0, antes da chamada paga. Reprovou → leva a ponta
+    pro fim de frase mais perto, grava no blocos.json e refaz o bloco sozinho.
+    (registro pro revisao.json, motivo de quarentena ou None)."""
+    bid, nn = b["id"], f"{b['id']:02d}"
+    ini, fim = hhmmss_para_segundos(b["timestamp_inicio"]), hhmmss_para_segundos(b["timestamp_fim"])
+    chk = _fronteira.checar(todas, ini, fim)
+    registro = {"inicio_ok": chk["inicio_ok"], "fim_ok": chk["fim_ok"],
+                "ultimas": chk["ultimas"], "pausa_depois_s": chk["pausa_depois_s"]}
+    if chk["inicio_ok"] and chk["fim_ok"]:
+        return registro, None
+    pontas = " e ".join(p for p, ok in (("começa", chk["inicio_ok"]), ("termina", chk["fim_ok"]))
+                        if not ok)
+    print(f"  {nn}: fronteira reprovada — {pontas} no meio de frase "
+          f"(início: \"{chk['primeiras']}…\" · fim: \"…{chk['ultimas']}\", "
+          f"pausa depois {chk['pausa_depois_s']}s)")
+    if not reajustar:
+        return registro, f"corte {pontas} no meio de frase"
+    dur = fim - ini
+    e = _fronteira.encaixar(
+        todas, ini, fim, _fronteira.JANELA_BLOCO_S,
+        _fronteira.LONGO_MIN * 60 if dur >= _fronteira.LONGO_MIN * 60 else None,
+        _fronteira.LONGO_MAX * 60 if dur <= _fronteira.LONGO_MAX * 60 else None)
+    if (not chk["inicio_ok"] and not e["inicio_ok"]) or (not chk["fim_ok"] and not e["fim_ok"]):
+        return registro, (f"corte {pontas} no meio de frase e não há ponto natural a até "
+                          f"{_fronteira.JANELA_BLOCO_S:.0f}s — ajuste os tempos à mão no blocos.json")
+    novo_ini = e["inicio"] if not chk["inicio_ok"] else ini
+    novo_fim = e["fim"] if not chk["fim_ok"] else fim
+    blocos_path = pasta / "blocos.json"
+    data = json.loads(blocos_path.read_text(encoding="utf-8"))
+    for x in data["blocos"]:
+        if x["id"] == bid:
+            x["timestamp_inicio"] = b["timestamp_inicio"] = _fronteira.segundos_para_ts(novo_ini)
+            x["timestamp_fim"] = b["timestamp_fim"] = _fronteira.segundos_para_ts(novo_fim)
+            x["duracao_minutos"] = b["duracao_minutos"] = round((novo_fim - novo_ini) / 60, 1)
+            x["faixa_duracao"] = b["faixa_duracao"] = _fronteira.faixa(x["duracao_minutos"])
+    blocos_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    upsert_bloco(stem, bid, duracao_min=b["duracao_minutos"])
+    registro["reajuste_s"] = [round(novo_ini - ini, 2), round(novo_fim - fim, 2)]
+    print(f"  {nn}: reajustado ({registro['reajuste_s'][0]:+.1f}s no início, "
+          f"{registro['reajuste_s'][1]:+.1f}s no fim) → refazendo o bloco (pipeline --bloco)")
+    evento(stem, "11_revisor", "aviso", agente="revisor", bloco_id=bid,
+           mensagem=f"fronteira reajustada {registro['reajuste_s']}")
+    if not refazer_bloco(pasta, bid):
+        return registro, "fronteira reajustada, mas falhou ao refazer o bloco (pipeline --bloco)"
+    chk = _fronteira.checar(todas, novo_ini, novo_fim)
+    registro.update(inicio_ok=chk["inicio_ok"], fim_ok=chk["fim_ok"], ultimas=chk["ultimas"],
+                    pausa_depois_s=chk["pausa_depois_s"])
+    if not (chk["inicio_ok"] and chk["fim_ok"]):
+        return registro, "fronteira continua no meio de frase depois do reajuste — revisar à mão"
+    return registro, None
+
+
 def chamar_gu(stem: str, nn: str, motivo: str) -> None:
     """Título reprovou em todas as reescritas: decisão do Gu (chat + faixa amarela)."""
     print(f"\n  >>> DECISÃO DO GU ({stem} bloco {nn}): {motivo}\n")
@@ -453,6 +534,8 @@ def main(argv: list[str]) -> int:
           + (f" (até +US$ {(CUSTO_ESTIMADO_BLOCO + _editor.CUSTO_ESTIMADO) * _editor.MAX_RODADAS:.2f}"
              f"/bloco se o editor reescrever)" if com_editor else ""))
     if dry or not fila:
+        for b, nn, _ in fila:   # checagem de fronteira é de graça: mostra no dry-run
+            conferir_fronteira(stem, pasta, b, todas, reajustar=False)
         print("(dry-run: nada foi enviado)" if dry else "Nada a revisar.")
         return 0
 
@@ -466,6 +549,18 @@ def main(argv: list[str]) -> int:
 
     for b, nn, video in fila:
         bid = b["id"]
+        fronteira, motivo_fr = conferir_fronteira(stem, pasta, b, todas)
+        if motivo_fr:
+            upsert_bloco(stem, bid, status="quarentena", forcar_status=True, motivo=motivo_fr)
+            revisao[nn] = {"status": "quarentena", "motivo": motivo_fr, "fronteira": fronteira,
+                           "modelo": None, "custo_usd": 0.0}
+            revisao_path.write_text(json.dumps(revisao, ensure_ascii=False, indent=2),
+                                    encoding="utf-8")
+            evento(stem, "11_revisor", "ok", agente="revisor", bloco_id=bid,
+                   mensagem=f"quarentena: {motivo_fr}"[:300])
+            print(f"  {nn}: QUARENTENA — {motivo_fr}")
+            continue
+        video = escolher_video(pasta, nn) or video   # refeito pelo reajuste: mesmo nome
         titulo = descricoes.get(bid, {}).get("titulo") or b.get("titulo_sugerido", "")
         texto_base = b.get("texto_thumb") or b.get("tema", "")    # o do template (07)
         texto_thumb = texto_da_thumb(pasta, bid, texto_base)
@@ -538,6 +633,7 @@ def main(argv: list[str]) -> int:
         upsert_bloco(stem, bid, status=status, forcar_status=True, motivo=motivo)
         thumb = escolher_thumb(pasta / "thumbs", nn)
         revisao[nn] = {"status": status, "motivo": motivo, "checagens": checagens,
+                       "fronteira": fronteira,
                        "titulo": titulo, "texto_thumb": texto_thumb,
                        "thumb": thumb.name if thumb else None,
                        "reescritas": tentativas, "trocas_thumb": trocas_thumb[1:],

@@ -9,6 +9,9 @@ Uso: uv run py scripts/pipeline.py <stem> [--polir] [--sem-llm] [--sem-legendas]
                   e monta com --legendado)
   --desde=N   retoma a partir do step N (aceita 4b e 4c). Ex: --desde=4 pra re-cortar
               depois de recalibrar o zoom, sem re-segmentar.
+  --bloco=N   refaz SÓ esse bloco, só os steps que dependem dos tempos dele (4, 4b, 4c, 6).
+              Usado pelo revisor (11) quando reajusta o ponto de corte. Card, thumb e
+              descrição ficam como estão.
 
 Sem --desde, detecta sozinho: pula o step 2 se a transcrição já existe.
 Cada step é o script de sempre rodado em sequência (mesma saída no terminal);
@@ -42,10 +45,15 @@ sem_llm = "--sem-llm" in flags
 legendas = "--sem-legendas" not in flags   # padrão: ligada
 
 desde = None
+so_bloco = None
 for f in flags:
     if f.startswith("--desde="):
         v = f.split("=", 1)[1]
         desde = {"4b": 4.5, "4c": 4.7}.get(v) or float(v)
+    if f.startswith("--bloco="):
+        so_bloco = int(f.split("=", 1)[1])
+if so_bloco is not None and desde is None:
+    desde = 4.0
 
 VIDEO = ROOT / "inputs" / f"{stem}.mp4"
 if desde == 4.7 and not legendas:
@@ -84,6 +92,9 @@ steps = [
     (8.0, "08_descricao.py", [alvo]),
 ]
 
+if so_bloco is not None:
+    steps = [(n, s, a + [f"--bloco={so_bloco}"]) for n, s, a in steps if n in (4.0, 4.5, 4.7, 6.0)]
+
 rotulo = {2.0: "2", 3.0: "3", 4.0: "4", 4.5: "4b", 4.7: "4c", 5.0: "5", 6.0: "6", 7.0: "7", 8.0: "8"}
 t0 = time.time()
 
@@ -105,6 +116,7 @@ for num, script, sargs in steps:
                  f"    uv run py scripts/pipeline.py {alvo}"
                  f"{' --polir' if polir else ''}{' --sem-llm' if sem_llm else ''}"
                  f"{'' if legendas else ' --sem-legendas'}"
+                 f"{f' --bloco={so_bloco}' if so_bloco is not None else ''}"
                  f" --desde={rotulo[num]}")
     evento(stem, etapa, "ok", duracao_s=time.time() - t_step)
     print(f"   (step {rotulo[num]}: {(time.time() - t_step) / 60:.1f} min)")

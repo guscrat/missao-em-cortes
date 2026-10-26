@@ -19,13 +19,22 @@ def _w(word, start, end):
 
 
 def test_palavras_do_bloco_relativas_ao_corte_com_padding():
-    todas = [_w("antes", 8.0, 8.5), _w(" oi", 9.5, 10.0), _w("tchau", 20.0, 20.5),
-             _w("depois", 23.0, 23.5), _w("  ", 12.0, 12.1)]
+    todas = [_w("antes", 8.0, 8.5), _w(" oi", 10.2, 10.6), _w("tchau", 20.0, 20.5),
+             _w("depois", 23.5, 24.0), _w("  ", 12.0, 12.1)]
     bloco = {"timestamp_inicio": "00:00:10", "timestamp_fim": "00:00:21"}
     pal = leg.palavras_do_bloco(todas, bloco)
     # janela do corte = [9, 23): padding 1s antes e 2s depois, igual ao 04_cortar
     assert [p["word"] for p in pal] == ["oi", "tchau"]
-    assert pal[0]["start"] == pytest.approx(0.5)
+    assert pal[0]["start"] == pytest.approx(1.2)
+
+
+def test_palavras_do_bloco_padding_nao_puxa_a_frase_vizinha():
+    # a frase anterior termina 0,3s antes do início e a seguinte começa 0,6s depois do fim:
+    # o padding para nelas (janela do _fronteira, a mesma do 04_cortar)
+    todas = [_w("antes.", 9.2, 9.7), _w("oi", 10.0, 10.4), _w("tchau.", 20.0, 21.0),
+             _w("depois", 21.6, 22.0)]
+    bloco = {"timestamp_inicio": "00:00:10", "timestamp_fim": "00:00:21"}
+    assert [p["word"] for p in leg.palavras_do_bloco(todas, bloco)] == ["oi", "tchau."]
 
 
 def test_remapear_polido_tira_palavra_cortada_e_puxa_as_seguintes():
@@ -183,13 +192,13 @@ def video_cold(video):
 
 
 def test_palavras_do_cold_relativas_com_padding():
-    todas = [_w("fora", 11.0, 11.4), _w("dentro", 11.6, 12.0), _w("fim", 16.2, 16.4),
+    todas = [_w("fora", 11.0, 11.4), _w("dentro", 12.0, 12.3), _w("fim", 15.6, 16.2),
              _w("depois", 16.8, 17.0)]
     bloco = {"cold_open": {"timestamp_inicio": "00:00:12", "timestamp_fim": "00:00:16"}}
     pal = leg.palavras_do_cold(todas, bloco)
-    # janela [11.5, 16.5): padding 0.5s dos dois lados
+    # janela [11.5, 16.5): padding 0.5s dos dois lados ("fim" começou antes do fim: entra)
     assert [p["word"] for p in pal] == ["dentro", "fim"]
-    assert pal[0]["start"] == pytest.approx(0.1)
+    assert pal[0]["start"] == pytest.approx(0.5)
 
 
 def test_gerar_ass_cold_usa_estilo_gancho_96():

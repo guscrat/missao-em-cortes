@@ -1,4 +1,6 @@
-"""Step 12 (off-pipeline): retenção dos vídeos COM legenda karaokê x média dos antigos.
+"""Step 12 (off-pipeline): retenção dos vídeos COM legenda karaokê x média dos antigos, e
+retenção + horas assistidas por FAIXA DE DURAÇÃO (curto 8-12, médio 12-20, longo 20-30 min)
+pra achar a duração ideal pro nosso público.
 
 Uso:
     uv run py scripts/12_metricas.py              # tabela + resumo (pro resumo semanal)
@@ -32,6 +34,7 @@ from pathlib import Path
 
 from _descricoes import ler_descricoes
 from _eventos import evento
+from _fronteira import FAIXAS, faixa
 from _google import credenciais
 from _paths import OUTPUTS
 from _youtube_leitura import (CLIENT_SECRET, ESCOPOS, TOKEN, duracao_iso,  # noqa: F401
@@ -72,9 +75,22 @@ def resumo_grupo(videos: list[dict]) -> dict | None:
     if not validos:
         return None
     views = sum(v["views"] for v in validos)
+    horas = sum(v["assistido_s"] * v["views"] for v in validos) / 3600
     return {"n": len(validos), "views": views,
             "retencao_pct": round(sum(v["retencao_pct"] * v["views"] for v in validos) / views, 1),
-            "assistido_s": round(sum(v["assistido_s"] * v["views"] for v in validos) / views)}
+            "assistido_s": round(sum(v["assistido_s"] * v["views"] for v in validos) / views),
+            "horas_assistidas": round(horas, 1), "horas_por_video": round(horas / len(validos), 1)}
+
+
+def por_faixa(videos: list[dict]) -> dict[str, dict | None]:
+    """Longos agrupados pela faixa de duração (curto 8-12, médio 12-20, longo 20-30; 'fora'
+    = os antigos de 5-7 min, a linha de base). Pra achar a duração ideal pro nosso público."""
+    grupos: dict[str, list] = {nome: [] for nome, _, _ in FAIXAS}
+    grupos["fora"] = []
+    for v in videos:
+        if v["duracao_s"] > MAX_SHORT_S:
+            grupos[faixa(v["duracao_s"] / 60)].append(v)
+    return {nome: resumo_grupo(vs) for nome, vs in grupos.items()}
 
 
 # ── API ────────────────────────────────────────────────────────────────────
@@ -131,9 +147,20 @@ def main(argv: list[str]) -> int:
         print(f"\n  [aviso] {len(grupos['sem_info'])} vídeo(s) recente(s) sem match no descricoes.txt "
               f"(título editado no Studio?) — fora da conta")
 
+    faixas = por_faixa(videos)
+    print("\n  Por faixa de duração (retenção · horas assistidas):")
+    rotulos = {"curto": "curto 8-12min", "medio": "médio 12-20min", "longo": "longo 20-30min",
+               "fora": "fora (antigos 5-7min)"}
+    for nome, g in faixas.items():
+        print(f"    {rotulos[nome]:<22} " + (
+            f"{g['retencao_pct']}% · {g['horas_assistidas']}h ({g['horas_por_video']}h/vídeo, "
+            f"{g['n']} vídeos, ~{g['assistido_s'] // 60}min{g['assistido_s'] % 60:02d}s por view)"
+            if g else "sem dados"))
+
     SAIDA.parent.mkdir(parents=True, exist_ok=True)
     SAIDA.write_text(json.dumps({"gerado_em": date.today().isoformat(), "desde": inicio,
-                                 "com_legenda": com, "sem_legenda": sem, "videos": videos},
+                                 "com_legenda": com, "sem_legenda": sem,
+                                 "por_faixa": faixas, "videos": videos},
                                 ensure_ascii=False, indent=2), encoding="utf-8")
     evento(None, "12_metricas", "ok", agente="analista",
            mensagem=f"retenção com={com and com['retencao_pct']} sem={sem and sem['retencao_pct']}")
