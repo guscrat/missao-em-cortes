@@ -47,6 +47,8 @@ destacando palavrão/termo ofensivo). Reescreva o título do YouTube e o texto d
 Regras:
 - Só afirme o que a transcrição sustenta. Nada de atribuir ao speaker frase, alvo ou \
 promessa que ele não disse. Corrija exatamente o problema apontado pelo revisor.
+- Toda fala citada (no título, na thumb ou entre aspas) tem que estar DENTRO da transcrição \
+deste trecho: nada de frase dita em outro momento da live.
 - Continue com gancho: título ousado e curioso é bem-vindo, desde que fiel.
 - Título e texto da thumb NUNCA destacam palavrão nem termo que possa soar como ofensa a um \
 grupo (raça, etnia, gênero, orientação sexual, religião, origem, deficiência etc.), MESMO que \

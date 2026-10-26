@@ -26,6 +26,7 @@ Identifique os blocos temáticos CONTÍNUOS da live (não compilação de trecho
    - **Varie as durações entre os blocos**: curtos de 8-12 min, médios de 12-20 e longos de 20-30. Se todos saíram do mesmo tamanho, você provavelmente está cortando pelo relógio e não pelo assunto.
 2. **Coesão temática**: UM assunto principal do início ao fim. Subtemas que servem o assunto central são OK (num bloco longo é natural tê-los); troca de assunto vira OUTRO bloco.
 3. **Início natural**: começa no começo de uma frase completa — pergunta, afirmação forte ou abertura de tópico. NUNCA no meio de uma frase ou raciocínio. O `timestamp_inicio` é o da linha da transcrição onde a frase de abertura começa.
+   - **Nunca abre com propaganda ou patrocínio da live original** (Valete Plus, revista, festival, cupom, "deixa o like / se inscreve"): o bloco começa na primeira frase DEPOIS dela. Propaganda no meio do bloco é ok; na abertura, não.
 4. **Fim natural**: termina no fim de uma frase que conclui o raciocínio (frase de impacto, conclusão, pausa clara). NUNCA antes de uma conclusão nem no meio de uma frase. O `timestamp_fim` é o da linha SEGUINTE à frase de encerramento (o pipeline encaixa o corte no fim exato da última palavra e na pausa depois dela, pelos tempos das palavras).
 5. **Autossuficiência**: o espectador entende o corte sem ter visto o resto da live.
 6. **Gancho**: tem pelo menos um momento forte (declaração polêmica, dado impactante, frase de efeito, embate) que pode virar thumbnail/título. O `texto_thumb` deve destilar esse gancho em 2-5 palavras de impacto (curto e legível em miniatura) — distinto do `titulo_sugerido`, que é a frase completa pro título do YouTube. Título e `texto_thumb` NUNCA destacam palavrão nem termo que possa soar como ofensa a um grupo (raça, etnia, gênero, orientação sexual, religião, origem, deficiência etc.), MESMO que esteja na fala: descreva o tom ("desabafo sem filtro", "detona") em vez de citar o termo. Bloco com `parte` termina o `titulo_sugerido` com "(Parte 1)" / "(Parte 2)".
@@ -66,9 +67,9 @@ Responda APENAS com o JSON abaixo, sem markdown, sem texto antes ou depois.
       "parte": null,
       "frase_de_abertura": "primeiras 1-2 frases do corte (literal da transcrição)",
       "frase_de_encerramento": "últimas 1-2 frases do corte (literal da transcrição)",
-      "resumo": "3-5 linhas explicando o que acontece no bloco",
+      "resumo": "3-5 linhas explicando o que acontece no bloco (só o que está entre a frase de abertura e a de encerramento)",
       "ganchos": [
-        "frases/momentos de impacto pra thumbnail e título"
+        "frase de impacto LITERAL da transcrição, dita DENTRO deste bloco (vira 'Principais momentos' na descrição; o revisor confere e tira o que for de fora)"
       ],
       "titulo_sugerido": "título de YouTube com gancho (máx 70 chars)",
       "texto_thumb": "texto da THUMBNAIL: 2 a 5 palavras, impacto máximo, CAPS. NÃO é o título — é o que aparece grande na miniatura, legível num celular. Sem nome do speaker, sem frase completa: um gancho seco (ex: 'QUEST x ATLAS: 4% OU 36%?', '\"VOCÊ É BEM EVITÁVEL\"', 'VERA OBRIGADA A CITAR'). Máx ~24 chars.",

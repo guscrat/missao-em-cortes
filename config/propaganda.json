@@ -1,0 +1,13 @@
+{
+  "_comentario": "Regra editorial: nenhum corte abre com propaganda/patrocínio da live original (_fronteira.pular_propaganda, usado no 03 e no 11). 'termos' abrem a propaganda (se aparecem nos primeiros segundos do corte); 'continua' só emendam uma propaganda já aberta (sozinhos não contam: 'revista' também é assunto). Sem acento/pontuação, minúsculo; pode ter várias palavras.",
+  "termos": [
+    "valet", "valete", "valetplus",
+    "patrocinador", "patrocinadores", "nosso patrocinio", "oferecimento",
+    "cupom", "codigo de desconto", "link na descricao",
+    "like na live", "compartilhe a live", "se inscreva", "inscrevase", "seja membro"
+  ],
+  "continua": [
+    "revista", "revistas", "aplicativo", "festival", "assinatura", "assine", "promocao",
+    "entregar", "inscritos"
+  ]
+}

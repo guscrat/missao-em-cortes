@@ -14,8 +14,10 @@ Custo: $0 (sem API).
 """
 import bisect
 import difflib
+import json
 import re
 import unicodedata
+from pathlib import Path
 
 FIM_FRASE = (".", "!", "?")
 PAUSA_FIM_S = 0.5        # silêncio mínimo depois da última palavra do corte
@@ -187,6 +189,59 @@ def ancorar(palavras: list[dict], frase: str, t: float, ponta: str,
         if melhor is None or chave > melhor[0]:
             melhor = (chave, tt)
     return None if melhor is None else melhor[1]
+
+
+ABERTURA_S = 30            # propaganda que aparece até aqui do início = o corte abre com ela
+EMENDA_S = 40              # outra menção a até isso da anterior = a mesma propaganda
+MAX_PROPAGANDA_S = 150     # passou disso, não é abertura: é o bloco (o revisor/Gu decide)
+PROPAGANDA_JSON = Path(__file__).parent.parent / "config" / "propaganda.json"
+
+
+def termos_propaganda() -> tuple[list[list[str]], list[list[str]]]:
+    """(termos, continua) do config/propaganda.json, já normalizados em listas de tokens."""
+    try:
+        cfg = json.loads(PROPAGANDA_JSON.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return [], []
+    toks = lambda xs: [t for t in ([_norm(p) for p in x.split()] for x in xs) if all(t)]  # noqa: E731
+    return toks(cfg.get("termos", [])), toks(cfg.get("continua", []))
+
+
+def pular_propaganda(palavras: list[dict], ini: float, termos: list[list[str]],
+                     continua: list[list[str]] = ()) -> tuple[float, str] | None:
+    """Regra editorial: nenhum corte abre com propaganda/patrocínio da live. Se um dos
+    `termos` aparece nos primeiros ABERTURA_S do corte, segue a propaganda (termos ou
+    `continua` a até EMENDA_S um do outro) e devolve (início da 1ª frase depois dela, trecho
+    pulado). Sem propaganda na abertura: None. Propaganda sem fim até MAX_PROPAGANDA_S: None
+    também (não dá pra decidir por código)."""
+    if not palavras or not termos:
+        return None
+    idx = [k for k, w in enumerate(palavras) if ini - 0.01 <= w["start"] < ini + MAX_PROPAGANDA_S]
+    norm = [_norm(palavras[k]["word"]) for k in idx]
+
+    def achados(lista):   # [(início, fim)] de cada ocorrência
+        saida = []
+        for t in lista:
+            n = len(t)
+            for i in range(len(norm) - n + 1):
+                if norm[i:i + n] == t:
+                    saida.append((palavras[idx[i]]["start"], palavras[idx[i + n - 1]]["end"]))
+        return saida
+
+    fortes = sorted(achados(termos))
+    if not fortes or fortes[0][0] > ini + ABERTURA_S:
+        return None
+    cursor = fortes[0][1]
+    for a, z in sorted(fortes + achados(continua)):
+        if a <= cursor + EMENDA_S:
+            cursor = max(cursor, z)
+    if cursor + EMENDA_S >= ini + MAX_PROPAGANDA_S:
+        return None
+    for k in idx:
+        if palavras[k]["start"] >= cursor and eh_inicio(palavras, k):
+            pulado = " ".join(w["word"] for w in palavras if ini - 0.01 <= w["start"] < cursor)
+            return palavras[k]["start"], pulado
+    return None
 
 
 def segundos_para_ts(t: float) -> str:

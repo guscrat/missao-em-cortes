@@ -13,6 +13,10 @@
 - 6 frames do corte completo
 - A lista de grafias oficiais
 
+## Checagem 0a — abertura sem propaganda (código, $0, antes da fronteira)
+
+`conferir_abertura` → `_fronteira.pular_propaganda` com os termos de `config/propaganda.json` (`termos` abrem uma propaganda se aparecem nos primeiros 30s; `continua` só emendam uma já aberta, a até 40s uma da outra; desiste se passar de 2,5 min). Achou → o início vai pra 1ª frase depois da propaganda, grava no `blocos.json`/banco (`gravar_tempos`) e refaz o bloco (`pipeline.py --bloco=N`). Sem a propaganda o corte fica < 8 min ou falhou ao refazer → `quarentena`. Resultado em `revisao.json` → `abertura` (`pulado_s`, `trecho`). O `--dry-run` só mostra.
+
 ## Checagem 0 — fronteira (código, $0, antes da chamada paga)
 
 `_fronteira.checar`: no que se ouve no vídeo (janela do 04), a 1ª palavra abre frase e a última fecha frase com pausa depois (≥ 0,5s; ou sem pontuação e ≥ 1,2s)? Reprovou → `_fronteira.encaixar` leva a ponta reprovada pro ponto natural mais perto (até 30s, sem sair de 8-30 min), grava no `blocos.json` (tempos, `duracao_minutos`, `faixa_duracao`) e no banco, e refaz o bloco com `pipeline.py <pasta> --bloco=N` (04 → 04b → 04c → 06, com as mesmas flags com que ele foi feito; o 04b com LLM custa ~US$ 0,03). Sem ponto natural perto, falha ao refazer ou continua reprovado → `quarentena` com o motivo (sem gastar a chamada do revisor). O `--dry-run` mostra a checagem sem reajustar. Resultado em `revisao.json` → `fronteira` (`ultimas`, `pausa_depois_s`, `reajuste_s`).
@@ -23,6 +27,7 @@
 2. **Thumb ok** — a thumb **final**: rosto inteiro, visível e iluminado, sem sombra/degradê em cima, texto legível e coerente, sem tela compartilhada.
 3. **Tela compartilhada** — maior parte do corte mostra tela em vez de gente.
 4. **Corte sem sentido** — o trecho não se sustenta sozinho.
+5. **`momentos_fora`** — os itens de "Principais momentos" da descrição (lidos do `descricoes.txt`) que **não** estão na transcrição do trecho (fala de outro momento da live, inventada ou distorcida; paráfrase fiel do trecho passa). Não muda o status: o código (`limpar_momentos`) tira esses itens do `descricoes.txt` (só essas linhas; sem nenhum sobra, sai o cabeçalho) e dos `ganchos` do `blocos.json`. Registro em `revisao.json` → `momentos_removidos`. Se 2+ e mais da metade estavam fora, o bloco aprovado vai pra `quarentena` (sinal de tempos do bloco trocados). A transcrição conferida exclui o campo `remover` do bloco (o que o 04b corta).
 
 ## Decisão (código, não modelo)
 
