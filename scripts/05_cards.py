@@ -89,6 +89,7 @@ def gerar_card(bloco, output_png):
 
 def png_para_mp4(png_path, mp4_path, duracao=3):
     """Converte PNG estático em MP4 no formato canônico do pipeline (pro concat -c copy)."""
+    # duração mudou? ajuste _capitulos.CARD_S (tempo dos capítulos na descrição)
     cmd = [
         "ffmpeg", "-y",
         "-loop", "1", "-i", str(png_path),
