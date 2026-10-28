@@ -22,6 +22,7 @@
     {"nome": "Ciro Nogueira", "curto": "Ciro Nogueira", "erradas": []},
     {"nome": "Alexandre de Moraes", "curto": "Moraes", "erradas": ["Alexandre de Morais", "Alexandre Moraes"]},
     {"nome": "Daniel Vorcaro", "curto": "Vorcaro", "erradas": ["Daniel Vorcarro"]},
-    {"nome": "Guilherme Boulos", "curto": "Boulos", "erradas": ["Guilherme Boullos"]}
+    {"nome": "Guilherme Boulos", "curto": "Boulos", "erradas": ["Guilherme Boullos"]},
+    {"nome": "Roberta Luchsinger", "curto": "Roberta Luchsinger", "erradas": ["Roberta Lossinger", "Roberta Losinger", "Roberta Luchsing", "Roberta Lucsinger", "Roberta Luxinger", "Lossinger"]}
   ]
 }
