@@ -187,6 +187,206 @@ def test_para_video_e_para_live_nos_limites(tmp_path):
     assert t.para_live(10**6) == t.fim
 
 
+# ── medição por ffprobe (duracao_s / _ffprobe / reserva) ───────────────────
+
+@pytest.fixture(autouse=True)
+def _sem_ffprobe_nem_assets_reais(tmp_path, monkeypatch):
+    """Isola _capitulos: ROOT numa pasta vazia e ffprobe que nunca mede (usa as constantes)."""
+    real = cap._ffprobe
+    real.cache_clear()
+    monkeypatch.setattr(cap, "ROOT", tmp_path / "raiz")
+    monkeypatch.setattr(cap, "_ffprobe", lambda caminho, mtime: None)
+    cap._ffprobe_real = real
+    yield
+    real.cache_clear()
+
+
+def medidas(monkeypatch, **por_sufixo):
+    """Mocka a medição: {sufixo do caminho (com /): duração}. Sem entrada = None."""
+    def falso(caminho, mtime):
+        c = caminho.replace("\\", "/")
+        for suf, v in por_sufixo.items():
+            if c.endswith(suf):
+                return v
+        return None
+    monkeypatch.setattr(cap, "_ffprobe", falso)
+
+
+def assets(*nomes):
+    a = cap.ROOT / "assets"
+    a.mkdir(parents=True, exist_ok=True)
+    for n in nomes:
+        (a / n).touch()
+
+
+def pasta_medida(tmp_path, legendado=False, legendados_cold=False, card=True):
+    p = pasta_bloco(tmp_path, cold=True)
+    if legendado:
+        (p / "finalizados" / "video_01_slug.mp4").rename(p / "finalizados" / "video_01_slug_legendado.mp4")
+    if legendados_cold:
+        (p / "cortes" / "legendados").mkdir()
+        (p / "cortes" / "legendados" / "cold_01_slug.mp4").touch()
+    if card:
+        (p / "cards").mkdir()
+        (p / "cards" / "card_01.mp4").touch()
+    return p
+
+
+def test_medidos_entram_no_offset_e_no_total(tmp_path, monkeypatch):
+    assets("intro_trim.mp4", "outro_norm.mp4")
+    p = pasta_medida(tmp_path)
+    medidas(monkeypatch, **{"cortes/cold_01_slug.mp4": 20.5, "assets/intro_trim.mp4": 2.5,
+                            "cards/card_01.mp4": 3.25, "assets/outro_norm.mp4": 4.0})
+    t = cap.LinhaDoTempo(p, bloco(cold=True), PAL)
+    assert t.reserva == []
+    assert t.offset == pytest.approx(20.5 + 2.5 + 3.25)
+    assert t.total_s == pytest.approx(t.offset + (t.fim - t.ini) + 4.0)
+    assert t.para_video(t.ini) == pytest.approx(26.25)
+
+
+def test_cold_legendado_quando_video_legendado_e_arquivo_existe(tmp_path, monkeypatch):
+    p = pasta_medida(tmp_path, legendado=True, legendados_cold=True)
+    medidas(monkeypatch, **{"legendados/cold_01_slug.mp4": 18.0, "cortes/cold_01_slug.mp4": 20.0})
+    assert cap.LinhaDoTempo(p, bloco(cold=True), PAL).offset == pytest.approx(18.0 + 6.0)
+
+
+def test_cold_cru_se_legendado_nao_existe_ou_video_nao_e_legendado(tmp_path, monkeypatch):
+    medidas(monkeypatch, **{"legendados/cold_01_slug.mp4": 18.0, "cortes/cold_01_slug.mp4": 20.0})
+    p1 = pasta_medida(tmp_path, legendado=True, legendados_cold=False)
+    assert cap.LinhaDoTempo(p1, bloco(cold=True), PAL).offset == pytest.approx(20.0 + 6.0)
+    sub = tmp_path / "outro"
+    sub.mkdir()
+    p2 = pasta_medida(sub, legendado=False, legendados_cold=True)
+    assert cap.LinhaDoTempo(p2, bloco(cold=True), PAL).offset == pytest.approx(20.0 + 6.0)
+
+
+def test_intro_trim_tem_prioridade_sobre_norm(tmp_path, monkeypatch):
+    assets("intro_trim.mp4", "intro_norm.mp4")
+    medidas(monkeypatch, **{"assets/intro_trim.mp4": 2.0, "assets/intro_norm.mp4": 3.5})
+    t = cap.LinhaDoTempo(pasta_bloco(tmp_path), bloco(), PAL)
+    assert t.offset == pytest.approx(2.0 + cap.CARD_S)
+
+
+def test_intro_norm_quando_nao_ha_trim_ou_trim_nao_mede(tmp_path, monkeypatch):
+    assets("intro_norm.mp4")
+    medidas(monkeypatch, **{"assets/intro_norm.mp4": 3.5})
+    t = cap.LinhaDoTempo(pasta_bloco(tmp_path), bloco(), PAL)
+    assert t.offset == pytest.approx(3.5 + cap.CARD_S) and "intro" not in t.reserva
+    assets("intro_trim.mp4")      # existe mas o ffprobe falha nele: cai pro norm
+    sub = tmp_path / "x"
+    sub.mkdir()
+    assert cap.LinhaDoTempo(pasta_bloco(sub), bloco(), PAL).offset == pytest.approx(3.5 + cap.CARD_S)
+
+
+def test_reserva_tudo_sem_medicao(tmp_path):
+    t = cap.LinhaDoTempo(pasta_bloco(tmp_path), bloco(), PAL)
+    assert t.reserva == ["intro", "card", "outro"]
+    assert t.offset == cap.INTRO_S + cap.CARD_S
+    assert t.total_s == pytest.approx(t.offset + (t.fim - t.ini) + cap.OUTRO_S)
+
+
+def test_reserva_so_o_que_falhou(tmp_path, monkeypatch):
+    assets("intro_trim.mp4", "outro_norm.mp4")
+    p = pasta_medida(tmp_path)
+    medidas(monkeypatch, **{"assets/intro_trim.mp4": 2.0, "cards/card_01.mp4": 4.0})  # outro e cold sem medida
+    t = cap.LinhaDoTempo(p, bloco(cold=True), PAL)
+    a, z = fr.janela(PAL, t_frase(500), t_frase(500) + 20, fr.COLD_PADDING_S, fr.COLD_PADDING_S)
+    assert t.reserva == ["cold open", "outro"]
+    assert t.offset == pytest.approx((z - a) + 2.0 + 4.0)
+    assert t.total_s == pytest.approx(t.offset + (t.fim - t.ini) + cap.OUTRO_S)
+
+
+def test_reserva_card_isolado(tmp_path, monkeypatch):
+    assets("intro_norm.mp4", "outro_norm.mp4")
+    medidas(monkeypatch, **{"assets/intro_norm.mp4": 3.0, "assets/outro_norm.mp4": 5.5})
+    t = cap.LinhaDoTempo(pasta_bloco(tmp_path), bloco(), PAL)    # sem cards/card_01.mp4
+    assert t.reserva == ["card"] and t.offset == pytest.approx(3.0 + cap.CARD_S)
+
+
+def test_cold_sem_mp4_nao_entra_na_reserva(tmp_path):
+    t = cap.LinhaDoTempo(pasta_bloco(tmp_path), bloco(cold=True), PAL)
+    assert "cold open" not in t.reserva and t.offset == 6.0
+
+
+def test_cold_mp4_sem_medida_e_sem_cold_open_no_bloco_vale_zero(tmp_path):
+    t = cap.LinhaDoTempo(pasta_bloco(tmp_path, cold=True), bloco(cold=False), PAL)
+    assert t.offset == 6.0 and "cold open" not in t.reserva
+
+
+def test_duracao_s_none_para_arquivo_inexistente_e_none(tmp_path):
+    assert cap.duracao_s(None) is None
+    assert cap.duracao_s(tmp_path / "nao_existe.mp4") is None
+
+
+def _ffprobe_real_com(monkeypatch, saida=None, erro=None):
+    chamadas = []
+
+    def run(cmd, **kw):
+        chamadas.append(cmd)
+        if erro:
+            raise erro
+        return subprocess.CompletedProcess(cmd, 0, stdout=saida, stderr="")
+    monkeypatch.setattr(cap, "_ffprobe", cap._ffprobe_real)
+    monkeypatch.setattr(cap.subprocess, "run", run)
+    return chamadas
+
+
+def test_ffprobe_le_a_duracao(tmp_path, monkeypatch):
+    f = tmp_path / "a.mp4"
+    f.touch()
+    ch = _ffprobe_real_com(monkeypatch, saida="12.345\n")
+    assert cap.duracao_s(f) == pytest.approx(12.345)
+    assert ch[0][0] == "ffprobe" and str(f) in ch[0]
+
+
+@pytest.mark.parametrize("erro", [FileNotFoundError("sem ffprobe"), OSError("x"),
+                                  subprocess.TimeoutExpired("ffprobe", 30)])
+def test_ffprobe_erro_vira_none(tmp_path, monkeypatch, erro):
+    f = tmp_path / "a.mp4"
+    f.touch()
+    _ffprobe_real_com(monkeypatch, erro=erro)
+    assert cap.duracao_s(f) is None
+
+
+@pytest.mark.parametrize("saida", ["", "N/A", "lixo\nmais", "0", "-3.0"])
+def test_ffprobe_saida_invalida_vira_none(tmp_path, monkeypatch, saida):
+    f = tmp_path / "a.mp4"
+    f.touch()
+    _ffprobe_real_com(monkeypatch, saida=saida)
+    assert cap.duracao_s(f) is None
+
+
+def test_ffprobe_cache_por_arquivo_e_mtime(tmp_path, monkeypatch):
+    f = tmp_path / "a.mp4"
+    f.touch()
+    ch = _ffprobe_real_com(monkeypatch, saida="7.0")
+    assert cap.duracao_s(f) == cap.duracao_s(f) == 7.0
+    assert len(ch) == 1
+    os.utime(f, (1_000_000, 1_000_000))      # mtime mudou: mede de novo
+    cap.duracao_s(f)
+    assert len(ch) == 2
+
+
+def test_aviso_do_08_lista_o_que_caiu_na_reserva(proj08, capsys):
+    _, rodar = proj08
+    caps = [{"titulo": t, "timestamp_inicio": ts(INI + s)} for t, s in (("A", 0), ("B", 200), ("C", 400))]
+    rodar({**BLOCO_08, "capitulos": caps})
+    assert "[!] bloco 1: sem medir intro, card, outro (ffprobe)" in capsys.readouterr().out
+
+
+def test_08_sem_aviso_quando_tudo_medido(proj08, monkeypatch, capsys):
+    pasta, rodar = proj08
+    assets("intro_trim.mp4", "outro_norm.mp4")
+    (pasta / "cards").mkdir()
+    (pasta / "cards" / "card_01.mp4").touch()
+    medidas(monkeypatch, **{"assets/intro_trim.mp4": 2.0, "cards/card_01.mp4": 3.0,
+                            "assets/outro_norm.mp4": 5.0})
+    caps = [{"titulo": t, "timestamp_inicio": ts(INI + s)} for t, s in (("A", 0), ("B", 200), ("C", 400))]
+    texto = rodar({**BLOCO_08, "capitulos": caps})
+    assert "sem medir" not in capsys.readouterr().out
+    assert cap.no_video(d.ler_descricoes(texto)[1]["descricao"])[1][0] == pytest.approx(205.0, abs=1.0)
+
+
 # ── linhas (regras do YouTube) ─────────────────────────────────────────────
 
 def tempo_fake(corte_s=900.0, offset=6.0):
