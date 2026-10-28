@@ -171,3 +171,63 @@ def trocar_titulo(texto: str, bloco_id: int, novo: str) -> str:
                              texto[cab.end():fim], count=1)
         return texto[:cab.end()] + trecho + texto[fim:]
     return texto
+
+
+_LINHA_CAPITULO = re.compile(r"^(?:\d{1,2}:)?\d{1,2}:\d{2} (.+)$")
+
+
+def remover_capitulos(texto: str, bloco_id: int, titulos: list[str], minimo: int = 3) -> str:
+    """Tira de UM bloco as linhas de capítulo ("MM:SS Título") com título em `titulos` (o revisor
+    achou que não batem com o trecho). Se sai o de 00:00 ou sobram menos de `minimo` (regras do
+    YouTube), tira a seção "Capítulos:" inteira."""
+    texto = texto.replace("\r\n", "\n")
+    fora = {" ".join(t.split()) for t in titulos}
+    cabecalhos = list(_CABECALHO_BLOCO.finditer(texto))
+    for i, cab in enumerate(cabecalhos):
+        if int(cab.group(1)) != bloco_id:
+            continue
+        fim = cabecalhos[i + 1].start() if i + 1 < len(cabecalhos) else len(texto)
+        trecho = texto[cab.end():fim]
+        miolo = _CORPO.search(trecho)
+        if not miolo:
+            return texto
+        linhas = miolo.group(1).split("\n")
+        if "Capítulos:" not in linhas:
+            return texto
+        a = linhas.index("Capítulos:") + 1
+        z = a
+        while z < len(linhas) and _LINHA_CAPITULO.match(linhas[z]):
+            z += 1
+        caps = linhas[a:z]
+        ficam = [c for c in caps if " ".join(_LINHA_CAPITULO.match(c).group(1).split()) not in fora]
+        if len(ficam) < minimo or not ficam or ficam[0] != caps[0]:
+            linhas = linhas[:a - 1] + linhas[z:]
+        else:
+            linhas = linhas[:a] + ficam + linhas[z:]
+        corpo = re.sub(r"\n{3,}", "\n\n", "\n".join(linhas))
+        trecho = trecho[:miolo.start(1)] + corpo + trecho[miolo.end(1):]
+        return texto[:cab.end()] + trecho + texto[fim:]
+    return texto
+
+
+def trocar_capitulos(texto: str, bloco_id: int, linhas_novas: list[str]) -> str:
+    """Troca a seção "Capítulos:" de UM bloco por `linhas_novas` (vazia: tira a seção). Sem
+    seção, põe logo depois do resumo (1º parágrafo da descrição). Usado quando o bloco é
+    refeito com outros tempos: o relógio do vídeo mudou."""
+    texto = remover_capitulos(texto, bloco_id, [], minimo=10**9)   # tira a seção antiga
+    if not linhas_novas:
+        return texto
+    cabecalhos = list(_CABECALHO_BLOCO.finditer(texto))
+    for i, cab in enumerate(cabecalhos):
+        if int(cab.group(1)) != bloco_id:
+            continue
+        fim = cabecalhos[i + 1].start() if i + 1 < len(cabecalhos) else len(texto)
+        trecho = texto[cab.end():fim]
+        miolo = _CORPO.search(trecho)
+        if not miolo:
+            return texto
+        resumo, _, resto = miolo.group(1).partition("\n\n")
+        corpo = "\n".join([resumo, "", "Capítulos:", *linhas_novas, "", resto])
+        trecho = trecho[:miolo.start(1)] + corpo + trecho[miolo.end(1):]
+        return texto[:cab.end()] + trecho + texto[fim:]
+    return texto

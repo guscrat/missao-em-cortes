@@ -23,6 +23,7 @@ import sys
 sys.stdout.reconfigure(encoding='utf-8')
 from pathlib import Path
 from dotenv import load_dotenv
+import _capitulos
 import _custo
 import _fronteira as fr
 from _paths import achar_pasta, stem_de
@@ -128,7 +129,7 @@ def pedir_blocos(client, prompt_sistema: str, texto: str, ini: float, fim: float
         bloco_transcricao["cache_control"] = {"type": "ephemeral", "ttl": "1h"}
     response = client.messages.create(
         model=MODELO,
-        max_tokens=12000,
+        max_tokens=16000,   # + capítulos (~300 tokens por bloco)
         system=[bloco_transcricao, {"type": "text", "text": prompt_sistema}],
         messages=[
             {
@@ -372,6 +373,11 @@ for b in data["blocos"]:
     if dur_video and fim > dur_video + 5:
         erros.append(f"bloco {bid}: fim ({b['timestamp_fim']}) passa do fim do vídeo "
                      f"({dur_video / 60:.1f}min)")
+
+    # capítulos da descrição (08): tempo real pela frase de abertura, o 1º no início do bloco
+    if b.get("capitulos"):
+        b["capitulos"], avs = _capitulos.ancorar(palavras, b["capitulos"], ini, fim)
+        avisos += [f"bloco {bid}: {a}" for a in avs]
 
     # Short: ideia completa (gancho → desenvolvimento → frase de impacto), até 3 min.
     # Problema no short não derruba o bloco: o 10 volta pro cold open.

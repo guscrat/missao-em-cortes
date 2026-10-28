@@ -28,6 +28,7 @@
 3. **Tela compartilhada** — maior parte do corte mostra tela em vez de gente.
 4. **Corte sem sentido** — o trecho não se sustenta sozinho.
 5. **`momentos_fora`** — os itens de "Principais momentos" da descrição (lidos do `descricoes.txt`) que **não** estão na transcrição do trecho (fala de outro momento da live, inventada ou distorcida; paráfrase fiel do trecho passa). Não muda o status: o código (`limpar_momentos`) tira esses itens do `descricoes.txt` (só essas linhas; sem nenhum sobra, sai o cabeçalho) e dos `ganchos` do `blocos.json`. Registro em `revisao.json` → `momentos_removidos`. Se 2+ e mais da metade estavam fora, o bloco aprovado vai pra `quarentena` (sinal de tempos do bloco trocados). A transcrição conferida exclui o campo `remover` do bloco (o que o 04b corta).
+6. **`capitulos_errados`** (desde 28/10/2026) — a transcrição vai com marcas `[CAPÍTULO MM:SS: título]` onde cada capítulo do `descricoes.txt` começa (tempo do vídeo final levado de volta pra live, `_capitulos.LinhaDoTempo.para_live`); o revisor lista os títulos que não batem com o trecho. Não muda o status: `limpar_capitulos` tira esses capítulos do txt e do `blocos.json` ($0). Sem o de 00:00 ou com menos de 3, sai a seção inteira. Registro em `revisao.json` → `capitulos_removidos`. Bloco refeito pelo reajuste de fronteira/abertura tem os capítulos do txt recalculados (o relógio do vídeo mudou). O editor recebe a transcrição sem as marcas.
 
 ## Decisão (código, não modelo)
 
