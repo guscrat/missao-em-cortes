@@ -66,7 +66,7 @@ import _editor
 import _fronteira
 import _grafias
 from _descricoes import ler_descricoes, momentos as momentos_da_descricao, remover_momentos
-from _eventos import atualizar_tarefa, evento, ler_bloco, upsert_bloco
+from _eventos import atualizar_tarefa, evento, ler_bloco, termos_semana, upsert_bloco
 from _legenda import hhmmss_para_segundos, palavras_na_janela
 from _paths import achar_pasta, escolher_thumb, stem_de
 
@@ -319,7 +319,8 @@ def editar(client, anthropic, stem, pasta, b, titulo, texto_thumb, problema, tra
     bid, nn = b["id"], f"{b['id']:02d}"
     _custo.checar_orcamento(stem, "11_editor")
     evento(stem, "11_editor", "inicio", agente="editor", bloco_id=bid)
-    pedido = _editor.montar_pedido(titulo, texto_thumb, problema, transcricao, tentativas)
+    pedido = _editor.montar_pedido(titulo, texto_thumb, problema, transcricao, tentativas,
+                                   [t["termo"] for t in termos_semana()])
     try:
         novo, resp = _editor.reescrever(client, pedido)
     except (anthropic.APIError, json.JSONDecodeError) as e:

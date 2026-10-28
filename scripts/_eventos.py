@@ -10,6 +10,8 @@ Tabelas:
   blocos   — 1 linha por corte (stem + bloco_id), com o status no kanban
   eventos  — log append-only: quem (agente), o quê (etapa), status, tokens, custo
   tarefas  — tarefas macro do time de dev (o Gu acompanha no painel, aba "Time de dev")
+  metricas_video / trafego_video / termos_busca / termos_canal — foto diária do YouTube
+             Analytics (17_analytics, agente analista); o painel mostra na aba "Analytics"
 
 Uso:
     from _eventos import evento, upsert_video, upsert_bloco
@@ -102,6 +104,45 @@ CREATE TABLE IF NOT EXISTS tarefas (
     branch           TEXT,
     decisao_pendente TEXT,            -- pergunta pro Gu (faixa amarela no painel)
     atualizado_em    TEXT NOT NULL
+);
+
+-- Foto diária do YouTube Analytics (17_analytics): acumulado de cada vídeo desde a publicação.
+CREATE TABLE IF NOT EXISTS metricas_video (
+    data          TEXT NOT NULL,      -- dia da coleta (AAAA-MM-DD)
+    youtube_id    TEXT NOT NULL,
+    titulo        TEXT,
+    publicado     TEXT,
+    duracao_s     INTEGER,
+    views         INTEGER,
+    impressoes    INTEGER,            -- impressões da miniatura (None = API não devolveu)
+    ctr_pct       REAL,               -- CTR da miniatura, em %
+    retencao_pct  REAL,               -- % média assistida (a "retenção" do Studio)
+    assistido_s   REAL,               -- duração média assistida
+    PRIMARY KEY (data, youtube_id)
+);
+
+CREATE TABLE IF NOT EXISTS trafego_video (
+    data        TEXT NOT NULL,
+    youtube_id  TEXT NOT NULL,
+    origem      TEXT NOT NULL,        -- insightTrafficSourceType (YT_SEARCH, SUBSCRIBER...)
+    views       INTEGER,
+    minutos     REAL,
+    PRIMARY KEY (data, youtube_id, origem)
+);
+
+CREATE TABLE IF NOT EXISTS termos_busca (
+    data        TEXT NOT NULL,
+    youtube_id  TEXT NOT NULL,
+    termo       TEXT NOT NULL,        -- termo da busca do YouTube que trouxe a view
+    views       INTEGER,
+    PRIMARY KEY (data, youtube_id, termo)
+);
+
+CREATE TABLE IF NOT EXISTS termos_canal (
+    data        TEXT NOT NULL,        -- termos de busca do canal inteiro nos 7 dias até `data`
+    termo       TEXT NOT NULL,
+    views       INTEGER,
+    PRIMARY KEY (data, termo)
 );
 
 CREATE INDEX IF NOT EXISTS ix_eventos_ts ON eventos(ts);
@@ -270,6 +311,47 @@ def evento(stem: str | None, etapa: str, status: str, *, agente: str = "pipeline
             (_agora(), stem, bloco_id, agente, etapa, status, mensagem,
              tokens_in, tokens_out, custo_usd, duracao_s, tarefa_id, cache_escrita, cache_leitura),
         )
+
+
+# ── YouTube Analytics (17_analytics) ───────────────────────────────────────
+
+def gravar_analytics(data: str, metricas: list[dict], trafego: list[dict],
+                     termos: list[dict], termos_canal: list[dict]) -> None:
+    """Foto do dia: substitui o que já houver do mesmo `data` (rodar 2x no dia não duplica)."""
+    tabelas = (("metricas_video", ("youtube_id", "titulo", "publicado", "duracao_s", "views",
+                                   "impressoes", "ctr_pct", "retencao_pct", "assistido_s"), metricas),
+               ("trafego_video", ("youtube_id", "origem", "views", "minutos"), trafego),
+               ("termos_busca", ("youtube_id", "termo", "views"), termos),
+               ("termos_canal", ("termo", "views"), termos_canal))
+    with _seguro(f"gravar analytics de {data}") as con:
+        for tabela, colunas, linhas in tabelas:
+            con.execute(f"DELETE FROM {tabela} WHERE data = ?", (data,))
+            con.executemany(
+                f"INSERT INTO {tabela} (data, {', '.join(colunas)}) "
+                f"VALUES (?, {', '.join('?' * len(colunas))})",
+                [(data, *(linha.get(c) for c in colunas)) for linha in linhas])
+
+
+def termos_semana(limite: int = 10) -> list[dict]:
+    """[{termo, views}] da busca do YouTube que mais trouxeram views ao canal nos 7 dias da
+    coleta mais recente. Best-effort: banco fora do ar ou sem coleta = []."""
+    return _executar("ler termos de busca", lambda con: [dict(r) for r in con.execute(
+        "SELECT termo, views FROM termos_canal WHERE data = (SELECT MAX(data) FROM termos_canal) "
+        "ORDER BY views DESC, termo LIMIT ?", (limite,))], padrao=[])
+
+
+def ultima_coleta() -> dict:
+    """Coleta mais recente: {data, metricas: [linha de metricas_video], trafego: {origem:
+    views somadas}}. Best-effort: sem banco ou sem coleta, data None e listas vazias."""
+    def ler(con):
+        data = con.execute("SELECT MAX(data) FROM metricas_video").fetchone()[0]
+        return {"data": data,
+                "metricas": [dict(r) for r in con.execute(
+                    "SELECT * FROM metricas_video WHERE data = ?", (data,))],
+                "trafego": {r[0]: r[1] for r in con.execute(
+                    "SELECT origem, SUM(views) FROM trafego_video WHERE data = ? GROUP BY origem",
+                    (data,))}}
+    return _executar("ler analytics", ler, padrao={"data": None, "metricas": [], "trafego": {}})
 
 
 # ── tarefas do time de dev ─────────────────────────────────────────────────

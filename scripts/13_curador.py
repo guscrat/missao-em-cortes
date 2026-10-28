@@ -47,7 +47,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import _custo
-from _eventos import evento, upsert_video, conectar
+from _eventos import evento, upsert_video, conectar, termos_semana
 from _paths import auditoria_aprovada, modo_evento
 from sincronizar_estado import DIAS_ARQUIVAR    # janela do conteúdo antigo (15 dias)
 
@@ -600,6 +600,10 @@ def escrever_resumo(rodada: dict) -> str:
         linhas += [f"- **{p['aprovados']} corte(s)** de {p['canal']}: {p['titulo']} → "
                    f"`{p['publicacao']}`" for p in prontos]
         linhas.append("")
+    if rodada.get("termos_semana"):
+        linhas.append("## Termos de pesquisa da semana (busca do YouTube → views)")
+        linhas += [f"- **{t['termo']}** — {t['views']} views" for t in rodada["termos_semana"]]
+        linhas += ["- O Editor recebe esta lista; resumo completo em `state/analytics_semanal.md`", ""]
     if rodada.get("thumb_ab"):
         linhas += ["## Thumb A/B (Testar e comparar)", f"- {rodada['thumb_ab']}",
                    "- Resultado novo: `uv run py scripts/16_thumb_ab.py registrar <stem> <vídeo> "
@@ -634,6 +638,8 @@ def escrever_resumo(rodada: dict) -> str:
         avisos.insert(0, rodada["pulado"])
     if rodada.get("aviso_placar"):
         avisos.append(rodada["aviso_placar"])
+    if rodada.get("aviso_analytics"):
+        avisos.append(rodada["aviso_analytics"])
     if rodada.get("falha_llm"):
         avisos.insert(0, f"avaliação dos vídeos novos falhou ({rodada['falha_llm']}); "
                          "eles voltam amanhã")
@@ -755,6 +761,26 @@ def atualizar_placar() -> str | None:
     return None
 
 
+def coletar_analytics(hoje: date) -> tuple[str | None, list[dict]]:
+    """Coleta diária do Analytics por vídeo (17_analytics → banco, aba Analytics do painel).
+    Às sextas grava também o resumo semanal (state/analytics_semanal.md) e devolve os termos
+    de pesquisa da semana pro resumo. Nunca abre o navegador nem derruba a rodada:
+    (aviso | None, termos da semana ou [])."""
+    import importlib
+    try:
+        analytics = importlib.import_module("17_analytics")
+        analytics.coletar(interativo=False)
+    except Exception as e:  # noqa: BLE001 — coleta é só leitura pro painel
+        evento(None, "17_analytics", "falha", agente="analista", mensagem=str(e)[:300])
+        print(f"[aviso] não coletei o Analytics ({e})", file=sys.stderr)
+        return (f"Analytics por vídeo não coletado ({str(e)[:200]}); rode "
+                f"`uv run py scripts/17_analytics.py`"), []
+    if hoje.weekday() != 4:                         # sexta = resumo semanal
+        return None, []
+    analytics.semanal()
+    return None, termos_semana()
+
+
 def _rodada(cfg: dict, dry_run: bool, sem_pipeline: bool, forcar: bool) -> int:
     hoje = date.today()
     estado = ler_estado()
@@ -797,10 +823,13 @@ def _rodada(cfg: dict, dry_run: bool, sem_pipeline: bool, forcar: bool) -> int:
 
     marcar_etapa("atualizando o placar")
     aviso_placar = atualizar_placar()
+    marcar_etapa("coletando o Analytics por vídeo")
+    aviso_analytics, termos = coletar_analytics(hoje)
     agora = datetime.now().isoformat(timespec="seconds")
     rodada = {"quando": agora, "custo": 0.0, "estoque": estoque, "escolhidos": [],
               "fila": [], "recusados": [], "processados": [], "aviso_canal": aviso_canal,
-              "aviso_placar": aviso_placar, "modo_evento": evento_on,
+              "aviso_placar": aviso_placar, "aviso_analytics": aviso_analytics,
+              "termos_semana": termos, "modo_evento": evento_on,
               "thumb_ab": placar_thumb_ab()}
     if novos:
         from anthropic import Anthropic

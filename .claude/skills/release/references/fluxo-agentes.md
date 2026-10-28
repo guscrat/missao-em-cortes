@@ -41,4 +41,4 @@ uv run py scripts/tarefa.py lista
 
 ## Status (toda sexta, ou quando o Gu pedir "status")
 
-Resumo em linguagem de produto: o que foi entregue, o que quebrou e foi corrigido, custo de API da semana e próximas entregas. Fontes: `state/curador_resumo.md`, `12_metricas` (retenção com x sem legenda), custo por agente no painel.
+Resumo em linguagem de produto: o que foi entregue, o que quebrou e foi corrigido, custo de API da semana e próximas entregas. Fontes: `state/curador_resumo.md`, `state/analytics_semanal.md` (`17_analytics.py semanal`: **destacar os termos de pesquisa** que mais trouxeram views), `12_metricas` (retenção com x sem legenda), custo por agente no painel.
