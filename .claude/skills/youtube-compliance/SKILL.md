@@ -29,7 +29,7 @@ Vídeo enviado por projeto de API **não auditado** fica **bloqueado como privad
 | Projeto Google Cloud | Uso | Credenciais (em `secrets/`, gitignored, repo público) | Escopos |
 |---|---|---|---|
 | `missao-em-cortes-publisher` | upload (09) | `youtube_client_secret.json` + `youtube_token.json` | upload |
-| `missao-em-cortes-analytics` | métricas (12) e leitura do canal (14) | `analytics_client_secret.json` + `analytics_token.json` | `yt-analytics.readonly` + `youtube.readonly` |
+| `missao-em-cortes-analytics` | métricas (12/15/17, inclusive o job Reach da Reporting API) e leitura do canal (14) | `analytics_client_secret.json` + `analytics_token.json` | `yt-analytics.readonly` + `youtube.readonly` |
 
 - **Nunca** ativar a Analytics API no publisher: a auditoria dele declara só upload.
 - `_google.credenciais` recusa token feito com client de outro projeto (compara o `client_id`).

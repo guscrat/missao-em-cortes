@@ -79,6 +79,14 @@ def test_config_real_protege_maduro_em_caixa_alta():
     assert g.corrigir("NICOLAS SERÁ O REI?") == "NIKOLAS SERÁ O REI?"
 
 
+def test_config_real_corrige_lossinger():
+    """A transcrição gera "Lossinger"; a grafia oficial é Roberta Luchsinger."""
+    assert g.corrigir("Roberta Lossinger detona o governo") == "Roberta Luchsinger detona o governo"
+    assert g.corrigir("ROBERTA LOSSINGER RESPONDE") == "ROBERTA LUCHSINGER RESPONDE"
+    assert g.corrigir("a Lossinger falou") == "a Roberta Luchsinger falou"
+    assert "Roberta Luchsinger" in g.para_prompt()
+
+
 def test_nao_trocar_acento_caixa_mista_e_limites():
     lista = [{"nome": "Nikolas Ferreira", "curto": "Nikolas", "erradas": ["Nicolas"], "nao_trocar": ["Nicolás Maduro"]}]
     assert g.corrigir("NICOLÁS MADURO e NICOLAS", lista) == "NICOLÁS MADURO e NIKOLAS"
