@@ -308,9 +308,10 @@ def test_cold_sem_mp4_nao_entra_na_reserva(tmp_path):
     assert "cold open" not in t.reserva and t.offset == 6.0
 
 
-def test_cold_mp4_sem_medida_e_sem_cold_open_no_bloco_vale_zero(tmp_path):
+def test_cold_mp4_sem_medida_e_sem_cold_open_no_bloco_vale_zero_e_avisa(tmp_path):
+    # o 06 montou com o cold, mas não dá pra saber a duração: 0 + aviso no 08 (não silencioso)
     t = cap.LinhaDoTempo(pasta_bloco(tmp_path, cold=True), bloco(cold=False), PAL)
-    assert t.offset == 6.0 and "cold open" not in t.reserva
+    assert t.offset == 6.0 and "cold open" in t.reserva
 
 
 def test_duracao_s_none_para_arquivo_inexistente_e_none(tmp_path):

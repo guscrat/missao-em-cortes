@@ -115,8 +115,9 @@ class LinhaDoTempo:
         if cold_arq:
             cold = duracao_s(cold_arq)
             co = bloco.get("cold_open")
+            if cold is None:
+                self.reserva.append("cold open")   # sem cold_open no JSON: fica 0 (avisa)
             if cold is None and co:
-                self.reserva.append("cold open")
                 a, z = fr.janela(palavras, hhmmss_para_segundos(co["timestamp_inicio"]),
                                  hhmmss_para_segundos(co["timestamp_fim"]),
                                  fr.COLD_PADDING_S, fr.COLD_PADDING_S)
