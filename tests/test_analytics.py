@@ -555,3 +555,264 @@ def test_painel_caption_reach(monkeypatch, banco):
     cap = _captura(monkeypatch)
     painel.aba_analytics(_eventos.DB_PATH)
     assert "desde 20/10" in " ".join(cap)
+
+
+# --- vídeos antigos em alta ----------------------------------------------------------
+
+def _m(vid, pub, views, titulo="T"):
+    return {"youtube_id": vid, "titulo": titulo, "publicado": f"{pub}T10:00:00Z", "views": views}
+
+
+def test_em_alta_criterio_basico():
+    # publicado 2026-08-29 = 60 dias; 1000 total, 400 na semana -> antes 600 em 53/7 sem
+    r = an.em_alta([_m("a", "2026-08-29", 1000)], {"a": 400}, HOJE)
+    assert len(r) == 1 and r[0]["youtube_id"] == "a" and r[0]["views_semana"] == 400
+    assert r[0]["views_total"] == 1000 and r[0]["fator"] == pytest.approx(5.0, abs=0.05)
+    assert "tema" not in r[0]
+
+
+def test_em_alta_idade_ate_30_dias_fica_fora():
+    r = an.em_alta([_m("a", "2026-09-28", 1000), _m("b", "2026-09-27", 1000)],
+                   {"a": 900, "b": 900}, HOJE)     # a = 30 dias (fora), b = 31 (dentro)
+    assert [x["youtube_id"] for x in r] == ["b"]
+
+
+def test_em_alta_minimo_de_views_na_semana():
+    m = [_m("a", "2026-06-01", 100), _m("b", "2026-06-01", 100)]
+    r = an.em_alta(m, {"a": 49, "b": 50}, HOJE)
+    assert [x["youtube_id"] for x in r] == ["b"]
+
+
+def test_em_alta_fator_abaixo_de_3_fica_fora():
+    # 150 dias; antes: 1000 em 143/7 = 20.4 sem -> ~49/sem; 100 na semana = ~2x
+    assert an.em_alta([_m("a", "2026-05-31", 1100)], {"a": 100}, HOJE) == []
+    # 200 na semana = ~4x, passa
+    assert len(an.em_alta([_m("a", "2026-05-31", 1200)], {"a": 200}, HOJE)) == 1
+
+
+def test_em_alta_video_sem_views_antes_usa_piso_de_1():
+    r = an.em_alta([_m("a", "2026-06-01", 80)], {"a": 80}, HOJE)
+    assert r[0]["fator"] == 80.0
+
+
+def test_em_alta_sem_dado_na_semana_e_views_nulas():
+    assert an.em_alta([_m("a", "2026-06-01", 500)], {}, HOJE) == []
+    r = an.em_alta([_m("a", "2026-06-01", None)], {"a": 60}, HOJE)
+    assert r[0]["fator"] == 60.0
+
+
+def test_em_alta_ordena_por_fator_e_depois_views():
+    m = [_m("x", "2026-06-01", 5000), _m("y", "2026-06-01", 300), _m("z", "2026-06-01", 300)]
+    r = an.em_alta(m, {"x": 4000, "y": 200, "z": 250}, HOJE)
+    fatores = [x["fator"] for x in r]
+    assert len(r) == 3 and fatores == sorted(fatores, reverse=True)
+    empate = an.em_alta([_m("p", "2026-06-01", 100), _m("q", "2026-06-01", 100)],
+                        {"p": 60, "q": 80}, HOJE)
+    assert [x["youtube_id"] for x in empate] == ["q", "p"]   # fator maior primeiro
+
+
+class FakeAnalyticsAlta(FakeAnalytics):
+    """Devolve views diferentes pra janela de 7 dias da basicas()."""
+    def __init__(self, base, semana):
+        super().__init__()
+        self.base, self.semana = base, semana
+
+    def query(self, **kw):
+        if kw["dimensions"] == "video":
+            self.chamadas.append(kw)
+            rows = self.semana if kw["startDate"] == "2026-10-21" else self.base
+            return _Exec({"rows": rows})
+        return super().query(**kw)
+
+
+VIDS_ANTIGOS = [("a", "Live A", "public", "2026-10-10", "PT20M"),
+                ("o", "Live Velha", "public", "2026-06-01", "PT20M"),
+                ("v", "Velha sem view", "public", "2026-06-02", "PT20M")]
+
+
+def _basicas_chamadas(an_):
+    return [c for c in an_.chamadas if c["dimensions"] == "video"]
+
+
+def test_coletar_dados_consulta_semana_so_de_videos_antigos_com_views():
+    an_ = FakeAnalyticsAlta([["a", 300, 410.0, 37.0], ["o", 1000, 100.0, 30.0]],
+                            [["o", 400, 50.0, 30.0]])
+    d = an.coletar_dados(FakeYT(VIDS_ANTIGOS), an_, HOJE)
+    ch = _basicas_chamadas(an_)
+    assert len(ch) == 2
+    assert ch[1]["startDate"] == "2026-10-21" and ch[1]["endDate"] == "2026-10-28"
+    assert ch[1]["filters"] == "video==o"            # a é novo, v tem 0 view
+    assert [x["youtube_id"] for x in d["em_alta"]] == ["o"]
+    assert d["em_alta"][0]["views_semana"] == 400
+
+
+def test_coletar_dados_falha_da_semana_vira_aviso():
+    an_ = FakeAnalyticsAlta([["o", 1000, 100.0, 30.0]], [])
+    original = an_.query
+    an_.query = lambda **kw: (_Exec(RuntimeError("quota")) if kw["startDate"] == "2026-10-21"
+                              and kw["dimensions"] == "video" else original(**kw))
+    d = an.coletar_dados(FakeYT(VIDS_ANTIGOS), an_, HOJE)
+    assert d["em_alta"] == [] and len(d["metricas"]) == 3
+    assert any("em alta não calculados" in a and "quota" in a for a in d["avisos"])
+
+
+def test_coletar_dados_sem_video_antigo_nao_faz_consulta_extra():
+    d, an_ = _coletar()                     # VIDS são todos de outubro
+    assert len(_basicas_chamadas(an_)) == 1 and d["em_alta"] == []
+
+
+def test_coletar_dados_sem_video_publico_tem_em_alta_vazio():
+    d = an.coletar_dados(FakeYT([VIDS[2]]), FakeAnalytics(), HOJE)
+    assert d["em_alta"] == []
+
+
+def _alta(vid="o", tema="Tema X", titulo="Título X", fator=4.0, vs=100):
+    return {"youtube_id": vid, "titulo": titulo, "tema": tema, "publicado": "2026-06-01T10:00:00Z",
+            "views_semana": vs, "views_total": 500, "fator": fator}
+
+
+def test_gravar_e_ler_em_alta_com_fallback_de_tema(banco):
+    _eventos.gravar_analytics("2026-10-28", [{"youtube_id": "o", "views": 1}], [], [], [])
+    _eventos.gravar_em_alta("2026-10-28", [_alta("o", "Tema X", fator=4.0),
+                                           _alta("s", None, "Short sem bloco", fator=9.0)])
+    r = _eventos.em_alta_atual()
+    assert [x["youtube_id"] for x in r] == ["s", "o"]          # maior fator primeiro
+    assert r[0]["tema"] == "Short sem bloco" and r[1]["tema"] == "Tema X"
+    _eventos.gravar_em_alta("2026-10-28", [_alta("o")])         # idempotente por data
+    assert len(banco("SELECT * FROM em_alta")) == 1
+
+
+def test_em_alta_atual_so_a_coleta_mais_recente(banco):
+    m = [{"youtube_id": "o", "views": 1}]
+    _eventos.gravar_analytics("2026-10-27", m, [], [], [])
+    _eventos.gravar_em_alta("2026-10-27", [_alta()])
+    assert len(_eventos.em_alta_atual()) == 1
+    _eventos.gravar_analytics("2026-10-28", m, [], [], [])      # coleta nova, sem em_alta
+    assert _eventos.em_alta_atual() == []
+
+
+def test_em_alta_atual_sem_coleta(banco):
+    assert _eventos.em_alta_atual() == []
+
+
+def test_temas_por_youtube(banco):
+    _eventos.upsert_bloco("s1", 1, tema="Tema um", youtube_id="yt1")
+    _eventos.upsert_bloco("s1", 2, youtube_id="yt2")             # sem tema
+    _eventos.upsert_bloco("s1", 3, tema="Tema três", youtube_id="yt3")
+    assert _eventos.temas_por_youtube(["yt1", "yt2", "nada"]) == {"yt1": "Tema um"}
+    assert _eventos.temas_por_youtube([]) == {}
+
+
+def test_coletar_completa_tema_e_grava_em_alta(banco, monkeypatch):
+    _mock_google(monkeypatch)
+    monkeypatch.setattr(an, "coletar_dados", lambda *a, **k: {
+        "data": "2026-10-28", "metricas": [{"youtube_id": "o", "views": 1}], "trafego": [],
+        "termos": [], "termos_canal": [], "avisos": [],
+        "em_alta": [{k: v for k, v in _alta("o").items() if k != "tema"}]})
+    _eventos.upsert_bloco("s1", 1, tema="Tema do banco", youtube_id="o")
+    d = an.coletar(interativo=False)
+    assert d["em_alta"][0]["tema"] == "Tema do banco"
+    assert banco("SELECT tema FROM em_alta")[0]["tema"] == "Tema do banco"
+
+
+def test_linha_em_alta():
+    t = an.linha_em_alta(_alta(titulo="T" * 100))
+    assert t.startswith("**Tema X** — 100 views na semana (4x o ritmo de antes)")
+    assert "T" * 60 in t and "T" * 61 not in t and t.endswith("de 01/06")
+
+
+def test_resumo_semanal_com_e_sem_em_alta():
+    com = an.resumo_semanal([], [], {}, "2026-10-30", [_alta()])
+    assert "## Vídeos antigos em alta" in com and "- **Tema X**" in com
+    assert com.index("Termos de pesquisa") < com.index("Vídeos antigos em alta")
+    for sem in (an.resumo_semanal([], [], {}, "2026-10-30"),
+                an.resumo_semanal([], [], {}, "2026-10-30", [])):
+        assert "nenhum vídeo antigo disparou" in sem
+
+
+def test_semanal_inclui_em_alta_do_banco(banco, tmp_path, monkeypatch):
+    monkeypatch.setattr(an, "SEMANAL", tmp_path / "s" / "a.md")
+    _eventos.gravar_analytics("2026-10-28", [{"youtube_id": "o", "views": 1, "duracao_s": 900}],
+                              [], [], [])
+    _eventos.gravar_em_alta("2026-10-28", [_alta()])
+    assert "- **Tema X**" in an.semanal()
+
+
+# --- Curador: em alta ----------------------------------------------------------------
+
+def test_curador_montar_pedido_com_e_sem_em_alta():
+    item = {"id": "a", "canal": "Renan", "data": "27/10", "titulo": "Live", "duracao_s": 5400}
+    com = cu.montar_pedido([item], None, [_alta(tema="Tema X"), _alta(tema="Tema Y")])
+    assert "TEMAS EM ALTA" in com and "Tema X; Tema Y" in com and "+2 de prioridade" in com
+    assert com.index("TEMAS EM ALTA") < com.index("Vídeos novos:")
+    for sem in (cu.montar_pedido([item]), cu.montar_pedido([item], None, []),
+                cu.montar_pedido([item], None, None)):
+        assert "TEMAS EM ALTA" not in sem
+
+
+def test_curador_montar_pedido_corta_em_5_temas_e_80_chars():
+    p = cu.montar_pedido([], None, [_alta(tema=f"tema{i}") for i in range(8)])
+    assert "tema4" in p and "tema5" not in p
+    p2 = cu.montar_pedido([], None, [_alta(tema="a" * 200)])
+    assert "a" * 80 in p2 and "a" * 81 not in p2
+
+
+def test_curador_resumo_com_e_sem_em_alta(resumo_tmp):
+    t = cu.escrever_resumo(_rod(em_alta=[_alta(tema="Tema X", fator=4.2, vs=120)]))
+    assert "## Vídeos antigos em alta" in t and "**Tema X** — 120 views na semana (4x o ritmo" in t
+    t6 = cu.escrever_resumo(_rod(em_alta=[_alta(tema=f"t{i}") for i in range(8)]))
+    assert "**t4**" in t6 and "**t5**" not in t6
+    for sem in (_rod(em_alta=[]), _rod()):
+        assert "Vídeos antigos em alta" not in cu.escrever_resumo(sem)
+
+
+# --- painel: em alta -----------------------------------------------------------------
+
+def _df_alta():
+    return pd.DataFrame([
+        {"data": "2026-10-28", "youtube_id": "o", "titulo": "Velho O", "tema": "Tema O",
+         "publicado": "2026-06-01T10:00:00Z", "views_semana": 100, "views_total": 500, "fator": 3.5},
+        {"data": "2026-10-28", "youtube_id": "s", "titulo": "Short S", "tema": None,
+         "publicado": "2026-06-02T10:00:00Z", "views_semana": 300, "views_total": 900, "fator": 8.0}])
+
+
+def test_painel_tabela_em_alta():
+    df = painel.tabela_em_alta(_df_alta())
+    assert list(df.columns) == ["tema", "titulo", "publicado", "views_semana", "fator", "views_total"]
+    assert list(df["tema"]) == ["Short S", "Tema O"]            # fator desc, tema cai no título
+    assert str(df["publicado"].dtype).startswith("datetime64")
+    assert painel.tabela_em_alta(pd.DataFrame()).empty
+
+
+def test_painel_render_com_em_alta(monkeypatch, banco):
+    d, _ = _coletar()
+    _eventos.gravar_analytics(d["data"], d["metricas"], d["trafego"], d["termos"], d["termos_canal"])
+    _eventos.gravar_em_alta(d["data"], [_alta()])
+    cap = _captura(monkeypatch)
+    painel.aba_analytics(_eventos.DB_PATH)
+    txt = " ".join(cap)
+    assert "Vídeos antigos em alta" in txt and "DF:1" in txt and "DF:2" in txt
+    assert "Nenhum vídeo com mais de 30 dias" not in txt
+
+
+def test_painel_render_sem_em_alta(monkeypatch, banco):
+    d, _ = _coletar()
+    _eventos.gravar_analytics(d["data"], d["metricas"], d["trafego"], d["termos"], d["termos_canal"])
+    cap = _captura(monkeypatch)
+    painel.aba_analytics(_eventos.DB_PATH)
+    assert "Nenhum vídeo com mais de 30 dias" in " ".join(cap)
+
+
+def test_painel_carregar_banco_antigo_sem_tabela_em_alta(tmp_path):
+    db = tmp_path / "antigo.db"
+    con = sqlite3.connect(db)
+    for ddl in ("metricas_video (data TEXT, youtube_id TEXT, views INT)",
+                "termos_canal (data TEXT, termo TEXT, views INT)",
+                "trafego_video (data TEXT, youtube_id TEXT, origem TEXT, views INT)",
+                "termos_busca (data TEXT, youtube_id TEXT, termo TEXT, views INT)"):
+        con.execute(f"CREATE TABLE {ddl}")
+    con.execute("INSERT INTO metricas_video VALUES ('2026-10-28', 'a', 1)")
+    con.commit()
+    con.close()
+    d = painel.carregar(db)
+    assert d["em_alta"].empty and d["data"] == "2026-10-28"

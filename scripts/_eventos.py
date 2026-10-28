@@ -14,6 +14,8 @@ Tabelas:
              Analytics (17_analytics, agente analista); o painel mostra na aba "Analytics"
   reach_dia / reach_relatorio — impressões e CTR da miniatura por vídeo e dia, do relatório
              Reach da YouTube Reporting API (17_analytics)
+  em_alta  — vídeos antigos (30+ dias) cujas views dispararam na última semana, com o tema
+             (17_analytics); painel, resumo semanal e Curador (prioriza lives desses temas)
 
 Uso:
     from _eventos import evento, upsert_video, upsert_bloco
@@ -159,6 +161,19 @@ CREATE TABLE IF NOT EXISTS reach_dia (
 CREATE TABLE IF NOT EXISTS reach_relatorio (
     dia          TEXT PRIMARY KEY,
     create_time  TEXT NOT NULL        -- createTime do relatório importado (backfill = mais novo)
+);
+
+-- Vídeos antigos voltando a crescer (17_analytics), 1 foto por coleta.
+CREATE TABLE IF NOT EXISTS em_alta (
+    data          TEXT NOT NULL,      -- dia da coleta (o mesmo de metricas_video)
+    youtube_id    TEXT NOT NULL,
+    titulo        TEXT,
+    tema          TEXT,               -- blocos.tema do corte; Short/sem bloco = None (usa o título)
+    publicado     TEXT,
+    views_semana  INTEGER,            -- views nos últimos 7 dias
+    views_total   INTEGER,
+    fator         REAL,               -- views da semana ÷ média semanal de antes
+    PRIMARY KEY (data, youtube_id)
 );
 
 CREATE INDEX IF NOT EXISTS ix_eventos_ts ON eventos(ts);
@@ -346,6 +361,35 @@ def gravar_analytics(data: str, metricas: list[dict], trafego: list[dict],
                 f"INSERT INTO {tabela} (data, {', '.join(colunas)}) "
                 f"VALUES (?, {', '.join('?' * len(colunas))})",
                 [(data, *(linha.get(c) for c in colunas)) for linha in linhas])
+
+
+def temas_por_youtube(ids: list[str]) -> dict[str, str]:
+    """{youtube_id: tema do bloco} dos cortes já no canal. Best-effort: sem banco = {}."""
+    if not ids:
+        return {}
+    return _executar("ler temas por vídeo", lambda con: {
+        r["youtube_id"]: r["tema"] for r in con.execute(
+            "SELECT youtube_id, tema FROM blocos WHERE tema IS NOT NULL AND youtube_id IN "
+            f"({', '.join('?' * len(ids))})", ids)}, padrao={})
+
+
+def gravar_em_alta(data: str, linhas: list[dict]) -> None:
+    """Foto do dia dos vídeos antigos em alta (substitui o mesmo `data`)."""
+    colunas = ("youtube_id", "titulo", "tema", "publicado", "views_semana", "views_total", "fator")
+    with _seguro(f"gravar vídeos em alta de {data}") as con:
+        con.execute("DELETE FROM em_alta WHERE data = ?", (data,))
+        con.executemany(f"INSERT INTO em_alta (data, {', '.join(colunas)}) "
+                        f"VALUES (?, {', '.join('?' * len(colunas))})",
+                        [(data, *(x.get(c) for c in colunas)) for x in linhas])
+
+
+def em_alta_atual() -> list[dict]:
+    """Vídeos antigos em alta da coleta MAIS RECENTE (coleta sem nenhum = []), maior fator
+    primeiro; `tema` cai no título quando o vídeo não tem bloco. Best-effort: sem banco = []."""
+    return _executar("ler vídeos em alta", lambda con: [
+        {**dict(r), "tema": r["tema"] or r["titulo"]} for r in con.execute(
+            "SELECT * FROM em_alta WHERE data = (SELECT MAX(data) FROM metricas_video) "
+            "ORDER BY fator DESC, views_semana DESC")], padrao=[])
 
 
 def reach_importados() -> dict[str, str]:

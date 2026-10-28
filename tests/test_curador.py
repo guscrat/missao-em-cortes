@@ -202,7 +202,7 @@ def rodada(raiz, monkeypatch):
     monkeypatch.setattr(cu, "listar_canal", lambda canal, n: reg["listar"].get(canal["prefixo"], []))
     monkeypatch.setattr(cu, "detalhar", lambda item: item)
 
-    def avaliar(client, itens, evento=None):
+    def avaliar(client, itens, evento=None, em_alta=None):
         reg["evento"] = evento
         reg["llm"] += 1
         reg["enviados"] = [i["id"] for i in itens]
@@ -253,6 +253,23 @@ def test_rodada_seguinte_usa_fila_sem_llm_e_nao_reavalia(raiz, rodada):
     assert cu.main([]) == 0
     assert rodada["llm"] == 0                                       # nada novo: sem custo
     assert rodada["processados"] == ["renan_live_alfa"]
+
+
+def test_rodada_passa_em_alta_pro_avaliar_e_pro_resumo(raiz, rodada, monkeypatch):
+    altas = [{"youtube_id": "o", "tema": "Tema X", "titulo": "T", "views_semana": 100, "fator": 4.0}]
+    monkeypatch.setattr(cu, "em_alta_atual", lambda: altas)
+    visto = {}
+    original = cu.avaliar
+
+    def espia(client, itens, evento=None, em_alta=None):
+        visto["em_alta"] = em_alta
+        return original(client, itens, evento, em_alta)
+    monkeypatch.setattr(cu, "avaliar", espia)
+    rodada["listar"] = {"renan": [_item("a", "Live Alfa")]}
+    rodada["avaliacoes"] = {"a": _av(True, 6)}
+    assert cu.main([]) == 0
+    assert visto["em_alta"] == altas
+    assert "Tema X" in cu.RESUMO.read_text(encoding="utf-8")
 
 
 def test_rodada_normal_atualiza_placar(raiz, rodada):
@@ -366,7 +383,7 @@ def test_trava_velha_e_liberada(raiz, rodada):
 
 def test_falha_no_llm_registra_e_sai_com_erro(raiz, rodada, monkeypatch, banco):
     rodada["listar"] = {"renan": [_item("a")]}
-    def quebra(client, itens, evento=None):
+    def quebra(client, itens, evento=None, em_alta=None):
         raise RuntimeError("API fora")
     monkeypatch.setattr(cu, "avaliar", quebra)
     assert cu.main([]) == 1
