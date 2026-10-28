@@ -646,6 +646,16 @@ def test_coletar_dados_consulta_semana_so_de_videos_antigos_com_views():
     assert d["em_alta"][0]["views_semana"] == 400
 
 
+def test_coletar_dados_falha_da_semana_vira_aviso():
+    an_ = FakeAnalyticsAlta([["o", 1000, 100.0, 30.0]], [])
+    original = an_.query
+    an_.query = lambda **kw: (_Exec(RuntimeError("quota")) if kw["startDate"] == "2026-10-21"
+                              and kw["dimensions"] == "video" else original(**kw))
+    d = an.coletar_dados(FakeYT(VIDS_ANTIGOS), an_, HOJE)
+    assert d["em_alta"] == [] and len(d["metricas"]) == 3
+    assert any("em alta não calculados" in a and "quota" in a for a in d["avisos"])
+
+
 def test_coletar_dados_sem_video_antigo_nao_faz_consulta_extra():
     d, an_ = _coletar()                     # VIDS são todos de outubro
     assert len(_basicas_chamadas(an_)) == 1 and d["em_alta"] == []

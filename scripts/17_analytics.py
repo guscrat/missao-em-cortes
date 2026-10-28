@@ -196,7 +196,11 @@ def coletar_dados(yt, analytics, hoje: date | None = None, reach: dict | None = 
     canal = termos(analytics, semana_ini, fim)
     antigos = [v["id"] for v in videos if _idade(v["publicado"], hoje) > DIAS_ANTIGO
                and base.get(v["id"], {}).get("views")]
-    semana = {vid: x["views"] for vid, x in basicas(analytics, antigos, semana_ini, fim).items()}
+    try:
+        semana = {vid: x["views"] for vid, x in basicas(analytics, antigos, semana_ini, fim).items()}
+    except Exception as e:  # noqa: BLE001 — sem a semana, a foto do dia vale sem os "em alta"
+        semana = {}
+        avisos.append(f"vídeos antigos em alta não calculados ({str(e)[:150]})")
     return {"data": fim, "metricas": metricas, "trafego": traf, "termos": ters,
             "termos_canal": canal, "em_alta": em_alta(metricas, semana, hoje), "avisos": avisos}
 
