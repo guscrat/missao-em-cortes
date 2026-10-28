@@ -36,7 +36,8 @@ def carregar(db_path: Path) -> dict:
             reach_desde = con.execute("SELECT MIN(dia) FROM reach_dia").fetchone()[0]
         except sqlite3.OperationalError:
             reach_desde = None
-        return {"reach_desde": reach_desde, "data": data, "metricas": ler("metricas_video"), "trafego": ler("trafego_video"),
+        return {"reach_desde": reach_desde,
+                "data": data, "metricas": ler("metricas_video"), "trafego": ler("trafego_video"),
                 "termos": ler("termos_busca"),
                 "termos_canal": ler("termos_canal", canal) if canal else pd.DataFrame()}
     except (sqlite3.OperationalError, pd.errors.DatabaseError):   # banco anterior às tabelas

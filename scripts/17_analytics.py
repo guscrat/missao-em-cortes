@@ -175,7 +175,7 @@ def coletar(interativo: bool = True) -> dict:
     def baixar(url: str) -> str:
         r = sessao.get(url, timeout=60)
         r.raise_for_status()
-        return r.content.decode("utf-8")
+        return r.content.decode("utf-8-sig")   # BOM no CSV não suja o 1º cabeçalho
 
     aviso_reach = None
     try:
