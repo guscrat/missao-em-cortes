@@ -25,6 +25,7 @@ MODELO = "claude-opus-5-5"
 CUSTO_ESTIMADO = 0.01                  # só pro --dry-run
 MAX_RODADAS = 2
 MAX_TITULO = 70
+MAX_TERMO = 60                         # termo de busca vem de terceiros: corta o tamanho
 SCRIPTS = Path(__file__).parent
 GRAFIAS_PEDIDO = ("GRAFIAS OFICIAIS (nome de pessoa sempre assim, mesmo que a transcrição ou as "
                   "tags escrevam diferente):")
@@ -58,16 +59,23 @@ esteja na fala. Descreva o tom ("desabafo sem filtro", "detona") em vez de citar
 - Números, datas, fatos e nomes batem EXATAMENTE com a transcrição; nome de pessoa sempre na \
 grafia oficial da lista do pedido.
 - Não repita tentativas que o revisor já reprovou.
+- Se o pedido trouxer TERMOS QUE O PÚBLICO BUSCA, prefira usar um deles no título (é \
+o que traz view pela busca do YouTube), mas SÓ se o trecho for sobre aquilo. Nunca force um \
+termo que a transcrição não sustenta.
 - mudanca: uma frase curta em português dizendo o que você corrigiu."""
 
 
 def montar_pedido(titulo: str, texto_thumb: str, problema: str, transcricao: str,
-                  tentativas: list[dict]) -> str:
+                  tentativas: list[dict], termos: list[str] | None = None) -> str:
+    """termos: os da busca do YouTube que mais trouxeram views na semana (17_analytics)."""
     linhas = [f"TÍTULO REPROVADO: {titulo}", f"TEXTO DA THUMB: {texto_thumb}",
               f"PROBLEMA APONTADO PELO REVISOR: {problema}"]
     for i, t in enumerate(tentativas, 1):
         linhas.append(f"TENTATIVA {i} (também reprovada): {t['titulo']} | thumb: "
                       f"{t['texto_thumb']} | motivo: {t['problema']}")
+    if termos:
+        linhas += ["", "TERMOS QUE O PÚBLICO BUSCA (busca do YouTube, mais views na semana): "
+                   + "; ".join(t[:MAX_TERMO] for t in termos)]
     linhas += ["", GRAFIAS_PEDIDO, _grafias.para_prompt(), "", "TRANSCRIÇÃO DO TRECHO:", transcricao]
     return "\n".join(linhas)
 

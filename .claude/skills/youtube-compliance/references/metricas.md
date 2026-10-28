@@ -21,6 +21,17 @@ Compara a **retenção** (% média assistida, a do Studio) dos vídeos **com** l
 - Separação por `creatorContentType`. A API devolve em camelCase (`shorts`, `videoOnDemand`), não como na doc (`SHORTS`): `e_short()` compara sem caixa nem `_`.
 - Aproximação: o YPP conta só o público e válido, o que a Analytics não separa; o número pode ficar um pouco acima do Studio, e ela atrasa ~2 dias.
 
+## Step 17 — Analytics por vídeo (17_analytics.py)
+
+`uv run py scripts/17_analytics.py [semanal]` — `agente="analista"`, US$ 0, mesmo projeto/token do 12. O **Curador chama 1x/dia** logo depois do placar (sem navegador; falha vira aviso no resumo e evento `falha`, a coleta anterior fica no banco).
+
+- Por vídeo **público**, acumulado desde a publicação: views, **impressões e CTR da miniatura** (`videoThumbnailImpressions`, `videoThumbnailImpressionsClickRate`, razão → gravada em %), retenção média e duração média assistida, **origens de tráfego** (`insightTrafficSourceType`) e até 25 **termos de pesquisa** do YouTube (`insightTrafficSourceDetail` com `insightTrafficSourceType==YT_SEARCH`). Vídeo sem view pula tráfego/termos.
+- Do canal: os termos de pesquisa dos **últimos 7 dias** (`termos_canal`) — viram o destaque do resumo semanal e a lista que o Editor recebe (`_eventos.termos_semana()`).
+- Banco: `metricas_video`, `trafego_video`, `termos_busca`, `termos_canal`, chave pela `data` da coleta (rodar de novo no mesmo dia substitui). Painel: aba **Analytics**.
+- Se a API recusar as métricas de impressão, a coleta segue com impressões/CTR vazios e um evento `aviso`.
+- `semanal`: grava `state/analytics_semanal.md` (termos da semana primeiro, origens, CTR das miniaturas). O Curador gera às **sextas** e põe os termos no `curador_resumo.md`.
+- Cota: ~3 unidades da Data API; ~2 consultas da Analytics por vídeo com view (cota própria, grátis).
+
 ## Setup do projeto de métricas (uma vez, feito pelo Gu no console)
 
 1. [console.cloud.google.com](https://console.cloud.google.com) → seletor de projeto → **Novo projeto** → nome `missao-em-cortes-analytics` (não mexer no `missao-em-cortes-publisher`).

@@ -17,6 +17,7 @@ import streamlit as st
 
 import hoje
 import visual
+from analytics import aba_analytics
 from time_dev import aba_time_dev, faixa_decisoes
 
 ROOT = Path(__file__).parent.parent
@@ -273,8 +274,9 @@ def corpo() -> None:
                    "pra importar os vídeos que você já processou.")
         return
 
-    aba_h, aba_k, aba_a, aba_t, aba_d = st.tabs(["Hoje", "Kanban", "Agentes e custo",
-                                                 "Linha do tempo", "Time de dev"])
+    aba_h, aba_k, aba_y, aba_a, aba_t, aba_d = st.tabs(["Hoje", "Kanban", "Analytics",
+                                                        "Agentes e custo", "Linha do tempo",
+                                                        "Time de dev"])
     with aba_h:
         custo = hoje.custo_mes(carregar_custo_mes(agora.strftime("%Y-%m-01")),
                                cfg["orcamento_mensal_usd"], agora)
@@ -282,6 +284,8 @@ def corpo() -> None:
     with aba_k:
         esteira(blocos, eventos)
         kanban(videos, blocos)
+    with aba_y:
+        aba_analytics(DB_PATH)
     with aba_a:
         aba_agentes(eventos)
     with aba_t:
