@@ -1,7 +1,7 @@
 """Aba "Analytics" do painel: a foto diária do YouTube Analytics por vídeo (17_analytics).
 
-Só LÊ as tabelas metricas_video / trafego_video / termos_busca / termos_canal da coleta
-mais recente. Sem coleta ainda, mostra como rodar.
+Só LÊ as tabelas metricas_video / trafego_video / termos_busca / termos_canal / em_alta da
+coleta mais recente. Sem coleta ainda, mostra como rodar.
 """
 import sqlite3
 import sys
@@ -16,12 +16,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 from _youtube_leitura import MAX_SHORT_S, nome_origem, normalizar  # noqa: E402
 
 VAZIO = {"data": None, "metricas": pd.DataFrame(), "trafego": pd.DataFrame(),
-         "termos": pd.DataFrame(), "termos_canal": pd.DataFrame(), "reach_desde": None}
+         "termos": pd.DataFrame(), "termos_canal": pd.DataFrame(), "em_alta": pd.DataFrame(),
+         "reach_desde": None}
 
 
 def carregar(db_path: Path) -> dict:
-    """A coleta mais recente: {data, metricas, trafego, termos, termos_canal} (DataFrames) +
-    reach_desde (1º dia com impressões do relatório Reach, ou None)."""
+    """A coleta mais recente: {data, metricas, trafego, termos, termos_canal, em_alta}
+    (DataFrames) + reach_desde (1º dia com impressões do relatório Reach, ou None)."""
     if not db_path.exists():
         return dict(VAZIO)
     con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
@@ -36,7 +37,11 @@ def carregar(db_path: Path) -> dict:
             reach_desde = con.execute("SELECT MIN(dia) FROM reach_dia").fetchone()[0]
         except sqlite3.OperationalError:
             reach_desde = None
-        return {"reach_desde": reach_desde,
+        try:   # banco anterior à tabela em_alta
+            alta = ler("em_alta")
+        except (sqlite3.OperationalError, pd.errors.DatabaseError):
+            alta = pd.DataFrame()
+        return {"reach_desde": reach_desde, "em_alta": alta,
                 "data": data, "metricas": ler("metricas_video"), "trafego": ler("trafego_video"),
                 "termos": ler("termos_busca"),
                 "termos_canal": ler("termos_canal", canal) if canal else pd.DataFrame()}
@@ -88,6 +93,16 @@ def tabela_videos(metricas: pd.DataFrame, termos: pd.DataFrame) -> pd.DataFrame:
          "termo_top"]]
 
 
+def tabela_em_alta(em_alta: pd.DataFrame) -> pd.DataFrame:
+    """Vídeos antigos em alta, maior fator primeiro; sem tema (Short/sem bloco) = título."""
+    if em_alta.empty:
+        return em_alta
+    df = em_alta.assign(tema=em_alta["tema"].fillna(em_alta["titulo"]),
+                        publicado=pd.to_datetime(em_alta["publicado"], utc=True, errors="coerce"))
+    return df.sort_values(["fator", "views_semana"], ascending=False)[
+        ["tema", "titulo", "publicado", "views_semana", "fator", "views_total"]]
+
+
 def _pct(v: float | None, casas: int = 1) -> str:
     return "—" if v is None else f"{v:.{casas}f}%".replace(".", ",")
 
@@ -131,6 +146,20 @@ def aba_analytics(db_path: Path) -> None:
             st.caption("Sem dados de tráfego.")
         else:
             visual.barras(serie.head(8), formato=lambda v: f"{v:.0f} views", nome="views")
+    st.markdown("<h3>Vídeos antigos em alta</h3>", unsafe_allow_html=True)
+    alta = tabela_em_alta(dados["em_alta"])
+    if alta.empty:
+        st.caption("Nenhum vídeo com mais de 30 dias disparou na última semana.")
+    else:
+        st.dataframe(alta, width="stretch", hide_index=True, column_config={
+            "tema": st.column_config.TextColumn("tema", width="medium"),
+            "titulo": st.column_config.TextColumn("título", width="large"),
+            "publicado": st.column_config.DatetimeColumn("publicado", format="DD/MM/YY"),
+            "views_semana": st.column_config.NumberColumn("views na semana", format="%d"),
+            "fator": st.column_config.NumberColumn("x o ritmo de antes", format="%.1fx"),
+            "views_total": st.column_config.NumberColumn("views no total", format="%d")})
+        st.caption("Publicados há 30+ dias com 3x+ as views semanais de antes (mín. 50 na semana). "
+                   "O Curador dá prioridade a lives novas sobre esses temas.")
     st.markdown("<h3>Por vídeo</h3>", unsafe_allow_html=True)
     busca = st.text_input("Filtrar por título", "")
     df = tabela_videos(dados["metricas"], dados["termos"])

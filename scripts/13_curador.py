@@ -14,6 +14,8 @@ Fluxo:
      state/curadoria.json).
   2. Busca título original (pt) e data exata dos que passaram e manda pro Claude
      (claude-opus-5-5, effort low, ~US$ 0,02-0,05/rodada): vale a pena? prioridade? motivo?
+     Junto vão os temas dos vídeos antigos do canal em alta na semana (17_analytics, tabela
+     em_alta): live nova sobre um deles ganha +2 de prioridade.
   3. Todo vídeo que vale entra na FILA (state/curadoria.json). Só processa quando a
      COBERTURA do canal cai abaixo de estoque.dias_minimos (config): dias cobertos = de
      hoje até o último longo agendado no canal + longos aprovados / longos_por_dia
@@ -47,7 +49,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import _custo
-from _eventos import evento, upsert_video, conectar, termos_semana
+from _eventos import evento, upsert_video, conectar, em_alta_atual, termos_semana
 from _paths import auditoria_aprovada, modo_evento
 from sincronizar_estado import DIAS_ARQUIVAR    # janela do conteúdo antigo (15 dias)
 
@@ -67,6 +69,8 @@ MAX_TENTATIVAS = 3           # falhou antes de baixar: volta pra fila até isso,
 ESPERA_OCUPADO_MIN = 30      # outro processamento rodando: espera até isso, depois pula
 CHECA_OCUPADO_S = 60
 PRIORIDADE_EVENTO = 6        # modo evento: abaixo disso não fura o estoque (previsão velha)
+MAX_TEMAS_ALTA = 5           # temas dos vídeos antigos em alta (17_analytics) no pedido ao Claude
+MAX_TEMA_ALTA = 80
 
 MODELO = "claude-opus-5-5"
 CUSTO_POR_VIDEO = 0.65                 # segmentação + polimento + revisor, só pra estimativa
@@ -304,11 +308,17 @@ def motivo_filtro(item: dict, cfg: dict, hoje: date, vistos: set[str]) -> str | 
 
 # --- escolha (LLM) ------------------------------------------------------------------------
 
-def montar_pedido(itens: list[dict], evento: dict | None = None) -> str:
+def montar_pedido(itens: list[dict], evento: dict | None = None,
+                  em_alta: list[dict] | None = None) -> str:
     linhas = [f"Hoje é {date.today():%d/%m/%Y}."]
     if evento:
         linhas.append(f"MODO EVENTO até {evento['ate']:%d/%m}: prioridade 9-10 para {evento['tema']}. "
                       "Previsão ou análise de antes do resultado envelhece: prioridade baixa.")
+    if em_alta:
+        temas = "; ".join(x["tema"][:MAX_TEMA_ALTA] for x in em_alta[:MAX_TEMAS_ALTA])
+        linhas.append(f"TEMAS EM ALTA no nosso canal (vídeos antigos voltaram a crescer na última "
+                      f"semana): {temas}. Vídeo novo sobre um desses temas, com a figura do partido "
+                      "falando bastante, ganha +2 de prioridade (máx. 10) e o motivo cita o tema.")
     linhas.append("Vídeos novos:")
     for x in itens:
         linhas.append(f"- id={x['id']} | canal: {x['canal']} | {x['data'] or '?'} | "
@@ -317,14 +327,14 @@ def montar_pedido(itens: list[dict], evento: dict | None = None) -> str:
     return "\n".join(linhas)
 
 
-def avaliar(client, itens: list[dict],
-            evento: dict | None = None) -> tuple[dict[str, dict], tuple[int, int, float]]:
+def avaliar(client, itens: list[dict], evento: dict | None = None,
+            em_alta: list[dict] | None = None) -> tuple[dict[str, dict], tuple[int, int, float]]:
     """({id: {vale, prioridade, motivo}}, (tokens_in, tokens_out, custo))."""
     resp = client.beta.messages.create(
         model=MODELO,
         max_tokens=8000,
         system=SISTEMA,
-        messages=[{"role": "user", "content": montar_pedido(itens, evento)}],
+        messages=[{"role": "user", "content": montar_pedido(itens, evento, em_alta)}],
         output_config={"effort": "low",
                        "format": {"type": "json_schema", "schema": SCHEMA}},
         betas=["server-side-fallback-2026-07-01"],
@@ -604,6 +614,11 @@ def escrever_resumo(rodada: dict) -> str:
         linhas.append("## Termos de pesquisa da semana (busca do YouTube → views)")
         linhas += [f"- **{t['termo']}** — {t['views']} views" for t in rodada["termos_semana"]]
         linhas += ["- O Editor recebe esta lista; resumo completo em `state/analytics_semanal.md`", ""]
+    if rodada.get("em_alta"):
+        linhas.append("## Vídeos antigos em alta (o Curador prioriza lives desses temas)")
+        linhas += [f"- **{x['tema']}** — {x['views_semana']} views na semana "
+                   f"({x['fator']:.0f}x o ritmo de antes)" for x in rodada["em_alta"][:MAX_TEMAS_ALTA]]
+        linhas.append("")
     if rodada.get("thumb_ab"):
         linhas += ["## Thumb A/B (Testar e comparar)", f"- {rodada['thumb_ab']}",
                    "- Resultado novo: `uv run py scripts/16_thumb_ab.py registrar <stem> <vídeo> "
@@ -825,11 +840,12 @@ def _rodada(cfg: dict, dry_run: bool, sem_pipeline: bool, forcar: bool) -> int:
     aviso_placar = atualizar_placar()
     marcar_etapa("coletando o Analytics por vídeo")
     aviso_analytics, termos = coletar_analytics(hoje)
+    em_alta = em_alta_atual()                       # vídeos antigos em alta → temas pro Claude
     agora = datetime.now().isoformat(timespec="seconds")
     rodada = {"quando": agora, "custo": 0.0, "estoque": estoque, "escolhidos": [],
               "fila": [], "recusados": [], "processados": [], "aviso_canal": aviso_canal,
               "aviso_placar": aviso_placar, "aviso_analytics": aviso_analytics,
-              "termos_semana": termos, "modo_evento": evento_on,
+              "termos_semana": termos, "em_alta": em_alta, "modo_evento": evento_on,
               "thumb_ab": placar_thumb_ab()}
     if novos:
         from anthropic import Anthropic
@@ -839,7 +855,7 @@ def _rodada(cfg: dict, dry_run: bool, sem_pipeline: bool, forcar: bool) -> int:
                mensagem=f"{len(novos)} vídeo(s) novo(s)")
         marcar_etapa(f"Claude avaliando {len(novos)} vídeo(s) novo(s)")
         try:
-            avaliacoes, custo = avaliar(Anthropic(), novos, evento_on)
+            avaliacoes, custo = avaliar(Anthropic(), novos, evento_on, em_alta)
         except Exception as e:  # noqa: BLE001 — avaliação falhou: a fila de antes ainda roda
             evento(None, "curadoria", "falha", agente="curador", mensagem=str(e)[:300])
             print(f"[!] Avaliação dos novos falhou ({e}); sigo só com a fila")
