@@ -12,6 +12,8 @@ Tabelas:
   tarefas  — tarefas macro do time de dev (o Gu acompanha no painel, aba "Time de dev")
   metricas_video / trafego_video / termos_busca / termos_canal — foto diária do YouTube
              Analytics (17_analytics, agente analista); o painel mostra na aba "Analytics"
+  reach_dia / reach_relatorio — impressões e CTR da miniatura por vídeo e dia, do relatório
+             Reach da YouTube Reporting API (17_analytics)
 
 Uso:
     from _eventos import evento, upsert_video, upsert_bloco
@@ -143,6 +145,20 @@ CREATE TABLE IF NOT EXISTS termos_canal (
     termo       TEXT NOT NULL,
     views       INTEGER,
     PRIMARY KEY (data, termo)
+);
+
+-- Relatório Reach (Reporting API): 1 CSV por dia; backfill do mesmo dia substitui o anterior.
+CREATE TABLE IF NOT EXISTS reach_dia (
+    dia         TEXT NOT NULL,        -- dia que o relatório cobre (AAAA-MM-DD)
+    youtube_id  TEXT NOT NULL,
+    impressoes  INTEGER,
+    ctr_pct     REAL,
+    PRIMARY KEY (dia, youtube_id)
+);
+
+CREATE TABLE IF NOT EXISTS reach_relatorio (
+    dia          TEXT PRIMARY KEY,
+    create_time  TEXT NOT NULL        -- createTime do relatório importado (backfill = mais novo)
 );
 
 CREATE INDEX IF NOT EXISTS ix_eventos_ts ON eventos(ts);
@@ -330,6 +346,37 @@ def gravar_analytics(data: str, metricas: list[dict], trafego: list[dict],
                 f"INSERT INTO {tabela} (data, {', '.join(colunas)}) "
                 f"VALUES (?, {', '.join('?' * len(colunas))})",
                 [(data, *(linha.get(c) for c in colunas)) for linha in linhas])
+
+
+def reach_importados() -> dict[str, str]:
+    """{dia: createTime} dos relatórios Reach já importados. Banco fora do ar = {}."""
+    return _executar("ler relatórios reach", lambda con: {
+        r["dia"]: r["create_time"] for r in con.execute("SELECT * FROM reach_relatorio")}, padrao={})
+
+
+def gravar_reach(dia: str, create_time: str, linhas: list[dict]) -> None:
+    """Grava o relatório Reach de um dia, substituindo o que houver desse dia."""
+    with _seguro(f"gravar reach de {dia}") as con:
+        con.execute("DELETE FROM reach_dia WHERE dia = ?", (dia,))
+        con.executemany("INSERT INTO reach_dia (dia, youtube_id, impressoes, ctr_pct) "
+                        "VALUES (?, ?, ?, ?)",
+                        [(dia, x["youtube_id"], x["impressoes"], x["ctr_pct"]) for x in linhas])
+        con.execute("INSERT INTO reach_relatorio (dia, create_time) VALUES (?, ?) "
+                    "ON CONFLICT(dia) DO UPDATE SET create_time = excluded.create_time",
+                    (dia, create_time))
+
+
+def reach_por_video() -> tuple[str | None, dict[str, dict]]:
+    """(primeiro dia com relatório, {youtube_id: {impressoes, ctr_pct}}) somando todos os dias
+    importados; CTR ponderado pelas impressões. Sem relatório: (None, {})."""
+    def ler(con):
+        desde = con.execute("SELECT MIN(dia) FROM reach_dia").fetchone()[0]
+        return desde, {r["youtube_id"]: {"impressoes": r["imp"],
+                                         "ctr_pct": round(r["cliques"] / r["imp"], 2) if r["imp"] else 0.0}
+                       for r in con.execute(
+                           "SELECT youtube_id, SUM(impressoes) AS imp, "
+                           "SUM(impressoes * ctr_pct) AS cliques FROM reach_dia GROUP BY youtube_id")}
+    return _executar("ler reach", ler, padrao=(None, {}))
 
 
 def termos_semana(limite: int = 10) -> list[dict]:

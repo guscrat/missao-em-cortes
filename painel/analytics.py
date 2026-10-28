@@ -16,11 +16,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 from _youtube_leitura import MAX_SHORT_S, nome_origem, normalizar  # noqa: E402
 
 VAZIO = {"data": None, "metricas": pd.DataFrame(), "trafego": pd.DataFrame(),
-         "termos": pd.DataFrame(), "termos_canal": pd.DataFrame()}
+         "termos": pd.DataFrame(), "termos_canal": pd.DataFrame(), "reach_desde": None}
 
 
 def carregar(db_path: Path) -> dict:
-    """A coleta mais recente: {data, metricas, trafego, termos, termos_canal} (DataFrames)."""
+    """A coleta mais recente: {data, metricas, trafego, termos, termos_canal} (DataFrames) +
+    reach_desde (1º dia com impressões do relatório Reach, ou None)."""
     if not db_path.exists():
         return dict(VAZIO)
     con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
@@ -31,7 +32,12 @@ def carregar(db_path: Path) -> dict:
         ler = lambda tabela, d=data: pd.read_sql(   # noqa: E731
             f"SELECT * FROM {tabela} WHERE data = ?", con, params=(d,))
         canal = con.execute("SELECT MAX(data) FROM termos_canal").fetchone()[0]
-        return {"data": data, "metricas": ler("metricas_video"), "trafego": ler("trafego_video"),
+        try:   # banco anterior às tabelas do Reach
+            reach_desde = con.execute("SELECT MIN(dia) FROM reach_dia").fetchone()[0]
+        except sqlite3.OperationalError:
+            reach_desde = None
+        return {"reach_desde": reach_desde,
+                "data": data, "metricas": ler("metricas_video"), "trafego": ler("trafego_video"),
                 "termos": ler("termos_busca"),
                 "termos_canal": ler("termos_canal", canal) if canal else pd.DataFrame()}
     except (sqlite3.OperationalError, pd.errors.DatabaseError):   # banco anterior às tabelas
@@ -102,8 +108,11 @@ def aba_analytics(db_path: Path) -> None:
         visual.cartao("Retenção média", _pct(r["retencao_pct"], 0), "% média assistida",
                       ajuda="Média ponderada por views da % do vídeo que a pessoa assiste."),
     ])
+    reach = (f"impressões/CTR desde {pd.Timestamp(dados['reach_desde']):%d/%m} (relatório Reach)"
+             if dados.get("reach_desde") else "impressões/CTR: o 1º relatório Reach sai ~48h depois "
+             "de criar o job")
     st.caption(f"Coleta de {pd.Timestamp(dados['data']):%d/%m/%Y} · acumulado desde a publicação "
-               "de cada vídeo · o Analytics atrasa ~2 dias")
+               f"de cada vídeo · o Analytics atrasa ~2 dias · {reach}")
     c1, c2 = st.columns([3, 2])
     with c1:
         st.markdown("<h3>Termos de pesquisa da semana</h3>", unsafe_allow_html=True)

@@ -5,7 +5,7 @@ Uso:
     uv run py scripts/17_analytics.py semanal    # resumo da semana → state/analytics_semanal.md
 
 Por vídeo PÚBLICO do canal, acumulado desde a publicação (o Analytics atrasa ~2 dias):
-  - views, impressões da miniatura e CTR da miniatura (videoThumbnailImpressions*)
+  - views; impressões e CTR da miniatura (relatório Reach da Reporting API, ver abaixo)
   - retenção média (% média assistida) e duração média assistida
   - origens de tráfego (insightTrafficSourceType: busca, sugeridos, inscritos, Shorts...)
   - termos de pesquisa do YouTube que trouxeram views (até 25 por vídeo)
@@ -14,16 +14,26 @@ resumo semanal e a lista que o Editor (_editor) recebe pra usar nos títulos.
 
 Grava a foto do dia nas tabelas metricas_video / trafego_video / termos_busca / termos_canal
 (_eventos.gravar_analytics); o painel mostra na aba "Analytics".
+
+Impressões/CTR não saem pela Analytics API (400 "query is not supported"): só pela YouTube
+Reporting API, num job diário do relatório channel_reach_basic_a1 (criado sozinho na 1ª vez).
+O YouTube gera 1 CSV por dia (o 1º sai ~48h depois de criar o job, junto com os 30 dias
+anteriores); cada dia novo é importado em reach_dia, e backfill do mesmo dia (createTime mais
+novo) substitui o anterior. O total do vídeo soma os dias importados (desde o 1º relatório).
+Se a Reporting API falhar, a coleta segue com as impressões já importadas e um aviso.
+
 Projeto missao-em-cortes-analytics (token próprio, só leitura, nunca o do publisher).
-Custo: US$ 0 (Data API ~3 unidades por rodada; o resto é Analytics API, cota própria e grátis).
-Se a API recusar as métricas de impressão, a coleta segue sem elas (impressões/CTR vazios).
+Custo: US$ 0 (Data API ~3 unidades por rodada; Analytics e Reporting API, cota própria e grátis).
 """
+import csv
+import io
 import sys
 sys.stdout.reconfigure(encoding='utf-8')
 from datetime import date, timedelta
 from pathlib import Path
 
-from _eventos import evento, gravar_analytics, termos_semana, ultima_coleta
+from _eventos import (evento, gravar_analytics, gravar_reach, reach_importados, reach_por_video,
+                     termos_semana, ultima_coleta)
 from _google import credenciais
 from _youtube_leitura import (CLIENT_SECRET, ESCOPOS, MAX_SHORT_S, TOKEN, listar_videos,
                               nome_origem)
@@ -31,6 +41,8 @@ from _youtube_leitura import (CLIENT_SECRET, ESCOPOS, MAX_SHORT_S, TOKEN, listar
 ROOT = Path(__file__).parent.parent
 SEMANAL = ROOT / "state" / "analytics_semanal.md"
 MAX_TERMOS = 25          # limite da API pra insightTrafficSourceDetail
+REACH_TIPO = "channel_reach_basic_a1"
+REACH_JOB = "missao-em-cortes-reach"
 
 
 def _query(analytics, **kw) -> list[list]:
@@ -50,19 +62,62 @@ def basicas(analytics, ids: list[str], inicio: str, fim: str) -> dict[str, dict]
     return saida
 
 
-def impressoes(analytics, ids: list[str], inicio: str, fim: str) -> dict[str, dict]:
-    """{id: {impressoes, ctr_pct}}. O CTR vem como razão (cliques ÷ impressões) → %. Se algum
-    valor passar de 1, a API já mandou em %: o lote inteiro fica como veio."""
-    saida = {}
-    for i in range(0, len(ids), 50):
-        saida.update({vid: (int(imp), float(ctr)) for vid, imp, ctr in _query(
-            analytics, startDate=inicio, endDate=fim, dimensions="video",
-            metrics="videoThumbnailImpressions,videoThumbnailImpressionsClickRate",
-            filters="video==" + ",".join(ids[i:i + 50]), maxResults=50,
-            sort="-videoThumbnailImpressions")})
-    fator = 1 if any(ctr > 1 for _, ctr in saida.values()) else 100
-    return {vid: {"impressoes": imp, "ctr_pct": round(ctr * fator, 2)}
-            for vid, (imp, ctr) in saida.items()}
+def job_reach(reporting) -> str:
+    """Id do job do relatório Reach; cria na 1ª vez (o YouTube passa a gerar 1 CSV por dia)."""
+    pagina = None
+    while True:
+        r = reporting.jobs().list(pageToken=pagina).execute()
+        for job in r.get("jobs", []):
+            if job["reportTypeId"] == REACH_TIPO:
+                return job["id"]
+        pagina = r.get("nextPageToken")
+        if not pagina:
+            break
+    return reporting.jobs().create(body={"reportTypeId": REACH_TIPO, "name": REACH_JOB}).execute()["id"]
+
+
+def relatorios_novos(reporting, job_id: str, importados: dict[str, str]) -> list[dict]:
+    """Relatórios a importar: por dia, o de createTime mais novo (backfill substitui), só se
+    ainda não foi importado com esse createTime ou um mais novo. [{dia, create_time, url}]."""
+    por_dia, pagina = {}, None
+    while True:
+        r = reporting.jobs().reports().list(jobId=job_id, pageToken=pagina).execute()
+        for rel in r.get("reports", []):
+            dia = rel["startTime"][:10]
+            if dia not in por_dia or rel["createTime"] > por_dia[dia]["create_time"]:
+                por_dia[dia] = {"dia": dia, "create_time": rel["createTime"],
+                                "url": rel["downloadUrl"]}
+        pagina = r.get("nextPageToken")
+        if not pagina:
+            break
+    return sorted((x for x in por_dia.values() if x["create_time"] > importados.get(x["dia"], "")),
+                  key=lambda x: x["dia"])
+
+
+def ler_reach(texto: str) -> list[dict]:
+    """CSV do Reach (date, channel_id, video_id, video_thumbnail_impressions,
+    video_thumbnail_impressions_ctr) → [{youtube_id, impressoes, ctr_pct}] somando por vídeo.
+    O CTR vem como razão (cliques ÷ impressões) → %; se algum passar de 1, já veio em %."""
+    soma: dict[str, list[float]] = {}
+    for linha in csv.DictReader(io.StringIO(texto)):
+        imp = int(float(linha["video_thumbnail_impressions"] or 0))
+        ctr = float(linha["video_thumbnail_impressions_ctr"] or 0)
+        acc = soma.setdefault(linha["video_id"], [0, 0.0, 0.0])
+        acc[0] += imp
+        acc[1] += imp * ctr
+        acc[2] = max(acc[2], ctr)
+    fator = 1 if any(acc[2] > 1 for acc in soma.values()) else 100
+    return [{"youtube_id": vid, "impressoes": imp,
+             "ctr_pct": round(cliques / imp * fator, 2) if imp else 0.0}
+            for vid, (imp, cliques, _) in soma.items()]
+
+
+def importar_reach(reporting, baixar) -> int:
+    """Baixa e grava os relatórios Reach novos. baixar(url) → texto do CSV. Devolve quantos dias."""
+    novos = relatorios_novos(reporting, job_reach(reporting), reach_importados())
+    for rel in novos:
+        gravar_reach(rel["dia"], rel["create_time"], ler_reach(baixar(rel["url"])))
+    return len(novos)
 
 
 def trafego(analytics, vid: str, inicio: str, fim: str) -> list[dict]:
@@ -80,8 +135,9 @@ def termos(analytics, inicio: str, fim: str, vid: str | None = None) -> list[dic
         metrics="views", filters=filtro, sort="-views", maxResults=MAX_TERMOS)]
 
 
-def coletar_dados(yt, analytics, hoje: date | None = None) -> dict:
-    """Lê o canal e devolve {data, metricas, trafego, termos, termos_canal, avisos}."""
+def coletar_dados(yt, analytics, hoje: date | None = None, reach: dict | None = None) -> dict:
+    """Lê o canal e devolve {data, metricas, trafego, termos, termos_canal, avisos}.
+    reach: {youtube_id: {impressoes, ctr_pct}} já somado do relatório Reach (reach_por_video)."""
     hoje = hoje or date.today()
     fim = hoje.isoformat()
     videos = [v for v in listar_videos(yt) if v["privacidade"] == "public"]
@@ -92,11 +148,7 @@ def coletar_dados(yt, analytics, hoje: date | None = None) -> dict:
     inicio = min(v["publicado"][:10] for v in videos)
     ids = [v["id"] for v in videos]
     base = basicas(analytics, ids, inicio, fim)
-    try:
-        imp = impressoes(analytics, ids, inicio, fim)
-    except Exception as e:  # noqa: BLE001 — métrica nova da API; sem ela o resto vale
-        imp = {}
-        avisos.append(f"impressões/CTR não lidos ({str(e)[:150]})")
+    imp = reach or {}
     metricas, traf, ters = [], [], []
     for v in videos:
         vid, desde = v["id"], v["publicado"][:10]
@@ -116,13 +168,33 @@ def coletar_dados(yt, analytics, hoje: date | None = None) -> dict:
 def coletar(interativo: bool = True) -> dict:
     """Coleta e grava no banco. interativo=False (Curador) nunca abre o navegador."""
     from googleapiclient.discovery import build
+    from google.auth.transport.requests import AuthorizedSession
     creds = credenciais(ESCOPOS, TOKEN, CLIENT_SECRET, interativo=interativo)
+    sessao = AuthorizedSession(creds)
+
+    def baixar(url: str) -> str:
+        r = sessao.get(url, timeout=60)
+        r.raise_for_status()
+        return r.content.decode("utf-8-sig")   # BOM no CSV não suja o 1º cabeçalho
+
+    aviso_reach = None
+    try:
+        dias = importar_reach(build("youtubereporting", "v1", credentials=creds,
+                                    cache_discovery=False), baixar)
+    except Exception as e:  # noqa: BLE001 — sem o Reach do dia, valem as impressões já importadas
+        dias, aviso_reach = 0, f"relatório Reach (impressões/CTR) não lido ({str(e)[:150]})"
+    desde, reach = reach_por_video()
     dados = coletar_dados(build("youtube", "v3", credentials=creds, cache_discovery=False),
-                          build("youtubeAnalytics", "v2", credentials=creds, cache_discovery=False))
+                          build("youtubeAnalytics", "v2", credentials=creds, cache_discovery=False),
+                          reach=reach)
+    if aviso_reach:
+        dados["avisos"].append(aviso_reach)
+    dados["reach_desde"] = desde
     gravar_analytics(dados["data"], dados["metricas"], dados["trafego"], dados["termos"],
                      dados["termos_canal"])
     msg = (f"{len(dados['metricas'])} vídeo(s) · {len(dados['termos'])} termo(s) por vídeo · "
-           f"{len(dados['termos_canal'])} termo(s) do canal (7 dias)")
+           f"{len(dados['termos_canal'])} termo(s) do canal (7 dias) · Reach: {dias} dia(s) novo(s)"
+           + (f", impressões desde {desde}" if desde else ", ainda sem relatório"))
     for aviso in dados["avisos"]:
         evento(None, "17_analytics", "aviso", agente="analista", mensagem=aviso[:300])
     evento(None, "17_analytics", "ok", agente="analista", mensagem=msg)
@@ -178,7 +250,9 @@ def main(argv: list[str]) -> int:
         return 1
     for aviso in dados["avisos"]:
         print(f"[aviso] {aviso}")
-    print(f"Analytics {dados['data']}: {len(dados['metricas'])} vídeo(s) públicos")
+    print(f"Analytics {dados['data']}: {len(dados['metricas'])} vídeo(s) públicos · impressões/CTR "
+          + (f"desde {dados['reach_desde']}" if dados.get("reach_desde")
+             else "ainda sem relatório Reach (o 1º sai ~48h depois de criar o job)"))
     for m in sorted(dados["metricas"], key=lambda m: -(m["views"] or 0))[:10]:
         ctr = f"{m['ctr_pct']:.1f}%" if m["ctr_pct"] is not None else "—"
         ret = f"{m['retencao_pct']:.0f}%" if m["retencao_pct"] is not None else "—"

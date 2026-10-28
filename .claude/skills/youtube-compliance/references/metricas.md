@@ -25,12 +25,12 @@ Compara a **retenção** (% média assistida, a do Studio) dos vídeos **com** l
 
 `uv run py scripts/17_analytics.py [semanal]` — `agente="analista"`, US$ 0, mesmo projeto/token do 12. O **Curador chama 1x/dia** logo depois do placar (sem navegador; falha vira aviso no resumo e evento `falha`, a coleta anterior fica no banco).
 
-- Por vídeo **público**, acumulado desde a publicação: views, **impressões e CTR da miniatura** (`videoThumbnailImpressions`, `videoThumbnailImpressionsClickRate`, razão → gravada em %), retenção média e duração média assistida, **origens de tráfego** (`insightTrafficSourceType`) e até 25 **termos de pesquisa** do YouTube (`insightTrafficSourceDetail` com `insightTrafficSourceType==YT_SEARCH`). Vídeo sem view pula tráfego/termos.
+- Por vídeo **público**, acumulado desde a publicação: views, **impressões e CTR da miniatura** (ver Reach abaixo), retenção média e duração média assistida, **origens de tráfego** (`insightTrafficSourceType`) e até 25 **termos de pesquisa** do YouTube (`insightTrafficSourceDetail` com `insightTrafficSourceType==YT_SEARCH`). Vídeo sem view pula tráfego/termos.
 - Do canal: os termos de pesquisa dos **últimos 7 dias** (`termos_canal`) — viram o destaque do resumo semanal e a lista que o Editor recebe (`_eventos.termos_semana()`).
-- Banco: `metricas_video`, `trafego_video`, `termos_busca`, `termos_canal`, chave pela `data` da coleta (rodar de novo no mesmo dia substitui). Painel: aba **Analytics**.
-- Se a API recusar as métricas de impressão, a coleta segue com impressões/CTR vazios e um evento `aviso`.
+- Banco: `metricas_video`, `trafego_video`, `termos_busca`, `termos_canal` (+ `reach_dia`, `reach_relatorio`), chave pela `data` da coleta (rodar de novo no mesmo dia substitui). Painel: aba **Analytics**.
+- **Impressões/CTR vêm da YouTube Reporting API**, não da Analytics (lá `videoThumbnailImpressions*` dá 400 "query is not supported" em qualquer combinação). Job diário do relatório `channel_reach_basic_a1` (nome `missao-em-cortes-reach`, criado em 28/10/2026; o 17 cria sozinho se sumir). O YouTube gera 1 CSV por dia (`date, channel_id, video_id, video_thumbnail_impressions, video_thumbnail_impressions_ctr`); o 1º sai até 48h depois do job, junto com os 30 dias anteriores, e os relatórios ficam 60 dias no ar (os históricos, 30). Cada dia é importado uma vez em `reach_dia` (`reach_relatorio` guarda o `createTime`; backfill do mesmo dia, com `createTime` mais novo, substitui). Impressões do vídeo = soma dos dias importados; CTR = ponderado pelas impressões (razão → %; se algum valor passar de 1, trata como já em %). Falhou a Reporting API → coleta segue com o que já foi importado + aviso. A Reporting API tem de estar **ativa no projeto analytics** (ativada pelo Gu em 28/10).
 - `semanal`: grava `state/analytics_semanal.md` (termos da semana primeiro, origens, CTR das miniaturas). O Curador gera às **sextas** e põe os termos no `curador_resumo.md`.
-- Cota: ~3 unidades da Data API; ~2 consultas da Analytics por vídeo com view (cota própria, grátis).
+- Cota: ~3 unidades da Data API; ~2 consultas da Analytics por vídeo com view; 2-3 chamadas da Reporting API + 1 download por dia novo (cotas próprias, grátis).
 
 ## Setup do projeto de métricas (uma vez, feito pelo Gu no console)
 
