@@ -15,6 +15,19 @@ CLIENT_SECRET = ROOT / "secrets" / "analytics_client_secret.json"   # projeto mi
 TOKEN = ROOT / "secrets" / "analytics_token.json"
 ESCOPOS = ["https://www.googleapis.com/auth/yt-analytics.readonly",
            "https://www.googleapis.com/auth/youtube.readonly"]
+MAX_SHORT_S = 180   # até 3 min = Short
+
+# insightTrafficSourceType → nome no painel/resumo (17_analytics)
+ORIGENS = {"YT_SEARCH": "busca do YouTube", "RELATED_VIDEO": "vídeos sugeridos",
+           "SUBSCRIBER": "inscritos (feed/início)", "YT_CHANNEL": "página do canal",
+           "SHORTS": "feed de Shorts", "EXT_URL": "sites externos", "NOTIFICATION": "notificações",
+           "PLAYLIST": "playlists", "YT_OTHER_PAGE": "outras páginas do YouTube",
+           "NO_LINK_OTHER": "direto/desconhecido", "END_SCREEN": "tela final",
+           "ANNOTATION": "cards/anotações", "HASHTAGS": "hashtags"}
+
+
+def nome_origem(origem: str) -> str:
+    return ORIGENS.get(origem, origem.lower().replace("_", " "))
 
 
 def normalizar(titulo: str) -> str:

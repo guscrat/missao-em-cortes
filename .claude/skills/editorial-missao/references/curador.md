@@ -46,7 +46,7 @@ Custa ~US$ 0,65 por vídeo. O resto continua na fila; item com mais de 15 dias v
 - **O que já subiu sai do estoque sozinho:** no começo de cada rodada, o Curador roda o `14_canal` (skill `youtube-compliance`), que marca o que o Gu publicou/agendou no Studio. Se a leitura falhar (sem login, sem rede), a rodada segue com o estoque como estava e o resumo avisa.
 - **Zoom:** o `zoom` do canal é copiado pro `config/zoom.json` do stem novo. Canal com `zoom: null` (Kim) é processado sem zoom e o resumo avisa pra calibrar e re-cortar com `--desde=4`. Estúdio diferente do padrão do canal também pede conferência.
 - **Falha:** erro num vídeo não derruba a rodada. Se nem baixou, volta pra fila (no máximo 3 tentativas → `falhou`). Se falhou depois do download, fica `escolhido` e o resumo mostra o erro. Retomar com `pipeline.py <stem> --desde=N`.
-- **Saída:** `state/curador_resumo.md` (estoque início/fim, prontos com o caminho do `publicacao.txt`, falhas, escolhido, fila, recusados com motivo, avisos) e eventos no painel. O resumo semanal de sexta lê esse arquivo. Log do agendamento em `state/curador.log`.
+- **Saída:** `state/curador_resumo.md` (estoque início/fim, prontos com o caminho do `publicacao.txt`, falhas, escolhido, fila, recusados com motivo, avisos; às sextas, os termos de pesquisa da semana) e eventos no painel. Todo dia, depois do placar (15), roda a coleta do Analytics por vídeo (`17_analytics`); às sextas grava também `state/analytics_semanal.md`. O resumo semanal de sexta lê esse arquivo. Log do agendamento em `state/curador.log`.
 - **Trava:** `state/curador.lock` (criação atômica) impede duas rodadas ao mesmo tempo; trava com mais de 12h é considerada morta e liberada.
 
 ## Agendamento (Agendador de Tarefas do Windows)
