@@ -25,6 +25,7 @@ MODELO = "claude-opus-5-5"
 CUSTO_ESTIMADO = 0.01                  # só pro --dry-run
 MAX_RODADAS = 2
 MAX_TITULO = 70
+MAX_TERMO = 60                         # termo de busca vem de terceiros: corta o tamanho
 SCRIPTS = Path(__file__).parent
 GRAFIAS_PEDIDO = ("GRAFIAS OFICIAIS (nome de pessoa sempre assim, mesmo que a transcrição ou as "
                   "tags escrevam diferente):")
@@ -74,7 +75,7 @@ def montar_pedido(titulo: str, texto_thumb: str, problema: str, transcricao: str
                       f"{t['texto_thumb']} | motivo: {t['problema']}")
     if termos:
         linhas += ["", "TERMOS QUE O PÚBLICO BUSCA (busca do YouTube, mais views na semana): "
-                   + "; ".join(termos)]
+                   + "; ".join(t[:MAX_TERMO] for t in termos)]
     linhas += ["", GRAFIAS_PEDIDO, _grafias.para_prompt(), "", "TRANSCRIÇÃO DO TRECHO:", transcricao]
     return "\n".join(linhas)
 

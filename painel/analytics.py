@@ -13,9 +13,8 @@ import streamlit as st
 import visual
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-from _youtube_leitura import nome_origem, normalizar  # noqa: E402
+from _youtube_leitura import MAX_SHORT_S, nome_origem, normalizar  # noqa: E402
 
-MAX_SHORT_S = 180
 VAZIO = {"data": None, "metricas": pd.DataFrame(), "trafego": pd.DataFrame(),
          "termos": pd.DataFrame(), "termos_canal": pd.DataFrame()}
 

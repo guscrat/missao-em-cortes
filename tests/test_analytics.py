@@ -355,3 +355,30 @@ def test_painel_render_com_coleta(monkeypatch, banco):
     assert "BARRAS:['renan santos', 'missão']" in txt
     assert "BARRAS:['inscritos (feed/início)', 'busca do YouTube']" in txt
     assert "DF:2" in txt
+
+
+class _AnImp:
+    """Analytics falso só pras métricas de impressão (CTR no formato pedido)."""
+    def __init__(self, linhas):
+        self.linhas = linhas
+
+    def reports(self):
+        return self
+
+    def query(self, **kw):
+        return _Exec({"rows": self.linhas})
+
+
+def test_impressoes_ctr_em_razao_vira_porcentagem():
+    r = an.impressoes(_AnImp([["v1", 1000, 0.052], ["v2", 50, 0.0]]), ["v1", "v2"], "2026-10-01", "2026-10-28")
+    assert r == {"v1": {"impressoes": 1000, "ctr_pct": 5.2}, "v2": {"impressoes": 50, "ctr_pct": 0.0}}
+
+
+def test_impressoes_ctr_ja_em_porcentagem_fica_como_veio():
+    r = an.impressoes(_AnImp([["v1", 1000, 5.2], ["v2", 80, 0.8]]), ["v1", "v2"], "2026-10-01", "2026-10-28")
+    assert r["v1"]["ctr_pct"] == 5.2 and r["v2"]["ctr_pct"] == 0.8
+
+
+def test_montar_pedido_corta_termo_longo():
+    pedido = _editor.montar_pedido("t", "x", "p", "trans", [], ["a" * 200])
+    assert "a" * _editor.MAX_TERMO in pedido and "a" * (_editor.MAX_TERMO + 1) not in pedido

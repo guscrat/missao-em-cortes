@@ -25,11 +25,11 @@ from pathlib import Path
 
 from _eventos import evento, gravar_analytics, termos_semana, ultima_coleta
 from _google import credenciais
-from _youtube_leitura import CLIENT_SECRET, ESCOPOS, TOKEN, listar_videos, nome_origem
+from _youtube_leitura import (CLIENT_SECRET, ESCOPOS, MAX_SHORT_S, TOKEN, listar_videos,
+                              nome_origem)
 
 ROOT = Path(__file__).parent.parent
 SEMANAL = ROOT / "state" / "analytics_semanal.md"
-MAX_SHORT_S = 180
 MAX_TERMOS = 25          # limite da API pra insightTrafficSourceDetail
 
 
@@ -51,16 +51,18 @@ def basicas(analytics, ids: list[str], inicio: str, fim: str) -> dict[str, dict]
 
 
 def impressoes(analytics, ids: list[str], inicio: str, fim: str) -> dict[str, dict]:
-    """{id: {impressoes, ctr_pct}}. O CTR vem como razão (cliques ÷ impressões) → %."""
+    """{id: {impressoes, ctr_pct}}. O CTR vem como razão (cliques ÷ impressões) → %. Se algum
+    valor passar de 1, a API já mandou em %: o lote inteiro fica como veio."""
     saida = {}
     for i in range(0, len(ids), 50):
-        for vid, imp, ctr in _query(
-                analytics, startDate=inicio, endDate=fim, dimensions="video",
-                metrics="videoThumbnailImpressions,videoThumbnailImpressionsClickRate",
-                filters="video==" + ",".join(ids[i:i + 50]), maxResults=50,
-                sort="-videoThumbnailImpressions"):
-            saida[vid] = {"impressoes": int(imp), "ctr_pct": round(float(ctr) * 100, 2)}
-    return saida
+        saida.update({vid: (int(imp), float(ctr)) for vid, imp, ctr in _query(
+            analytics, startDate=inicio, endDate=fim, dimensions="video",
+            metrics="videoThumbnailImpressions,videoThumbnailImpressionsClickRate",
+            filters="video==" + ",".join(ids[i:i + 50]), maxResults=50,
+            sort="-videoThumbnailImpressions")})
+    fator = 1 if any(ctr > 1 for _, ctr in saida.values()) else 100
+    return {vid: {"impressoes": imp, "ctr_pct": round(ctr * fator, 2)}
+            for vid, (imp, ctr) in saida.items()}
 
 
 def trafego(analytics, vid: str, inicio: str, fim: str) -> list[dict]:
