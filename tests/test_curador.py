@@ -255,6 +255,23 @@ def test_rodada_seguinte_usa_fila_sem_llm_e_nao_reavalia(raiz, rodada):
     assert rodada["processados"] == ["renan_live_alfa"]
 
 
+def test_rodada_passa_em_alta_pro_avaliar_e_pro_resumo(raiz, rodada, monkeypatch):
+    altas = [{"youtube_id": "o", "tema": "Tema X", "titulo": "T", "views_semana": 100, "fator": 4.0}]
+    monkeypatch.setattr(cu, "em_alta_atual", lambda: altas)
+    visto = {}
+    original = cu.avaliar
+
+    def espia(client, itens, evento=None, em_alta=None):
+        visto["em_alta"] = em_alta
+        return original(client, itens, evento, em_alta)
+    monkeypatch.setattr(cu, "avaliar", espia)
+    rodada["listar"] = {"renan": [_item("a", "Live Alfa")]}
+    rodada["avaliacoes"] = {"a": _av(True, 6)}
+    assert cu.main([]) == 0
+    assert visto["em_alta"] == altas
+    assert "Tema X" in cu.RESUMO.read_text(encoding="utf-8")
+
+
 def test_rodada_normal_atualiza_placar(raiz, rodada):
     assert cu.main([]) == 0
     assert rodada["placar"] == [1]
