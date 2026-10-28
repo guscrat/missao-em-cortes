@@ -106,7 +106,7 @@ def rodada(tmp_path, monkeypatch, banco):
     monkeypatch.setattr(cu, "listar_canal", lambda canal, n: reg["listar"])
     monkeypatch.setattr(cu, "detalhar", lambda item: item)
 
-    def avaliar(client, itens, evento=None):
+    def avaliar(client, itens, evento=None, em_alta=None):
         reg["evento"] = evento
         return {i["id"]: reg["avaliacoes"][i["id"]] for i in itens
                 if i["id"] in reg["avaliacoes"]}, (1000, 100, 0.006)

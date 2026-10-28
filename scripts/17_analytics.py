@@ -12,8 +12,14 @@ Por vídeo PÚBLICO do canal, acumulado desde a publicação (o Analytics atrasa
 Do canal inteiro: os termos de pesquisa dos últimos 7 dias — é deles que sai o destaque do
 resumo semanal e a lista que o Editor (_editor) recebe pra usar nos títulos.
 
+Vídeos EM ALTA: publicados há mais de DIAS_ANTIGO dias cujas views dos últimos 7 dias
+passaram de MIN_VIEWS_SEMANA e de FATOR_ALTA x a média semanal de antes (o assunto voltou a
+ser buscado). Saem com o tema do bloco (blocos.tema; Short/sem bloco = título) na tabela
+em_alta: painel (aba Analytics), resumo de sexta e Curador, que prioriza lives desses temas.
+
 Grava a foto do dia nas tabelas metricas_video / trafego_video / termos_busca / termos_canal
-(_eventos.gravar_analytics); o painel mostra na aba "Analytics".
+(_eventos.gravar_analytics) e em_alta (_eventos.gravar_em_alta); o painel mostra na aba
+"Analytics".
 
 Impressões/CTR não saem pela Analytics API (400 "query is not supported"): só pela YouTube
 Reporting API, num job diário do relatório channel_reach_basic_a1 (criado sozinho na 1ª vez).
@@ -32,8 +38,9 @@ sys.stdout.reconfigure(encoding='utf-8')
 from datetime import date, timedelta
 from pathlib import Path
 
-from _eventos import (evento, gravar_analytics, gravar_reach, reach_importados, reach_por_video,
-                     termos_semana, ultima_coleta)
+from _eventos import (em_alta_atual, evento, gravar_analytics, gravar_em_alta, gravar_reach,
+                      reach_importados, reach_por_video, temas_por_youtube, termos_semana,
+                      ultima_coleta)
 from _google import credenciais
 from _youtube_leitura import (CLIENT_SECRET, ESCOPOS, MAX_SHORT_S, TOKEN, listar_videos,
                               nome_origem)
@@ -43,6 +50,9 @@ SEMANAL = ROOT / "state" / "analytics_semanal.md"
 MAX_TERMOS = 25          # limite da API pra insightTrafficSourceDetail
 REACH_TIPO = "channel_reach_basic_a1"
 REACH_JOB = "missao-em-cortes-reach"
+DIAS_ANTIGO = 30         # "vídeo antigo": publicado há mais que isso
+MIN_VIEWS_SEMANA = 50    # abaixo disso é ruído, não alta
+FATOR_ALTA = 3.0         # views da semana >= isso x a média semanal de antes
 
 
 def _query(analytics, **kw) -> list[list]:
@@ -135,8 +145,30 @@ def termos(analytics, inicio: str, fim: str, vid: str | None = None) -> list[dic
         metrics="views", filters=filtro, sort="-views", maxResults=MAX_TERMOS)]
 
 
+def _idade(publicado: str, hoje: date) -> int:
+    return (hoje - date.fromisoformat(publicado[:10])).days
+
+
+def em_alta(metricas: list[dict], semana: dict[str, int], hoje: date) -> list[dict]:
+    """Vídeos antigos (> DIAS_ANTIGO dias) cujas views da semana (semana: {id: views nos
+    últimos 7 dias}) bateram MIN_VIEWS_SEMANA e FATOR_ALTA x a média semanal de antes.
+    Maior fator primeiro. Sem `tema` (quem tem banco completa)."""
+    saida = []
+    for m in metricas:
+        idade, views_semana = _idade(m["publicado"], hoje), semana.get(m["youtube_id"], 0)
+        if idade <= DIAS_ANTIGO or views_semana < MIN_VIEWS_SEMANA:
+            continue
+        media_antes = max(0, (m["views"] or 0) - views_semana) / ((idade - 7) / 7)
+        fator = views_semana / max(media_antes, 1)
+        if fator >= FATOR_ALTA:
+            saida.append({"youtube_id": m["youtube_id"], "titulo": m["titulo"],
+                          "publicado": m["publicado"], "views_semana": views_semana,
+                          "views_total": m["views"], "fator": round(fator, 1)})
+    return sorted(saida, key=lambda x: (-x["fator"], -x["views_semana"]))
+
+
 def coletar_dados(yt, analytics, hoje: date | None = None, reach: dict | None = None) -> dict:
-    """Lê o canal e devolve {data, metricas, trafego, termos, termos_canal, avisos}.
+    """Lê o canal e devolve {data, metricas, trafego, termos, termos_canal, em_alta, avisos}.
     reach: {youtube_id: {impressoes, ctr_pct}} já somado do relatório Reach (reach_por_video)."""
     hoje = hoje or date.today()
     fim = hoje.isoformat()
@@ -144,7 +176,7 @@ def coletar_dados(yt, analytics, hoje: date | None = None, reach: dict | None = 
     avisos = []
     if not videos:
         return {"data": fim, "metricas": [], "trafego": [], "termos": [], "termos_canal": [],
-                "avisos": ["nenhum vídeo público no canal"]}
+                "em_alta": [], "avisos": ["nenhum vídeo público no canal"]}
     inicio = min(v["publicado"][:10] for v in videos)
     ids = [v["id"] for v in videos]
     base = basicas(analytics, ids, inicio, fim)
@@ -160,9 +192,17 @@ def coletar_dados(yt, analytics, hoje: date | None = None, reach: dict | None = 
             continue                                  # sem view, sem tráfego nem termo
         traf += trafego(analytics, vid, desde, fim)
         ters += [{"youtube_id": vid, **t} for t in termos(analytics, desde, fim, vid)]
-    canal = termos(analytics, (hoje - timedelta(days=7)).isoformat(), fim)
+    semana_ini = (hoje - timedelta(days=7)).isoformat()
+    canal = termos(analytics, semana_ini, fim)
+    antigos = [v["id"] for v in videos if _idade(v["publicado"], hoje) > DIAS_ANTIGO
+               and base.get(v["id"], {}).get("views")]
+    try:
+        semana = {vid: x["views"] for vid, x in basicas(analytics, antigos, semana_ini, fim).items()}
+    except Exception as e:  # noqa: BLE001 — sem a semana, a foto do dia vale sem os "em alta"
+        semana = {}
+        avisos.append(f"vídeos antigos em alta não calculados ({str(e)[:150]})")
     return {"data": fim, "metricas": metricas, "trafego": traf, "termos": ters,
-            "termos_canal": canal, "avisos": avisos}
+            "termos_canal": canal, "em_alta": em_alta(metricas, semana, hoje), "avisos": avisos}
 
 
 def coletar(interativo: bool = True) -> dict:
@@ -192,8 +232,13 @@ def coletar(interativo: bool = True) -> dict:
     dados["reach_desde"] = desde
     gravar_analytics(dados["data"], dados["metricas"], dados["trafego"], dados["termos"],
                      dados["termos_canal"])
+    temas = temas_por_youtube([x["youtube_id"] for x in dados["em_alta"]])
+    for x in dados["em_alta"]:
+        x["tema"] = temas.get(x["youtube_id"])
+    gravar_em_alta(dados["data"], dados["em_alta"])
     msg = (f"{len(dados['metricas'])} vídeo(s) · {len(dados['termos'])} termo(s) por vídeo · "
-           f"{len(dados['termos_canal'])} termo(s) do canal (7 dias) · Reach: {dias} dia(s) novo(s)"
+           f"{len(dados['termos_canal'])} termo(s) do canal (7 dias) · "
+           f"{len(dados['em_alta'])} antigo(s) em alta · Reach: {dias} dia(s) novo(s)"
            + (f", impressões desde {desde}" if desde else ", ainda sem relatório"))
     for aviso in dados["avisos"]:
         evento(None, "17_analytics", "aviso", agente="analista", mensagem=aviso[:300])
@@ -203,14 +248,24 @@ def coletar(interativo: bool = True) -> dict:
 
 # ── resumo semanal ─────────────────────────────────────────────────────────
 
+def linha_em_alta(x: dict) -> str:
+    """Uma linha do vídeo em alta (resumo semanal e do Curador)."""
+    return (f"**{x['tema']}** — {x['views_semana']} views na semana ({x['fator']:.0f}x o ritmo de "
+            f"antes) · \"{x['titulo'][:60]}\", de {x['publicado'][8:10]}/{x['publicado'][5:7]}")
+
+
 def resumo_semanal(termos_top: list[dict], metricas: list[dict], trafego_canal: dict[str, int],
-                   data: str) -> str:
+                   data: str, em_alta_top: list[dict] | None = None) -> str:
     """Markdown do resumo semanal. Os termos de pesquisa vêm primeiro: é o insumo do Editor."""
     linhas = [f"# Analytics da semana ({data})", "",
               "## Termos de pesquisa que mais trouxeram views (busca do YouTube, 7 dias)",
               "O Editor recebe esta lista ao reescrever títulos: usar um termo só se a fala sustentar.", ""]
     linhas += ([f"{i}. **{t['termo']}** — {t['views']} views" for i, t in enumerate(termos_top, 1)]
                or ["- (nenhuma view vinda da busca nos últimos 7 dias)"])
+    linhas += ["", f"## Vídeos antigos em alta (publicados há {DIAS_ANTIGO}+ dias)",
+               "O assunto voltou a ser procurado: o Curador prioriza lives novas sobre esses temas.", ""]
+    linhas += ([f"- {linha_em_alta(x)}" for x in em_alta_top or []]
+               or ["- (nenhum vídeo antigo disparou nesta semana)"])
     total = sum(trafego_canal.values())
     if total:
         linhas += ["", "## De onde vieram as views (acumulado dos vídeos públicos)"]
@@ -231,7 +286,7 @@ def semanal() -> str:
     """Lê a coleta mais recente do banco e grava state/analytics_semanal.md."""
     coleta = ultima_coleta()
     texto = resumo_semanal(termos_semana(), coleta["metricas"], coleta["trafego"],
-                           coleta["data"] or "sem coleta")
+                           coleta["data"] or "sem coleta", em_alta_atual())
     SEMANAL.parent.mkdir(parents=True, exist_ok=True)
     SEMANAL.write_text(texto, encoding="utf-8")
     return texto
@@ -257,6 +312,9 @@ def main(argv: list[str]) -> int:
         ctr = f"{m['ctr_pct']:.1f}%" if m["ctr_pct"] is not None else "—"
         ret = f"{m['retencao_pct']:.0f}%" if m["retencao_pct"] is not None else "—"
         print(f"  {m['views']:>6} views · CTR {ctr:>5} · retenção {ret:>4} · {m['titulo'][:55]}")
+    for x in dados["em_alta"]:
+        print(f"  [em alta] {x['views_semana']} views na semana ({x['fator']:.0f}x) · "
+              f"{(x['tema'] or x['titulo'])[:55]}")
     if dados["termos_canal"]:
         print("\n  Termos de busca (canal, 7 dias): "
               + ", ".join(f"{t['termo']} ({t['views']})" for t in dados["termos_canal"][:10]))
