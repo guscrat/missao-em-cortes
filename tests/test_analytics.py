@@ -69,8 +69,7 @@ VIDS = [("a", "Live A", "public", "2026-10-10", "PT20M"),
 
 
 class FakeAnalytics:
-    def __init__(self, falha_impressoes=False):
-        self.falha_impressoes = falha_impressoes
+    def __init__(self):
         self.chamadas = []
 
     def reports(self):
@@ -79,10 +78,7 @@ class FakeAnalytics:
     def query(self, **kw):
         self.chamadas.append(kw)
         m, d = kw["metrics"], kw["dimensions"]
-        if m.startswith("videoThumbnail"):
-            if self.falha_impressoes:
-                return _Exec(Exception("metrica invalida"))
-            return _Exec({"rows": [["a", 1000, 0.052]]})
+        assert not m.startswith("videoThumbnail")      # a Analytics API recusa (400)
         if d == "video":
             return _Exec({"rows": [["a", 300, 410.55, 37.44]]})
         if d == "insightTrafficSourceType":
@@ -97,20 +93,23 @@ def _coletar(**kw):
 
 # --- coletar_dados -------------------------------------------------------------------
 
-def test_coletar_ignora_privado_e_converte_ctr():
-    d, _ = _coletar()
+REACH = {"a": {"impressoes": 1000, "ctr_pct": 5.2}}
+
+
+def test_coletar_ignora_privado_e_usa_reach_pronto():
+    d = an.coletar_dados(FakeYT(VIDS), FakeAnalytics(), HOJE, reach=REACH)
     assert [m["youtube_id"] for m in d["metricas"]] == ["a", "b"]
-    a = d["metricas"][0]
+    a, b = d["metricas"]
     assert a["ctr_pct"] == 5.2 and a["impressoes"] == 1000
     assert a["views"] == 300 and a["retencao_pct"] == 37.4 and a["assistido_s"] == 410.6
     assert a["duracao_s"] == 1200 and d["avisos"] == []
+    assert b["impressoes"] is None and b["ctr_pct"] is None
 
 
-def test_coletar_falha_de_impressoes_vira_aviso():
-    d, _ = _coletar(falha_impressoes=True)
-    assert len(d["avisos"]) == 1 and "impressões" in d["avisos"][0]
-    a = d["metricas"][0]
-    assert a["impressoes"] is None and a["ctr_pct"] is None and a["views"] == 300
+def test_coletar_dados_sem_reach_deixa_impressoes_nulas():
+    d, an_ = _coletar()
+    assert d["metricas"][0]["impressoes"] is None and d["metricas"][0]["ctr_pct"] is None
+    assert not any(c["metrics"].startswith("videoThumbnail") for c in an_.chamadas)
 
 
 def test_coletar_video_sem_view_nao_tem_trafego_nem_termos():
@@ -357,28 +356,202 @@ def test_painel_render_com_coleta(monkeypatch, banco):
     assert "DF:2" in txt
 
 
-class _AnImp:
-    """Analytics falso só pras métricas de impressão (CTR no formato pedido)."""
-    def __init__(self, linhas):
-        self.linhas = linhas
-
-    def reports(self):
-        return self
-
-    def query(self, **kw):
-        return _Exec({"rows": self.linhas})
-
-
-def test_impressoes_ctr_em_razao_vira_porcentagem():
-    r = an.impressoes(_AnImp([["v1", 1000, 0.052], ["v2", 50, 0.0]]), ["v1", "v2"], "2026-10-01", "2026-10-28")
-    assert r == {"v1": {"impressoes": 1000, "ctr_pct": 5.2}, "v2": {"impressoes": 50, "ctr_pct": 0.0}}
-
-
-def test_impressoes_ctr_ja_em_porcentagem_fica_como_veio():
-    r = an.impressoes(_AnImp([["v1", 1000, 5.2], ["v2", 80, 0.8]]), ["v1", "v2"], "2026-10-01", "2026-10-28")
-    assert r["v1"]["ctr_pct"] == 5.2 and r["v2"]["ctr_pct"] == 0.8
-
-
 def test_montar_pedido_corta_termo_longo():
     pedido = _editor.montar_pedido("t", "x", "p", "trans", [], ["a" * 200])
     assert "a" * _editor.MAX_TERMO in pedido and "a" * (_editor.MAX_TERMO + 1) not in pedido
+
+
+# --- Reach (Reporting API) -----------------------------------------------------------
+
+class FakeReporting:
+    """jobs().list / jobs().create / jobs().reports().list com páginas fixas."""
+    def __init__(self, jobs_paginas=None, reports_paginas=None):
+        self.jobs_paginas = jobs_paginas or [{}]
+        self.reports_paginas = reports_paginas or [{}]
+        self.criados, self.tokens_jobs, self.tokens_reports = [], [], []
+
+    def jobs(self):
+        return self
+
+    def reports(self):
+        return _Rep(self)
+
+    def list(self, pageToken=None, **kw):
+        self.tokens_jobs.append(pageToken)
+        return _Exec(self.jobs_paginas[0 if pageToken is None else int(pageToken)])
+
+    def create(self, body):
+        self.criados.append(body)
+        return _Exec({"id": "novo"})
+
+
+class _Rep:
+    def __init__(self, pai):
+        self.pai = pai
+
+    def list(self, jobId=None, pageToken=None):
+        self.pai.tokens_reports.append(pageToken)
+        return _Exec(self.pai.reports_paginas[0 if pageToken is None else int(pageToken)])
+
+
+def _rel(dia, criado, url=None):
+    return {"startTime": f"{dia}T08:00:00Z", "createTime": criado,
+            "downloadUrl": url or f"u-{dia}-{criado}"}
+
+
+CSV = ("date,channel_id,video_id,video_thumbnail_impressions,video_thumbnail_impressions_ctr\n"
+       "2026-10-20,c,a,100,0.10\n2026-10-20,c,a,300,0.02\n2026-10-20,c,b,0,0\n")
+
+
+def test_job_reach_acha_o_existente():
+    r = FakeReporting(jobs_paginas=[{"jobs": [{"id": "j0", "reportTypeId": "outro"},
+                                               {"id": "j1", "reportTypeId": an.REACH_TIPO}]}])
+    assert an.job_reach(r) == "j1" and r.criados == []
+
+
+def test_job_reach_pagina():
+    r = FakeReporting(jobs_paginas=[{"jobs": [{"id": "j0", "reportTypeId": "outro"}],
+                                     "nextPageToken": "1"},
+                                    {"jobs": [{"id": "j9", "reportTypeId": an.REACH_TIPO}]}])
+    assert an.job_reach(r) == "j9" and r.tokens_jobs == [None, "1"] and r.criados == []
+
+
+def test_job_reach_cria_quando_nao_existe():
+    r = FakeReporting(jobs_paginas=[{}])
+    assert an.job_reach(r) == "novo"
+    assert r.criados == [{"reportTypeId": an.REACH_TIPO, "name": an.REACH_JOB}]
+
+
+def test_relatorios_novos_backfill_mais_novo_vence():
+    r = FakeReporting(reports_paginas=[{"reports": [
+        _rel("2026-10-20", "2026-10-22T01:00:00Z", "velho"),
+        _rel("2026-10-20", "2026-10-25T01:00:00Z", "backfill"),
+        _rel("2026-10-21", "2026-10-22T02:00:00Z", "d21")]}])
+    novos = an.relatorios_novos(r, "j", {})
+    assert [(x["dia"], x["url"]) for x in novos] == [("2026-10-20", "backfill"), ("2026-10-21", "d21")]
+
+
+def test_relatorios_novos_ja_importado_nao_volta_e_backfill_posterior_volta():
+    r = FakeReporting(reports_paginas=[
+        {"reports": [_rel("2026-10-20", "2026-10-22T01:00:00Z"),
+                     _rel("2026-10-21", "2026-10-22T02:00:00Z", "novo21")], "nextPageToken": "1"},
+        {"reports": [_rel("2026-10-21", "2026-10-26T00:00:00Z", "back21")]}])
+    novos = an.relatorios_novos(r, "j", {"2026-10-20": "2026-10-22T01:00:00Z",
+                                         "2026-10-21": "2026-10-22T02:00:00Z"})
+    assert [(x["dia"], x["url"]) for x in novos] == [("2026-10-21", "back21")]
+    assert r.tokens_reports == [None, "1"]
+    r2 = FakeReporting(reports_paginas=[{"reports": [_rel("2026-10-20", "2026-10-22T01:00:00Z")]}])
+    assert an.relatorios_novos(r2, "j", {"2026-10-20": "2026-10-22T01:00:00Z"}) == []
+
+
+def test_ler_reach_soma_e_pondera_razao():
+    r = {x["youtube_id"]: x for x in an.ler_reach(CSV)}
+    assert r["a"] == {"youtube_id": "a", "impressoes": 400, "ctr_pct": 4.0}   # (10+6)/400
+    assert r["b"]["impressoes"] == 0 and r["b"]["ctr_pct"] == 0.0
+
+
+def test_ler_reach_ctr_ja_em_porcentagem():
+    csv_ = CSV.split("\n")[0] + "\n2026-10-20,c,a,100,10\n2026-10-20,c,a,300,2\n"
+    assert an.ler_reach(csv_)[0]["ctr_pct"] == 4.0
+
+
+def test_ler_reach_campos_vazios():
+    csv_ = CSV.split("\n")[0] + "\n2026-10-20,c,a,,\n"
+    assert an.ler_reach(csv_) == [{"youtube_id": "a", "impressoes": 0, "ctr_pct": 0.0}]
+
+
+def test_gravar_reach_substitui_o_dia_e_reach_por_video(banco):
+    assert _eventos.reach_por_video() == (None, {})
+    _eventos.gravar_reach("2026-10-20", "t1", [{"youtube_id": "a", "impressoes": 100, "ctr_pct": 10.0},
+                                               {"youtube_id": "z", "impressoes": 5, "ctr_pct": 0.0}])
+    _eventos.gravar_reach("2026-10-21", "t2", [{"youtube_id": "a", "impressoes": 300, "ctr_pct": 2.0}])
+    desde, r = _eventos.reach_por_video()
+    assert desde == "2026-10-20" and r["a"] == {"impressoes": 400, "ctr_pct": 4.0}
+    for _ in range(2):          # backfill do dia 20 (idempotente): z some, a muda
+        _eventos.gravar_reach("2026-10-20", "t3", [{"youtube_id": "a", "impressoes": 100, "ctr_pct": 2.0}])
+    _, r = _eventos.reach_por_video()
+    assert "z" not in r and r["a"] == {"impressoes": 400, "ctr_pct": 2.0}
+    assert len(banco("SELECT * FROM reach_dia")) == 2
+    assert _eventos.reach_importados() == {"2026-10-20": "t3", "2026-10-21": "t2"}
+
+
+def test_importar_reach_ponta_a_ponta(banco):
+    r = FakeReporting(jobs_paginas=[{"jobs": [{"id": "j", "reportTypeId": an.REACH_TIPO}]}],
+                      reports_paginas=[{"reports": [_rel("2026-10-20", "t1", "url20")]}])
+    baixados = []
+
+    def baixar(url):
+        baixados.append(url)
+        return CSV
+
+    assert an.importar_reach(r, baixar) == 1 and baixados == ["url20"]
+    desde, reach = _eventos.reach_por_video()
+    assert desde == "2026-10-20" and reach["a"]["impressoes"] == 400
+    assert an.importar_reach(r, baixar) == 0 and baixados == ["url20"]    # nada novo, não rebaixa
+
+
+def _mock_google(monkeypatch, reporting_falha=None):
+    import google.auth.transport.requests as req
+    import googleapiclient.discovery as disc
+    monkeypatch.setattr(an, "credenciais", lambda *a, **k: object())
+    monkeypatch.setattr(req, "AuthorizedSession", lambda creds: MagicMock())
+
+    def build(nome, versao, **kw):
+        if nome == "youtubereporting":
+            if reporting_falha:
+                raise reporting_falha
+            return FakeReporting(jobs_paginas=[{"jobs": [{"id": "j", "reportTypeId": an.REACH_TIPO}]}])
+        return FakeYT(VIDS) if nome == "youtube" else FakeAnalytics()
+    monkeypatch.setattr(disc, "build", build)
+
+
+def test_coletar_reach_falhando_vira_aviso_e_segue(banco, monkeypatch):
+    _mock_google(monkeypatch, RuntimeError("API desativada"))
+    _eventos.gravar_reach("2026-10-20", "t1", [{"youtube_id": "a", "impressoes": 100, "ctr_pct": 3.0}])
+    d = an.coletar(interativo=False)
+    assert any("Reach" in a and "API desativada" in a for a in d["avisos"])
+    assert d["reach_desde"] == "2026-10-20"
+    assert d["metricas"][0]["impressoes"] == 100 and d["metricas"][0]["ctr_pct"] == 3.0
+    assert banco("SELECT COUNT(*) AS n FROM metricas_video")[0]["n"] == 2
+    status = [e["status"] for e in banco("SELECT status FROM eventos WHERE etapa='17_analytics'")]
+    assert "aviso" in status and "ok" in status
+
+
+def test_coletar_sem_nenhum_relatorio(banco, monkeypatch):
+    _mock_google(monkeypatch)
+    d = an.coletar(interativo=False)
+    assert d["reach_desde"] is None and d["avisos"] == []
+    assert d["metricas"][0]["impressoes"] is None
+
+
+def test_painel_carregar_reach_desde(banco):
+    _eventos.gravar_analytics("2026-10-28", [{"youtube_id": "a", "views": 1}], [], [], [])
+    assert painel.carregar(_eventos.DB_PATH)["reach_desde"] is None      # tabela vazia
+    _eventos.gravar_reach("2026-10-20", "t", [{"youtube_id": "a", "impressoes": 1, "ctr_pct": 1.0}])
+    assert painel.carregar(_eventos.DB_PATH)["reach_desde"] == "2026-10-20"
+
+
+def test_painel_carregar_banco_sem_reach_dia(tmp_path):
+    db = tmp_path / "antigo.db"
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE metricas_video (data TEXT, youtube_id TEXT, views INT)")
+    con.execute("CREATE TABLE termos_canal (data TEXT, termo TEXT, views INT)")
+    con.execute("CREATE TABLE trafego_video (data TEXT, youtube_id TEXT, origem TEXT, views INT)")
+    con.execute("CREATE TABLE termos_busca (data TEXT, youtube_id TEXT, termo TEXT, views INT)")
+    con.execute("INSERT INTO metricas_video VALUES ('2026-10-28', 'a', 1)")
+    con.commit()
+    con.close()
+    d = painel.carregar(db)
+    assert d["data"] == "2026-10-28" and d["reach_desde"] is None
+
+
+def test_painel_caption_reach(monkeypatch, banco):
+    d, _ = _coletar()
+    _eventos.gravar_analytics(d["data"], d["metricas"], d["trafego"], d["termos"], d["termos_canal"])
+    cap = _captura(monkeypatch)
+    painel.aba_analytics(_eventos.DB_PATH)
+    assert "1º relatório Reach" in " ".join(cap)
+    _eventos.gravar_reach("2026-10-20", "t", [{"youtube_id": "a", "impressoes": 1, "ctr_pct": 1.0}])
+    cap = _captura(monkeypatch)
+    painel.aba_analytics(_eventos.DB_PATH)
+    assert "desde 20/10" in " ".join(cap)
