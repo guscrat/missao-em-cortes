@@ -9,17 +9,23 @@ Quem usa:
     leva cada um de volta pra transcrição, pro revisor conferir se o título bate com o trecho
 
 Vídeo final = [cold open] → [intro] → [card] → [corte, com os jump cuts do 04b se for o polido]
-→ [outro]. O capítulo 00:00 cobre cold open + intro + card + o começo do corte.
+→ [outro]. O capítulo 00:00 cobre cold open + intro + card + o começo do corte. A duração de
+cold open, intro, card e outro é MEDIDA nos arquivos que o 06 usou (ffprobe); as constantes
+abaixo só valem quando a medição falha (arquivo faltando, ffprobe fora do PATH).
 Custo: $0 (sem API).
 """
+import functools
 import json
 import re
+import subprocess
 from pathlib import Path
 
 import _fronteira as fr
 from _legenda import hhmmss_para_segundos
 from _paths import escolher_arquivo
 
+ROOT = Path(__file__).parent.parent
+# reserva, se o ffprobe falhar
 INTRO_S = 3.0          # = INTRO_SEGUNDOS do 06_montar
 CARD_S = 3.0           # = duração do card do 05_cards
 OUTRO_S = 5.0
@@ -64,6 +70,31 @@ def ancorar(palavras: list[dict], capitulos: list[dict], ini: float, fim: float)
     return saida, avisos
 
 
+@functools.lru_cache(maxsize=None)
+def _ffprobe(caminho: str, mtime: float) -> float | None:
+    try:
+        out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                              "-of", "default=noprint_wrappers=1:nokey=1", caminho],
+                             capture_output=True, text=True, timeout=30).stdout.strip()
+        d = float(out)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+    return d if d > 0 else None
+
+
+def duracao_s(video: Path | None) -> float | None:
+    """Duração real do arquivo (ffprobe), ou None se não existe ou não deu pra medir. Cache por
+    arquivo+mtime: a intro e o outro são os mesmos em todos os blocos."""
+    if not video or not video.is_file():
+        return None
+    return _ffprobe(str(video), video.stat().st_mtime)
+
+
+def _primeiro(pasta: Path, padrao: str) -> Path | None:
+    achados = sorted(pasta.glob(padrao)) if pasta.is_dir() else []
+    return achados[0] if achados else None
+
+
 class LinhaDoTempo:
     """Tempo da live ↔ tempo do vídeo final de um bloco, montado como o 06 monta."""
 
@@ -71,16 +102,34 @@ class LinhaDoTempo:
         nn = f"{bloco['id']:02d}"
         self.ini, self.fim = fr.janela(palavras, hhmmss_para_segundos(bloco["timestamp_inicio"]),
                                        hhmmss_para_segundos(bloco["timestamp_fim"]))
-        cold = 0.0
-        co = bloco.get("cold_open")
-        if co and any((pasta / "cortes").glob(f"cold_{nn}_*.mp4")):
-            a, z = fr.janela(palavras, hhmmss_para_segundos(co["timestamp_inicio"]),
-                             hhmmss_para_segundos(co["timestamp_fim"]),
-                             fr.COLD_PADDING_S, fr.COLD_PADDING_S)
-            cold = z - a
-        self.offset = cold + INTRO_S + CARD_S
         # o vídeo que sobe (09): o polido leva os jump cuts do polimento.json
         video = escolher_arquivo(pasta / "finalizados", f"video_{nn}_*.mp4")
+        self.reserva = []   # partes que não deu pra medir (valem as constantes/janela)
+
+        # cold open: o mesmo que o 06 usou (legendado se o vídeo é _legendado e ele existe)
+        cold_arq = None
+        if video and video.stem.endswith("_legendado"):
+            cold_arq = _primeiro(pasta / "cortes" / "legendados", f"cold_{nn}_*.mp4")
+        cold_arq = cold_arq or _primeiro(pasta / "cortes", f"cold_{nn}_*.mp4")
+        cold = 0.0
+        if cold_arq:
+            cold = duracao_s(cold_arq)
+            co = bloco.get("cold_open")
+            if cold is None and co:
+                self.reserva.append("cold open")
+                a, z = fr.janela(palavras, hhmmss_para_segundos(co["timestamp_inicio"]),
+                                 hhmmss_para_segundos(co["timestamp_fim"]),
+                                 fr.COLD_PADDING_S, fr.COLD_PADDING_S)
+                cold = z - a
+            cold = cold or 0.0
+        intro = (duracao_s(ROOT / "assets" / "intro_trim.mp4")
+                 or duracao_s(ROOT / "assets" / "intro_norm.mp4"))
+        card = duracao_s(pasta / "cards" / f"card_{nn}.mp4")
+        outro = duracao_s(ROOT / "assets" / "outro_norm.mp4")
+        for nome, medido in (("intro", intro), ("card", card), ("outro", outro)):
+            if medido is None:
+                self.reserva.append(nome)
+        self.offset = cold + (intro or INTRO_S) + (card or CARD_S)
         self.ivs = []
         if video and "_polido" in video.stem and (pasta / "polimento.json").exists():
             pol = json.loads((pasta / "polimento.json").read_text(encoding="utf-8"))
@@ -88,7 +137,7 @@ class LinhaDoTempo:
                               if pb.get("id") == bloco["id"]
                               for iv in pb.get("intervalos_remover", []))
         self.corte_s = (self.fim - self.ini) - sum(z - a for a, z in self.ivs)
-        self.total_s = self.offset + self.corte_s + OUTRO_S
+        self.total_s = self.offset + self.corte_s + (outro or OUTRO_S)
 
     def para_video(self, t_live: float) -> float:
         t = min(max(t_live - self.ini, 0.0), self.fim - self.ini)

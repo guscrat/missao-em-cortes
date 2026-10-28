@@ -151,8 +151,11 @@ def main(argv):
     for b in data["blocos"]:
         caps = []
         if b.get("capitulos"):
-            caps = _capitulos.linhas(b["capitulos"], _capitulos.LinhaDoTempo(pasta, b, palavras),
-                                     lambda t: corrigir_grafia(t, grafias))
+            tempo = _capitulos.LinhaDoTempo(pasta, b, palavras)
+            if tempo.reserva:
+                print(f"   [!] bloco {b['id']}: sem medir {', '.join(tempo.reserva)} (ffprobe) — "
+                      f"capítulos com a duração padrão; confira no YouTube")
+            caps = _capitulos.linhas(b["capitulos"], tempo, lambda t: corrigir_grafia(t, grafias))
             if not caps:
                 print(f"   bloco {b['id']}: sem capítulos (corte < {_capitulos.MIN_CORTE_MIN:g} min "
                       f"ou < {_capitulos.MIN_CAPITULOS} capítulos de {_capitulos.MIN_CAPITULO_S:g}s+)")

@@ -27,7 +27,7 @@ OUTRO_NORM = ROOT / "assets" / "outro_norm.mp4"
 INTRO_TRIM = ROOT / "assets" / "intro_trim.mp4"
 
 # Encurta a intro pra prender mais cedo (asset do Canva tem 5s). 0 = não cortar.
-INTRO_SEGUNDOS = 3.0   # mudou? ajuste _capitulos.INTRO_S (tempo dos capítulos na descrição)
+INTRO_SEGUNDOS = 3.0
 
 CARDS_DIR  = PASTA / "cards"
 CORTES_DIR = PASTA / "cortes"
