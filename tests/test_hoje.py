@@ -134,6 +134,37 @@ def test_scripts_frescos_helper_que_importa_nome_novo_de_outro_helper(tmp_path, 
             sys.modules.pop(n, None)
 
 
+def test_scripts_frescos_ignora_sem_file_e_fora_de_scripts(tmp_path, monkeypatch):
+    """Módulo sem __file__ (namespace/builtin) e módulo de fora de scripts/ não são recarregados."""
+    import sys
+    import types
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    (scripts / "13_curador.py").write_text("V = 0\n", encoding="utf-8")
+    fora = tmp_path / "outra" / "_zz_fora.py"
+    fora.parent.mkdir()
+    fora.write_text("V = 1\n", encoding="utf-8")
+    sem_file = types.ModuleType("_zz_sem_file")
+    fora_mod = types.ModuleType("_zz_fora")
+    fora_mod.__file__ = str(fora)
+    fantasma = types.ModuleType("_zz_fantasma")
+    fantasma.__file__ = str(scripts / "_zz_fantasma.py")   # arquivo não existe
+    for m in (sem_file, fora_mod, fantasma):
+        m.MARCA = True
+        monkeypatch.setitem(sys.modules, m.__name__, m)
+    monkeypatch.delitem(sys.modules, "13_curador", raising=False)
+    monkeypatch.syspath_prepend(str(scripts))
+    monkeypatch.setattr(hoje, "ROOT", tmp_path)
+    monkeypatch.setattr(hoje, "MODULOS_SCRIPTS", ["13_curador"])
+    monkeypatch.setattr(hoje, "_MTIMES", {})
+    try:
+        hoje.scripts_frescos()
+        assert all(getattr(sys.modules[n], "MARCA", False)
+                   for n in ("_zz_sem_file", "_zz_fora", "_zz_fantasma"))
+    finally:
+        sys.modules.pop("13_curador", None)
+
+
 def test_scripts_frescos_sem_progresso_levanta(tmp_path, monkeypatch):
     """Helper que importa nome que não existe em lugar nenhum: não fica em loop, o erro sobe
     (e o estoque() mostra o cartão de erro)."""
