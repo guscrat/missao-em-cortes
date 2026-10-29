@@ -89,6 +89,9 @@ def longos_no_dia(dia: date) -> int:
                                  "AND status IN ('agendado', 'publicado')").fetchall()
         finally:
             con.close()
-    except Exception:  # noqa: BLE001 — banco é best-effort
+    except Exception as e:  # noqa: BLE001 — banco é best-effort
+        import sys
+        print(f"[aviso] não li a agenda de {dia:%d/%m} no banco ({e}): considerando vazia",
+              file=sys.stderr)
         return 0
     return sum(1 for (p,) in linhas if (q := _local(p)) is not None and q.date() == dia)

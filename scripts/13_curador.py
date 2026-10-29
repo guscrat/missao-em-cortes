@@ -727,6 +727,7 @@ def main(argv: list[str]) -> int:
     marcar_etapa("lendo os canais", inicio=True)
     evento(None, "curador_rodada", "inicio", agente="curador")
     try:
+        destravar_zumbis()
         codigo = _rodada(cfg, dry_run, sem_pipeline, forcar)
     except Exception as e:  # noqa: BLE001 — registra pro painel e deixa o Traceback no log
         evento(None, "curador_rodada", "falha", agente="curador",
@@ -822,6 +823,16 @@ def processar_pedidos(cfg: dict, estado: dict, rodada: dict) -> None:
         processar_escolhido(cfg, estado, s["video_id"], rodada, "pedido do Gu no painel")
 
 
+def destravar_zumbis() -> list[str]:
+    """Quem tem a trava na mão é o único que processa: sugestão ainda 'processando' é de um
+    processo que caiu no meio (PC desligou, kill). Vira 'falhou' pra voltar o botão no painel."""
+    zumbis = [s["video_id"] for s in listar_sugestoes(["processando"])]
+    for vid in zumbis:
+        gravar_sugestao(vid, status="falhou",
+                        mensagem="interrompido no meio (o processo caiu); tente de novo")
+    return zumbis
+
+
 def _rodada_vazia(agora: str) -> dict:
     return {"quando": agora, "custo": 0.0, "escolhidos": [], "fila": [], "recusados": [],
             "processados": []}
@@ -844,6 +855,7 @@ def pedir(cfg: dict, video_id: str) -> int:
     codigo = None
     marcar_etapa("pedido do painel", inicio=True)
     try:
+        destravar_zumbis()
         rodada = _rodada_vazia(datetime.now().isoformat(timespec="seconds"))
         processar_pedidos(cfg, ler_estado(), rodada)
         codigo = 0 if all(p["ok"] for p in rodada["processados"]) else 1

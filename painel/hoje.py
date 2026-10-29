@@ -634,7 +634,8 @@ def aba_hoje(blocos: pd.DataFrame, tarefas: pd.DataFrame, est: dict | None, cust
 
     clicados = []
     if sugestoes is not None:
-        ocupado = bool(ler_json(STATE / "curador_progresso.json").get("rodando"))
+        prog = ler_json(STATE / "curador_progresso.json")
+        ocupado = bool(prog.get("rodando")) and _pid_vivo(prog.get("pid"))   # morto = libera "Disparar"
         clicados = secao_sugestoes(sugestoes, ocupado)
 
     c1, c2 = st.columns([3, 2])
