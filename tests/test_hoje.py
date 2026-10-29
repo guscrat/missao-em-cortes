@@ -4,6 +4,7 @@ import os
 from datetime import date, datetime, timezone
 
 import pandas as pd
+import pytest
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
@@ -73,6 +74,120 @@ def test_scripts_frescos_recarrega_quando_o_arquivo_muda(tmp_path, monkeypatch):
         assert sys.modules["zz_dep"].V == 20          # dependente recarregou
     finally:
         for n in ("zz_base", "zz_dep", "13_curador"):
+            sys.modules.pop(n, None)
+
+
+def test_scripts_frescos_recarrega_helper_fora_da_lista(tmp_path, monkeypatch):
+    """O bug de 28/10: _eventos ganhou em_alta_atual num merge, o 13_curador recarregado
+    importava ela, mas o _eventos da memória era o velho → ImportError e cartão de erro."""
+    import sys
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    helper = scripts / "_zz_helper.py"
+    helper.write_text("def velha(): return 1\n", encoding="utf-8")
+    cur = scripts / "13_curador.py"
+    cur.write_text("from _zz_helper import velha\n", encoding="utf-8")
+    monkeypatch.delitem(sys.modules, "13_curador", raising=False)
+    monkeypatch.syspath_prepend(str(scripts))
+    monkeypatch.setattr(hoje, "ROOT", tmp_path)
+    monkeypatch.setattr(hoje, "MODULOS_SCRIPTS", ["13_curador"])
+    monkeypatch.setattr(hoje, "_MTIMES", {})
+    try:
+        hoje.scripts_frescos()
+        helper.write_text("def velha(): return 1\ndef nova(): return 2\n", encoding="utf-8")
+        cur.write_text("from _zz_helper import velha, nova\n", encoding="utf-8")
+        for f in (helper, cur):
+            st_ = f.stat()
+            os.utime(f, (st_.st_atime, st_.st_mtime + 10))
+        assert hoje.scripts_frescos().nova() == 2
+    finally:
+        for n in ("_zz_helper", "13_curador"):
+            sys.modules.pop(n, None)
+
+
+def test_scripts_frescos_helper_que_importa_nome_novo_de_outro_helper(tmp_path, monkeypatch):
+    """_zz_a (vem antes no alfabeto) importa nome novo de _zz_b: o 1º reload dá ImportError
+    e ele tenta de novo depois que o _zz_b recarregou."""
+    import sys
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    a, b = scripts / "_zz_a.py", scripts / "_zz_b.py"
+    b.write_text("X = 1\n", encoding="utf-8")
+    a.write_text("from _zz_b import X\n", encoding="utf-8")
+    (scripts / "13_curador.py").write_text("import _zz_a\n", encoding="utf-8")
+    monkeypatch.delitem(sys.modules, "13_curador", raising=False)
+    monkeypatch.syspath_prepend(str(scripts))
+    monkeypatch.setattr(hoje, "ROOT", tmp_path)
+    monkeypatch.setattr(hoje, "MODULOS_SCRIPTS", ["13_curador"])
+    monkeypatch.setattr(hoje, "_MTIMES", {})
+    try:
+        hoje.scripts_frescos()
+        b.write_text("X = 1\nY = 2\n", encoding="utf-8")
+        a.write_text("from _zz_b import X, Y\n", encoding="utf-8")
+        for f in (a, b):
+            st_ = f.stat()
+            os.utime(f, (st_.st_atime, st_.st_mtime + 10))
+        hoje.scripts_frescos()
+        assert sys.modules["_zz_a"].Y == 2
+    finally:
+        for n in ("_zz_a", "_zz_b", "13_curador"):
+            sys.modules.pop(n, None)
+
+
+def test_scripts_frescos_ignora_sem_file_e_fora_de_scripts(tmp_path, monkeypatch):
+    """Módulo sem __file__ (namespace/builtin) e módulo de fora de scripts/ não são recarregados."""
+    import sys
+    import types
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    (scripts / "13_curador.py").write_text("V = 0\n", encoding="utf-8")
+    fora = tmp_path / "outra" / "_zz_fora.py"
+    fora.parent.mkdir()
+    fora.write_text("V = 1\n", encoding="utf-8")
+    sem_file = types.ModuleType("_zz_sem_file")
+    fora_mod = types.ModuleType("_zz_fora")
+    fora_mod.__file__ = str(fora)
+    fantasma = types.ModuleType("_zz_fantasma")
+    fantasma.__file__ = str(scripts / "_zz_fantasma.py")   # arquivo não existe
+    for m in (sem_file, fora_mod, fantasma):
+        m.MARCA = True
+        monkeypatch.setitem(sys.modules, m.__name__, m)
+    monkeypatch.delitem(sys.modules, "13_curador", raising=False)
+    monkeypatch.syspath_prepend(str(scripts))
+    monkeypatch.setattr(hoje, "ROOT", tmp_path)
+    monkeypatch.setattr(hoje, "MODULOS_SCRIPTS", ["13_curador"])
+    monkeypatch.setattr(hoje, "_MTIMES", {})
+    try:
+        hoje.scripts_frescos()
+        assert all(getattr(sys.modules[n], "MARCA", False)
+                   for n in ("_zz_sem_file", "_zz_fora", "_zz_fantasma"))
+    finally:
+        sys.modules.pop("13_curador", None)
+
+
+def test_scripts_frescos_sem_progresso_levanta(tmp_path, monkeypatch):
+    """Helper que importa nome que não existe em lugar nenhum: não fica em loop, o erro sobe
+    (e o estoque() mostra o cartão de erro)."""
+    import sys
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    a = scripts / "_zz_quebrado.py"
+    a.write_text("V = 1\n", encoding="utf-8")
+    (scripts / "13_curador.py").write_text("import _zz_quebrado\n", encoding="utf-8")
+    monkeypatch.delitem(sys.modules, "13_curador", raising=False)
+    monkeypatch.syspath_prepend(str(scripts))
+    monkeypatch.setattr(hoje, "ROOT", tmp_path)
+    monkeypatch.setattr(hoje, "MODULOS_SCRIPTS", ["13_curador"])
+    monkeypatch.setattr(hoje, "_MTIMES", {})
+    try:
+        hoje.scripts_frescos()
+        a.write_text("from os import nao_existe\n", encoding="utf-8")
+        st_ = a.stat()
+        os.utime(a, (st_.st_atime, st_.st_mtime + 10))
+        with pytest.raises(ImportError):
+            hoje.scripts_frescos()
+    finally:
+        for n in ("_zz_quebrado", "13_curador"):
             sys.modules.pop(n, None)
 
 
