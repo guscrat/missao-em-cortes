@@ -353,3 +353,21 @@ def test_disparar_processamento_devolve_erro_se_todas_falham(monkeypatch):
         raise OSError("sem permissão")
     monkeypatch.setattr(hoje.subprocess, "Popen", popen)
     assert "sem permissão" in hoje.disparar_processamento("abc")
+
+
+# --- sugestão presa em "processando" (processo caiu no meio) ------------------------------
+
+def test_destravar_zumbis_volta_processando_pra_falhou(banco):
+    ev.gravar_sugestao("z", status="processando", titulo="Live Z")
+    ev.gravar_sugestao("ok", status="sugerida", titulo="Live Ok")
+    assert cu.destravar_zumbis() == ["z"]
+    por_id = {s["video_id"]: s for s in ev.listar_sugestoes()}
+    assert por_id["z"]["status"] == "falhou" and "interrompido" in por_id["z"]["mensagem"]
+    assert por_id["ok"]["status"] == "sugerida"
+    assert ev.pedir_sugestao("z")                      # "Tentar de novo" volta a funcionar
+
+
+def test_rodada_destrava_zumbi_ao_pegar_a_trava(raiz, rodada, banco):
+    ev.gravar_sugestao("z", status="processando", titulo="Live Z")
+    assert cu.main([]) == 0
+    assert ev.listar_sugestoes(["falhou"])[0]["video_id"] == "z"
