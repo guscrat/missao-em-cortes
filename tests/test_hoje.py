@@ -76,6 +76,34 @@ def test_scripts_frescos_recarrega_quando_o_arquivo_muda(tmp_path, monkeypatch):
             sys.modules.pop(n, None)
 
 
+def test_scripts_frescos_recarrega_helper_fora_da_lista(tmp_path, monkeypatch):
+    """O bug de 28/10: _eventos ganhou em_alta_atual num merge, o 13_curador recarregado
+    importava ela, mas o _eventos da memória era o velho → ImportError e cartão de erro."""
+    import sys
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    helper = scripts / "_zz_helper.py"
+    helper.write_text("def velha(): return 1\n", encoding="utf-8")
+    cur = scripts / "13_curador.py"
+    cur.write_text("from _zz_helper import velha\n", encoding="utf-8")
+    monkeypatch.delitem(sys.modules, "13_curador", raising=False)
+    monkeypatch.syspath_prepend(str(scripts))
+    monkeypatch.setattr(hoje, "ROOT", tmp_path)
+    monkeypatch.setattr(hoje, "MODULOS_SCRIPTS", ["13_curador"])
+    monkeypatch.setattr(hoje, "_MTIMES", {})
+    try:
+        hoje.scripts_frescos()
+        helper.write_text("def velha(): return 1\ndef nova(): return 2\n", encoding="utf-8")
+        cur.write_text("from _zz_helper import velha, nova\n", encoding="utf-8")
+        for f in (helper, cur):
+            st_ = f.stat()
+            os.utime(f, (st_.st_atime, st_.st_mtime + 10))
+        assert hoje.scripts_frescos().nova() == 2
+    finally:
+        for n in ("_zz_helper", "13_curador"):
+            sys.modules.pop(n, None)
+
+
 # ── decisoes ───────────────────────────────────────────────────────────────
 
 def test_decisoes_tarefas_e_quarentena():

@@ -95,8 +95,20 @@ def no_ar(blocos: pd.DataFrame, dia: date) -> pd.DataFrame:
 def scripts_frescos() -> object:
     """13_curador com a versão do disco. O painel fica dias no ar e o Streamlit só recarrega
     o que muda em painel/: sem isto, depois de um merge o Curador das 17h (processo novo)
-    e o painel (módulo antigo na memória) passam a contar diferente. Ordem = dependência."""
+    e o painel (módulo antigo na memória) passam a contar diferente. Ordem = dependência.
+    Antes, os helpers de scripts/ já carregados que mudaram (ex.: _eventos ganhou função
+    nova e o 13_curador recarregado importa ela); na 1ª chamada recarrega todos uma vez."""
+    pasta = (ROOT / "scripts").resolve()
     mudou = False
+    for nome in sorted(n for n in list(sys.modules) if n not in MODULOS_SCRIPTS):
+        arquivo = getattr(sys.modules[nome], "__file__", None)
+        if not arquivo or Path(arquivo).resolve().parent != pasta:
+            continue
+        mtime = Path(arquivo).stat().st_mtime
+        if _MTIMES.get(nome) != mtime:
+            importlib.reload(sys.modules[nome])
+            mudou = True
+        _MTIMES[nome] = mtime
     for nome in MODULOS_SCRIPTS:
         mtime = (ROOT / "scripts" / f"{nome}.py").stat().st_mtime
         modulo = sys.modules.get(nome)
