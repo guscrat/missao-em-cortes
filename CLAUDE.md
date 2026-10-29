@@ -66,7 +66,7 @@ Vídeo final: `[Cold open 15-30s] → [Intro 3s] → [Card 3s] → [Corte 8-30mi
 
 Overlays da live saem por **zoom por fonte** (`config/zoom.json`); stem sem entrada roda sem zoom e avisa. Calibrar: `calibrar_zoom.py <video> --salvar=<stem>`, depois `pipeline.py <stem> --desde=4`. Detalhes em `docs/pipeline.md`.
 
-Agentes off-pipeline (detalhes nas skills): Curador 13 às 17h decide o que processar · revisor 11 aprova/quarentena/descarta · 10 gera Shorts · 09 sobe longos e Shorts (`--shorts`, **travado até a auditoria**; dia D: `dia_d.py` + skill) · 12/14/15/17 só leem o canal (15 = placar do YPP; 17 = Analytics por vídeo no banco + termos de busca da semana pro Editor + vídeos antigos em alta (30+ dias, 3x as views semanais) com o tema, que o Curador prioriza; os dois 1x/dia pelo Curador) · 16 registra o resultado do "Testar e comparar" das thumbs (modo `ab`: a/b/c = 3 clássicas com frames e textos diferentes; colagem pausada).
+Agentes off-pipeline (detalhes nas skills): Curador 13 às 17h **sugere** (`curador_modo: sugerir`; o Gu escolhe no painel com o botão Processar; só processa sozinho se o canal ficaria sem longo amanhã) · revisor 11 aprova/quarentena/descarta · 10 gera Shorts · 09 sobe longos e Shorts (`--shorts`, **travado até a auditoria**; dia D: `dia_d.py` + skill) · 12/14/15/17 só leem o canal (15 = placar do YPP; 17 = Analytics por vídeo no banco + termos de busca da semana pro Editor + vídeos antigos em alta (30+ dias, 3x as views semanais) com o tema, que o Curador prioriza; os dois 1x/dia pelo Curador) · 16 registra o resultado do "Testar e comparar" das thumbs (modo `ab`: a/b/c = 3 clássicas com frames e textos diferentes; colagem pausada).
 
 ## Regras transversais
 
