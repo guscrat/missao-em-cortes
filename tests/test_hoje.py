@@ -4,6 +4,7 @@ import os
 from datetime import date, datetime, timezone
 
 import pandas as pd
+import pytest
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
@@ -101,6 +102,61 @@ def test_scripts_frescos_recarrega_helper_fora_da_lista(tmp_path, monkeypatch):
         assert hoje.scripts_frescos().nova() == 2
     finally:
         for n in ("_zz_helper", "13_curador"):
+            sys.modules.pop(n, None)
+
+
+def test_scripts_frescos_helper_que_importa_nome_novo_de_outro_helper(tmp_path, monkeypatch):
+    """_zz_a (vem antes no alfabeto) importa nome novo de _zz_b: o 1º reload dá ImportError
+    e ele tenta de novo depois que o _zz_b recarregou."""
+    import sys
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    a, b = scripts / "_zz_a.py", scripts / "_zz_b.py"
+    b.write_text("X = 1\n", encoding="utf-8")
+    a.write_text("from _zz_b import X\n", encoding="utf-8")
+    (scripts / "13_curador.py").write_text("import _zz_a\n", encoding="utf-8")
+    monkeypatch.delitem(sys.modules, "13_curador", raising=False)
+    monkeypatch.syspath_prepend(str(scripts))
+    monkeypatch.setattr(hoje, "ROOT", tmp_path)
+    monkeypatch.setattr(hoje, "MODULOS_SCRIPTS", ["13_curador"])
+    monkeypatch.setattr(hoje, "_MTIMES", {})
+    try:
+        hoje.scripts_frescos()
+        b.write_text("X = 1\nY = 2\n", encoding="utf-8")
+        a.write_text("from _zz_b import X, Y\n", encoding="utf-8")
+        for f in (a, b):
+            st_ = f.stat()
+            os.utime(f, (st_.st_atime, st_.st_mtime + 10))
+        hoje.scripts_frescos()
+        assert sys.modules["_zz_a"].Y == 2
+    finally:
+        for n in ("_zz_a", "_zz_b", "13_curador"):
+            sys.modules.pop(n, None)
+
+
+def test_scripts_frescos_sem_progresso_levanta(tmp_path, monkeypatch):
+    """Helper que importa nome que não existe em lugar nenhum: não fica em loop, o erro sobe
+    (e o estoque() mostra o cartão de erro)."""
+    import sys
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    a = scripts / "_zz_quebrado.py"
+    a.write_text("V = 1\n", encoding="utf-8")
+    (scripts / "13_curador.py").write_text("import _zz_quebrado\n", encoding="utf-8")
+    monkeypatch.delitem(sys.modules, "13_curador", raising=False)
+    monkeypatch.syspath_prepend(str(scripts))
+    monkeypatch.setattr(hoje, "ROOT", tmp_path)
+    monkeypatch.setattr(hoje, "MODULOS_SCRIPTS", ["13_curador"])
+    monkeypatch.setattr(hoje, "_MTIMES", {})
+    try:
+        hoje.scripts_frescos()
+        a.write_text("from os import nao_existe\n", encoding="utf-8")
+        st_ = a.stat()
+        os.utime(a, (st_.st_atime, st_.st_mtime + 10))
+        with pytest.raises(ImportError):
+            hoje.scripts_frescos()
+    finally:
+        for n in ("_zz_quebrado", "13_curador"):
             sys.modules.pop(n, None)
 
 

@@ -97,18 +97,31 @@ def scripts_frescos() -> object:
     o que muda em painel/: sem isto, depois de um merge o Curador das 17h (processo novo)
     e o painel (módulo antigo na memória) passam a contar diferente. Ordem = dependência.
     Antes, os helpers de scripts/ já carregados que mudaram (ex.: _eventos ganhou função
-    nova e o 13_curador recarregado importa ela); na 1ª chamada recarrega todos uma vez."""
+    nova e o 13_curador recarregado importa ela). Na 1ª chamada recarrega todos uma vez, de
+    propósito: o painel pode já estar no ar com módulo velho. Sem ordem de dependência entre
+    helpers: quem dá ImportError (importa nome novo de helper ainda velho) tenta de novo
+    na passada seguinte; sem progresso numa passada, o erro sobe."""
     pasta = (ROOT / "scripts").resolve()
-    mudou = False
+    pendentes = {}
     for nome in sorted(n for n in list(sys.modules) if n not in MODULOS_SCRIPTS):
         arquivo = getattr(sys.modules[nome], "__file__", None)
-        if not arquivo or Path(arquivo).resolve().parent != pasta:
+        if not arquivo or Path(arquivo).resolve().parent != pasta or not Path(arquivo).exists():
             continue
         mtime = Path(arquivo).stat().st_mtime
         if _MTIMES.get(nome) != mtime:
-            importlib.reload(sys.modules[nome])
-            mudou = True
-        _MTIMES[nome] = mtime
+            pendentes[nome] = mtime
+    mudou = bool(pendentes)
+    while pendentes:
+        antes, erro = len(pendentes), None
+        for nome in list(pendentes):
+            try:
+                importlib.reload(sys.modules[nome])
+            except ImportError as e:
+                erro = e
+                continue
+            _MTIMES[nome] = pendentes.pop(nome)
+        if len(pendentes) == antes:
+            raise erro
     for nome in MODULOS_SCRIPTS:
         mtime = (ROOT / "scripts" / f"{nome}.py").stat().st_mtime
         modulo = sys.modules.get(nome)
