@@ -14,6 +14,7 @@ _spec.loader.exec_module(cu)
 
 HOJE = date.today()
 CFG = {"dias": 3, "duracao_min": 20, "duracao_max": 240, "max_por_dia": 1, "por_canal": 8,
+       "curador_modo": "automatico",
        "canais": [{"nome": "Renan Santos", "url": "https://www.youtube.com/@renan",
                    "prefixo": "renan", "zoom": "1696:954:16:0"},
                   {"nome": "Kim", "url": "https://www.youtube.com/@kim", "prefixo": "kim",

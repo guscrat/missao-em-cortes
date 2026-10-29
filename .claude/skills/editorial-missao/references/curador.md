@@ -4,6 +4,17 @@
 
 `agente="curador"`, off-pipeline, roda **1x por dia às 17h**. **Verifica** os canais de `config/canais.json` (abas streams + videos) todo dia, mas só **processa** quando falta estoque.
 
+## Modo sugerir (padrão desde 29/10/2026, decisão do Gu)
+
+`config/canais.json` → `"curador_modo": "sugerir" | "automatico"` (`_paths.curador_modo()`; ausente ou outro valor = `sugerir`, o que não gasta sem o Gu).
+
+- **sugerir:** a rodada das 17h lê, avalia e prioriza como sempre, mas **não baixa nem processa**. O que vale vira sugestão no banco (tabela `sugestoes`: título, canal, duração, prioridade, motivo, link; status `sugerida → pedida → processando → processada | falhou`, `expirada` com a fila). O Gu escolhe no painel (aba Hoje → **Sugestões do Curador** → **Processar**), que dispara `13_curador.py --processar=<video_id>` pelo `curador_oculto` (sem janela, log em `state/curador_pedidos.log`). Esse processo pega a mesma trava (`state/curador.lock`), espera outro processamento terminar (`esperar_livre`), checa o orçamento da live e processa os pedidos na ordem do clique, um por vez. Trava ocupada (rodada das 17h no meio) → sai com 75 e a rodada processa os pedidos antes de terminar. O resumo do dia lista as sugestões em aberto.
+- **Estoque baixo** (cobertura < `dias_minimos`): só alerta, no painel e no resumo ("estoque baixo, escolha uma sugestão"). Não processa sozinho.
+- **Rede de segurança:** se na rodada não houver nenhum longo pronto pra publicar (`aprovado`) nem agendado pra amanhã (`_cobertura.longos_no_dia`), o Curador processa sozinho a sugestão de maior prioridade (mesma trava e orçamento) e grava o evento `curador_rede` → alerta "Curador processou sozinho: processei X porque o canal ficaria sem vídeo amanhã" no painel (24h) e no resumo. Com pedido do Gu pendente, a rede não dispara (o pedido cobre).
+- **Modo evento** no sugerir só prioriza o tema; não processa sozinho.
+- **Link direto** continua valendo (`01_baixar` + `pipeline.py` à mão): sugestão cujo vídeo já virou stem sai da fila (`processado por link direto`).
+- `--forcar` processa 1 da fila nos dois modos. **automatico:** o fluxo abaixo, como antes.
+
 ## 1. Achar vídeos novos
 
 Só os dos últimos `dias` (padrão 3) que nunca foram vistos. "Visto" = id em `inputs/*.url`, no banco ou já avaliado em `state/curadoria.json`. Antes de gastar, filtro grátis: duração entre `duracao_min` e `duracao_max` (20-240 min) e nada de live em andamento/agendada (volta no dia seguinte).

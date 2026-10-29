@@ -2,7 +2,9 @@
 
 Responde em 10 segundos: o que vai ao ar hoje/amanhã, quantos dias de estoque tem, o que
 espera decisão, se a auditoria do YouTube saiu, quanto do orçamento do mês já foi e o
-placar do canal rumo ao YPP. Só LÊ: banco, config/ e state/.
+placar do canal rumo ao YPP. Só LÊ: banco, config/ e state/. A única ação é o botão
+"Processar" das Sugestões do Curador: dispara o 13 (--processar=ID) num processo à parte,
+e é ele quem grava no banco.
 
 Alertas (faixa acima das abas, aparece em qualquer aba):
   - Curador rodando agora (desde HH:MM — etapa X) ou parado no meio (processo sumiu)
@@ -10,7 +12,8 @@ Alertas (faixa acima das abas, aparece em qualquer aba):
   - erro de download (01_baixar falhou dentro do Curador)
   - token do YouTube/Analytics ausente, sem refresh_token ou recusado (invalid_grant)
   - cota diária do YouTube perto do limite (state/cota_youtube.json, gravado pelo 09)
-  - estoque abaixo de dias_minimos e nada agendado pra amanhã
+  - estoque abaixo de dias_minimos (modo sugerir: "escolha uma sugestão") e nada agendado pra amanhã
+  - Curador processou sozinho pela rede de segurança (evento curador_rede, últimas 24h)
   - custo de API de uma live acima de alerta_live_usd (US$ 1); acima de trava_live_usd (US$ 2)
     os scripts pagos param (scripts/_custo.py) até o Gu liberar
 
@@ -23,6 +26,7 @@ import importlib
 import json
 import os
 import re
+import subprocess
 import sys
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
@@ -48,6 +52,8 @@ FOLGA_CURADOR = timedelta(hours=1)            # 18h sem rodada de hoje = não ro
 JANELA_FALHA = timedelta(hours=48)
 JANELA_TOKEN = timedelta(days=7)
 JANELA_CUSTO_LIVE = timedelta(days=7)        # live sem gasto há mais que isso sai do alerta
+JANELA_REDE = timedelta(hours=24)            # aviso "processei X porque o canal ficaria sem vídeo"
+LOG_PEDIDOS = STATE / "curador_pedidos.log"  # saída do botão Processar (o curador.log é das 17h)
 TOKENS = [("YouTube (publicar)", "youtube_token.json"), ("YouTube Analytics", "analytics_token.json")]
 RE_TOKEN = re.compile(r"invalid_grant|RefreshError|token.*(expir|venc|revog|inv[aá]lid)|"
                       r"unauthorized", re.I)
@@ -141,7 +147,7 @@ def estoque() -> dict | None:
         curador = scripts_frescos()
         cfg = curador.carregar_config()
         est = curador.calcular_estoque(cfg)
-        return {**est, "minimo": cfg["estoque"]["dias_minimos"]}
+        return {**est, "minimo": cfg["estoque"]["dias_minimos"], "modo": curador.curador_modo(cfg)}
     except Exception as e:  # noqa: BLE001 — painel nunca cai por causa do estoque
         print(f"[aviso] não calculei o estoque ({e})", file=sys.stderr)
         return None
@@ -200,6 +206,19 @@ def _alerta_pulado(eventos: pd.DataFrame, agora: pd.Timestamp) -> list[tuple[str
     return [("aviso", "Curador pulou o processamento", f"{msg} ({ultimo['ts']:%d/%m %Hh%M})")]
 
 
+def _alerta_rede(eventos: pd.DataFrame, agora: pd.Timestamp) -> list[tuple[str, str, str]]:
+    """Modo sugerir: o Curador processou sozinho porque o canal ficaria sem longo amanhã."""
+    if eventos.empty:
+        return []
+    ev = eventos[(eventos["agente"] == "curador") & (eventos["etapa"] == "curador_rede")
+                 & (eventos["ts"] >= agora - JANELA_REDE)]
+    if ev.empty:
+        return []
+    ultimo = ev.sort_values("ts").iloc[-1]
+    msg = ultimo["mensagem"] if isinstance(ultimo["mensagem"], str) else ""
+    return [("aviso", "Curador processou sozinho", f"{msg} ({ultimo['ts']:%d/%m %Hh%M})")]
+
+
 def alertas_curador(eventos: pd.DataFrame, agora: pd.Timestamp,
                     log: Path | None = None) -> list[tuple[str, str, str]]:
     log = log or STATE / "curador.log"
@@ -217,6 +236,7 @@ def alertas_curador(eventos: pd.DataFrame, agora: pd.Timestamp,
             alvo = f" em {f.stem}" if isinstance(f.stem, str) and f.stem else ""
             saida.append(("erro", "Curador falhou", f"{msg or f.etapa}{alvo} ({quando})"))
     saida += _alerta_pulado(eventos, agora)
+    saida += _alerta_rede(eventos, agora)
     try:
         rodou = datetime.fromtimestamp(log.stat().st_mtime)
         linhas = log.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -329,7 +349,9 @@ def alertas_operacao(est: dict | None, amanha: pd.DataFrame) -> list[tuple[str, 
         saida.append(("aviso", "Estoque baixo",
                       (f"canal coberto só até {ate:%d/%m}" if ate else "nada agendado nem pronto")
                       + f" ({est['dias']:.1f} dia(s), mínimo {est['minimo']}): "
-                      "o Curador processa um vídeo novo na próxima rodada (17h)."))
+                      + ("o Curador processa um vídeo novo na próxima rodada (17h)."
+                         if est.get("modo") == "automatico" else
+                         "estoque baixo, escolha uma sugestão (aba Hoje → Sugestões do Curador).")))
     if amanha.empty:
         saida.append(("aviso", "Nada agendado pra amanhã",
                       "nenhum vídeo com data de amanhã no YouTube."))
@@ -365,6 +387,77 @@ def faixa_alertas(alertas: list[tuple[str, str, str]]) -> None:
     itens = "".join(f"<div class='al {nivel}'><b>{html.escape(titulo)}</b> · {html.escape(detalhe)}</div>"
                     for nivel, titulo, detalhe in alertas)
     st.markdown(f"{CSS}<div class='alertas'>{itens}</div>", unsafe_allow_html=True)
+
+
+# ── sugestões do Curador (modo sugerir) ──────────────────────────────────
+
+def disparar_processamento(video_id: str) -> str | None:
+    """Botão Processar: roda o 13 --processar=ID pelo curador_oculto (sem janela, saída no
+    state/curador_pedidos.log, falha vira alerta), solto do painel: fechar o painel não
+    mata o processamento. None = disparou; senão, o erro. Trava de um processamento por
+    vez e orçamento por live ficam com o 13."""
+    pasta = Path(sys.executable).parent
+    exe = pasta / "pythonw.exe" if (pasta / "pythonw.exe").exists() else Path(sys.executable)
+    cmd = [str(exe), str(ROOT / "scripts" / "curador_oculto.py"), f"--processar={video_id}"]
+    env = {**os.environ, "MISSAO_CURADOR_LOG": str(LOG_PEDIDOS)}
+    kw = dict(cwd=ROOT, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+              stderr=subprocess.DEVNULL)
+    if sys.platform != "win32":
+        kw["start_new_session"] = True
+        tentativas = [0]
+    else:   # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP (+ sair do job do uv/terminal, se der)
+        tentativas = [0x00000008 | 0x00000200 | 0x01000000, 0x00000008 | 0x00000200]
+    erro = None
+    for flags in tentativas:
+        try:
+            subprocess.Popen(cmd, creationflags=flags, **kw)
+            return None
+        except OSError as e:   # job sem permissão de breakaway: tenta sem
+            erro = e
+    return str(erro)
+
+
+ROTULO_SUGESTAO = {"sugerida": "", "pedida": "na fila", "processando": "processando",
+                   "falhou": "falhou"}
+
+
+def secao_sugestoes(sug: pd.DataFrame, curador_ocupado: bool) -> list[str]:
+    """Sugestões em aberto, maior prioridade primeiro, com o botão Processar. Devolve os
+    video_id clicados nesta passada (quem chama dispara)."""
+    clicados = []
+    with st.container(border=True):
+        st.markdown(f"<h3>Sugestões do Curador · {len(sug)}</h3>", unsafe_allow_html=True)
+        if sug.empty:
+            st.caption("Nenhuma sugestão em aberto. O Curador lê os canais todo dia às 17h.")
+            return clicados
+        st.caption("Você escolhe o que vira corte: Processar baixa e roda o pipeline (~US$ 0,65), "
+                   "um vídeo por vez.")
+        for s in sug.itertuples():
+            c1, c2 = st.columns([5, 1], vertical_alignment="center")
+            dur = f"{s.duracao_min:.0f} min" if pd.notna(s.duracao_min) else "duração ?"
+            data = f" · {s.data[8:10]}/{s.data[5:7]}" if isinstance(s.data, str) and len(s.data) >= 10 else ""
+            rotulo = ROTULO_SUGESTAO.get(s.status, s.status)
+            extra = (f"<span class='pill {html.escape(s.status)}'>{html.escape(rotulo)}</span>"
+                     if rotulo else "")
+            erro = (f"<small>{html.escape(s.mensagem)}</small>"
+                    if s.status == "falhou" and isinstance(s.mensagem, str) else "")
+            with c1:
+                st.markdown(
+                    f"<div class='hj-dec'><b>[{int(s.prioridade or 0)}]</b> "
+                    f"<a href='{html.escape(str(s.url))}' target='_blank'>{html.escape(str(s.titulo))}</a> "
+                    f"{extra}<small>{html.escape(str(s.canal))} · {dur}{data} — "
+                    f"{html.escape(str(s.motivo or ''))}</small>{erro}</div>", unsafe_allow_html=True)
+            with c2:
+                if s.status in ("sugerida", "falhou"):
+                    rotulo_botao = "Processar" if s.status == "sugerida" else "Tentar de novo"
+                    if st.button(rotulo_botao, key=f"sug_{s.video_id}", width="stretch"):
+                        clicados.append(s.video_id)
+                elif s.status == "pedida" and not curador_ocupado:
+                    # pedido parado (o processo não pegou a trava e ninguém está rodando)
+                    if st.button("Disparar", key=f"sug_{s.video_id}", width="stretch",
+                                 help="O pedido não andou: dispara o processamento de novo."):
+                        clicados.append(s.video_id)
+    return clicados
 
 
 # ── custo do mês x orçamento ──────────────────────────────────────────────
@@ -476,7 +569,8 @@ def _custo(c: dict) -> None:
 
 
 def aba_hoje(blocos: pd.DataFrame, tarefas: pd.DataFrame, est: dict | None, custo: dict,
-             agora: pd.Timestamp | None = None) -> None:
+             agora: pd.Timestamp | None = None, sugestoes: pd.DataFrame | None = None) -> list[str]:
+    """Desenha a aba e devolve os video_id que o Gu mandou processar nesta passada."""
     agora = agora or pd.Timestamp.now()
     hoje, amanha = agora.date(), agora.date() + timedelta(days=1)
     df_hoje, df_amanha = no_ar(blocos, hoje), no_ar(blocos, amanha)
@@ -498,7 +592,10 @@ def aba_hoje(blocos: pd.DataFrame, tarefas: pd.DataFrame, est: dict | None, cust
             f"{dias} · abaixo do mínimo ({est['minimo']})" if baixo else f"{dias} · mínimo {est['minimo']}",
             tom="alerta" if baixo else "",
             ajuda="O mesmo cálculo do Curador: dias até o último longo agendado no canal + longos "
-                  "prontos pra publicar (1 por dia). Abaixo do mínimo o Curador processa um vídeo novo.")
+                  "prontos pra publicar (1 por dia). Abaixo do mínimo "
+                  + ("o Curador processa um vídeo novo." if est.get("modo") == "automatico" else
+                     "escolha uma sugestão do Curador (ele só processa sozinho se o canal ficaria "
+                     "sem vídeo amanhã)."))
     n_dev = sum(o.startswith("Tarefa") for o, _ in pend)
     origem = [f"{n_dev} do time de dev" if n_dev else "",
               f"{len(pend) - n_dev} em quarentena" if len(pend) > n_dev else ""]
@@ -535,6 +632,11 @@ def aba_hoje(blocos: pd.DataFrame, tarefas: pd.DataFrame, est: dict | None, cust
         st.markdown(f"<div class='hj-sec'><h3>Decisões pendentes · {len(pend)}</h3>{itens}</div>",
                     unsafe_allow_html=True)
 
+    clicados = []
+    if sugestoes is not None:
+        ocupado = bool(ler_json(STATE / "curador_progresso.json").get("rodando"))
+        clicados = secao_sugestoes(sugestoes, ocupado)
+
     c1, c2 = st.columns([3, 2])
     with c1:
         st.markdown("<div class='hj-sec'><h3>No ar</h3>"
@@ -545,3 +647,4 @@ def aba_hoje(blocos: pd.DataFrame, tarefas: pd.DataFrame, est: dict | None, cust
             _custo(custo)
     with c2:
         st.markdown(_placar(placar()), unsafe_allow_html=True)
+    return clicados

@@ -2,10 +2,23 @@
 virar corte e dispara o pipeline neles (agente="curador", off-pipeline, roda 1x/dia).
 
 Uso: uv run py scripts/13_curador.py [--dry-run] [--sem-pipeline] [--forcar]
+     uv run py scripts/13_curador.py --processar=<video_id>
 
   --dry-run       só lista, filtra e mostra o estoque (sem LLM, sem baixar)
   --sem-pipeline  avalia e põe na fila, mas não baixa nem processa
-  --forcar        processa 1 vídeo da fila mesmo com estoque cheio
+  --forcar        processa 1 vídeo da fila mesmo com estoque cheio (vale nos dois modos)
+  --processar=ID  o Gu escolheu a sugestão no painel (botão Processar): marca como pedida e
+                  processa (uma de cada vez). Com outra rodada no meio, sai (75) e ela
+                  processa o pedido antes de terminar.
+
+Modo (config/canais.json → curador_modo):
+  "sugerir" (padrão desde 29/10/2026, decisão do Gu): a rodada lê, avalia e prioriza, mas NÃO
+     baixa nem processa: grava as sugestões no banco (tabela sugestoes) e o Gu escolhe no
+     painel. Estoque abaixo do mínimo vira alerta ("escolha uma sugestão"). Rede de segurança:
+     sem nenhum longo agendado pra amanhã nem pronto pra publicar, processa sozinho a sugestão
+     de maior prioridade e avisa no painel (evento curador_rede). Modo evento não processa
+     sozinho (só prioriza o tema).
+  "automatico": o fluxo abaixo (processa quando o estoque cai).
 
 Fluxo:
   1. Lê config/canais.json e lista as abas streams + videos de cada canal (yt-dlp, flat,
@@ -49,8 +62,9 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import _custo
-from _eventos import evento, upsert_video, conectar, em_alta_atual, termos_semana
-from _paths import auditoria_aprovada, modo_evento
+from _eventos import (evento, upsert_video, conectar, em_alta_atual, termos_semana,
+                      gravar_sugestao, listar_sugestoes, pedir_sugestao)
+from _paths import auditoria_aprovada, curador_modo, modo_evento
 from sincronizar_estado import DIAS_ARQUIVAR    # janela do conteúdo antigo (15 dias)
 
 ROOT = Path(__file__).parent.parent
@@ -473,6 +487,7 @@ def processar(item: dict) -> dict:
 
     stem = item["stem"]
     marcar_etapa("preparando", stem=stem)
+    _custo.checar_orcamento(stem, "curador")    # stem reaproveitado já pode ter estourado
     res = {"stem": stem, "titulo": item["titulo"], "canal": item["canal"],
            "ok": False, "aprovados": 0, "publicacao": None, "avisos": []}
     if not cadastrar_zoom(stem, item.get("zoom")):
@@ -592,14 +607,18 @@ def esperar_livre(espera_min: int = ESPERA_OCUPADO_MIN, intervalo_s: int = CHECA
 
 def escrever_resumo(rodada: dict) -> str:
     est = rodada.get("estoque") or {"longos": 0, "shorts": 0, "dias": 0}
+    sugerir = rodada.get("modo") == "sugerir"
     linhas = [f"# Curador — {rodada['quando']}", "",
               f"Custo de curadoria: US$ {rodada['custo']:.3f} · "
-              f"{len(rodada['processados'])} vídeo(s) processado(s)",
+              f"{len(rodada['processados'])} vídeo(s) processado(s)"
+              + (" · modo sugerir (você escolhe no painel)" if sugerir else ""),
               f"Estoque no início: {_texto_estoque(est)}"]
     if rodada.get("modo_evento"):
         ev = rodada["modo_evento"]
-        linhas.append(f"**Modo evento** até {ev['ate']:%d/%m} ({ev['tema']}): processa mesmo "
-                      "com o canal coberto; publicacao.txt com datas na frente dos agendados")
+        linhas.append(f"**Modo evento** até {ev['ate']:%d/%m} ({ev['tema']}): "
+                      + ("prioriza o tema nas sugestões" if sugerir else
+                         "processa mesmo com o canal coberto")
+                      + "; publicacao.txt com datas na frente dos agendados")
     if rodada.get("estoque_depois"):
         d = rodada["estoque_depois"]
         linhas.append(f"Estoque no fim: {_texto_estoque(d)}")
@@ -640,7 +659,19 @@ def escrever_resumo(rodada: dict) -> str:
         linhas.append("## Falhas")
         linhas += [f"- {p['stem']}: {p['erro']}" for p in falhas]
         linhas.append("")
-    for titulo, chave in (("Escolhidos", "escolhidos"), ("Entraram na fila", "fila"),
+    if sugerir:
+        novas = {x["url"] for x in rodada["fila"]}
+        linhas.append("## Sugestões do Curador (painel → aba Hoje → Processar)")
+        linhas += [f"- **[{s['prioridade']}]** {s['canal']}: {s['titulo']} "
+                   f"({_minutos(s.get('duracao_min'))}) — {s['motivo']} — {s['url']}"
+                   + (" *(nova)*" if s["url"] in novas else "")
+                   + (f" · **{s['status']}**" if s["status"] != "sugerida" else "")
+                   for s in rodada.get("sugestoes") or []]
+        if not rodada.get("sugestoes"):
+            linhas.append("- nenhuma sugestão em aberto")
+        linhas.append("")
+    for titulo, chave in (("Escolhidos", "escolhidos"),
+                          *((("Entraram na fila", "fila"),) if not sugerir else ()),
                           ("Recusados", "recusados")):
         if rodada[chave]:
             linhas.append(f"## {titulo}")
@@ -651,6 +682,10 @@ def escrever_resumo(rodada: dict) -> str:
         avisos.insert(0, rodada["aviso_canal"])
     if rodada.get("pulado"):
         avisos.insert(0, rodada["pulado"])
+    if rodada.get("estoque_baixo"):
+        avisos.insert(0, rodada["estoque_baixo"])
+    if rodada.get("rede"):
+        avisos.insert(0, rodada["rede"])
     if rodada.get("aviso_placar"):
         avisos.append(rodada["aviso_placar"])
     if rodada.get("aviso_analytics"):
@@ -667,6 +702,10 @@ def escrever_resumo(rodada: dict) -> str:
     return texto
 
 
+def _minutos(duracao) -> str:
+    return f"{duracao:.0f} min" if isinstance(duracao, (int, float)) else "duração ?"
+
+
 # --- main ---------------------------------------------------------------------------------
 
 def main(argv: list[str]) -> int:
@@ -675,7 +714,10 @@ def main(argv: list[str]) -> int:
     sem_pipeline = "--sem-pipeline" in argv
     forcar = "--forcar" in argv
     cfg = carregar_config()
+    pedido = next((a.split("=", 1)[1] for a in argv if a.startswith("--processar=")), None)
 
+    if pedido:
+        return pedir(cfg, pedido)
     if dry_run:
         return _rodada(cfg, dry_run, sem_pipeline, forcar)
     if not pegar_trava():
@@ -712,6 +754,123 @@ def proximo_da_fila(estado: dict, desde: date | None = None, minimo: int = 0) ->
     if not fila:
         return None
     return max(fila, key=lambda kv: (kv[1].get("prioridade", 0), kv[1].get("data") or ""))[0]
+
+
+def processar_escolhido(cfg: dict, estado: dict, vid: str, rodada: dict, porque: str) -> dict:
+    """Processa um vídeo da fila (estoque, rede de segurança ou pedido do Gu) e espelha o
+    resultado na sugestão do painel."""
+    e = estado[vid]
+    canal = _canal_de(cfg, e["canal"])
+    item = {"id": vid, "url": e["url"], "titulo": e["titulo"], "canal": e["canal"],
+            "prefixo": e.get("prefixo") or canal.get("prefixo", "video"),
+            "zoom": e.get("zoom", canal.get("zoom"))}
+    item["stem"] = e.get("stem") or montar_stem(item["prefixo"], item["titulo"])
+    e.update(decisao="escolhido", stem=item["stem"])
+    gravar_estado(estado)
+    gravar_sugestao(vid, status="processando", stem=item["stem"], mensagem=None)
+    rodada["escolhidos"].append(e)
+    rodada["fila"] = [x for x in rodada["fila"] if x is not e]
+    evento(item["stem"], "curadoria", "ok", agente="curador",
+           mensagem=f"escolhido ({porque}): {e.get('motivo') or '-'}")
+    print(f"\nProcessando: {item['titulo']} ({porque}; ~US$ {CUSTO_POR_VIDEO:.2f})")
+    res = processar_seguro(item)
+    rodada["processados"].append(res)
+    if res["ok"]:
+        gravar_sugestao(vid, status="processada",
+                        mensagem=f"{res['aprovados']} corte(s) pronto(s) pra publicar")
+        return res
+    if not (INPUTS / f"{item['stem']}.url").exists():
+        # nem baixou: volta pra fila (sem nova chamada de LLM) até MAX_TENTATIVAS
+        e["tentativas"] = e.get("tentativas", 0) + 1
+        e["decisao"] = "fila" if e["tentativas"] < MAX_TENTATIVAS else "falhou"
+        gravar_estado(estado)
+    gravar_sugestao(vid, status="falhou", mensagem=(res.get("erro") or "falhou")[:300])
+    return res
+
+
+def _registro_da_sugestao(cfg: dict, s: dict) -> dict:
+    """Pedido de uma sugestão que sumiu do state/curadoria.json: remonta pelo banco."""
+    canal = _canal_de(cfg, s["canal"])
+    return {"titulo": s["titulo"], "canal": s["canal"], "url": s["url"], "data": s["data"],
+            "duracao_min": s.get("duracao_min"), "prefixo": canal.get("prefixo", "video"),
+            "zoom": canal.get("zoom"), "prioridade": s.get("prioridade") or 0,
+            "motivo": s.get("motivo") or "", "tentativas": 0, "decisao": "fila"}
+
+
+def processar_pedidos(cfg: dict, estado: dict, rodada: dict) -> None:
+    """Sugestões que o Gu pediu no painel, na ordem do clique, uma de cada vez. Pedido que
+    chega enquanto processa outro entra na mesma leva. Outro processamento rodando além da
+    espera: para ali, e os pedidos seguem 'pedida' (o próximo clique ou a rodada das 17h
+    retomam)."""
+    feitos: set[str] = set()                     # banco falhou e não andou o status: não repete
+    while True:
+        pedidos = sorted((s for s in listar_sugestoes(["pedida"]) if s["video_id"] not in feitos),
+                         key=lambda s: s["atualizado_em"])
+        if not pedidos:
+            return
+        s = pedidos[0]
+        feitos.add(s["video_id"])
+        if ocupado := esperar_livre():
+            rodada["pulado"] = (f"pedido do painel esperando: outro processamento já estava "
+                                f"rodando ({resumir_ocupado(ocupado)}) após {ESPERA_OCUPADO_MIN} "
+                                f"min; \"{s['titulo'][:60]}\" segue pedido")
+            evento(None, "curador_pulado", "aviso", agente="curador", mensagem=rodada["pulado"][:300])
+            print(f"\n[!] {rodada['pulado']}")
+            return
+        if s["video_id"] not in estado:
+            estado[s["video_id"]] = _registro_da_sugestao(cfg, s)
+        processar_escolhido(cfg, estado, s["video_id"], rodada, "pedido do Gu no painel")
+
+
+def _rodada_vazia(agora: str) -> dict:
+    return {"quando": agora, "custo": 0.0, "escolhidos": [], "fila": [], "recusados": [],
+            "processados": []}
+
+
+def pedir(cfg: dict, video_id: str) -> int:
+    """--processar=ID (botão do painel): marca a sugestão como pedida e processa os pedidos.
+    Outra rodada com a trava: ela processa o pedido antes de terminar (sai com 75)."""
+    sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
+    if pedir_sugestao(video_id):
+        s = next((x for x in listar_sugestoes(["pedida"]) if x["video_id"] == video_id), {})
+        evento(None, "curador_pedido", "ok", agente="curador",
+               mensagem=f"pedido no painel: {s.get('titulo') or video_id}"[:300])
+    elif not any(x["video_id"] == video_id for x in listar_sugestoes(["pedida"])):
+        print(f"[!] Sugestão {video_id} não está disponível (não existe ou já foi processada).")
+        return 0                                  # clique duplo: nada a fazer, não é falha
+    if not pegar_trava():
+        print("[!] Outra rodada do Curador em andamento: ela processa o pedido antes de terminar.")
+        return SAIDA_TRAVADO
+    codigo = None
+    marcar_etapa("pedido do painel", inicio=True)
+    try:
+        rodada = _rodada_vazia(datetime.now().isoformat(timespec="seconds"))
+        processar_pedidos(cfg, ler_estado(), rodada)
+        codigo = 0 if all(p["ok"] for p in rodada["processados"]) else 1
+        for p in rodada["processados"]:
+            print(f"{'ok' if p['ok'] else 'FALHOU'} · {p['stem']}: "
+                  + (f"{p['aprovados']} corte(s) pronto(s)" if p["ok"] else p.get("erro", "")))
+        return codigo
+    finally:
+        encerrar_progresso(codigo)
+        soltar_trava()
+
+
+def sem_longo_amanha(estoque: dict, hoje: date) -> bool:
+    """Rede de segurança do modo sugerir: nenhum longo pronto pra publicar nem agendado pra
+    amanhã = o canal ficaria sem vídeo."""
+    from _cobertura import longos_no_dia
+    return not estoque.get("longos") and longos_no_dia(hoje + timedelta(days=1)) == 0
+
+
+def espelhar_fila(estado: dict) -> None:
+    """Fila do state/curadoria.json → sugestões do painel (cria as que faltam, ex.: fila de
+    antes do modo sugerir; não mexe no status de quem já existe)."""
+    for k, v in estado.items():
+        if v.get("decisao") == "fila":
+            gravar_sugestao(k, titulo=v.get("titulo"), canal=v.get("canal"),
+                            duracao_min=v.get("duracao_min"), prioridade=v.get("prioridade"),
+                            motivo=v.get("motivo"), url=v.get("url"), data=v.get("data"))
 
 
 def expirar_fila(estado: dict, hoje: date) -> list[str]:
@@ -799,9 +958,11 @@ def coletar_analytics(hoje: date) -> tuple[str | None, list[dict]]:
 def _rodada(cfg: dict, dry_run: bool, sem_pipeline: bool, forcar: bool) -> int:
     hoje = date.today()
     estado = ler_estado()
-    vistos = ids_ja_processados() | set(estado)     # já avaliado nunca volta pro LLM
+    modo = curador_modo(cfg)
+    ja_processados = ids_ja_processados()
+    vistos = ja_processados | set(estado)          # já avaliado nunca volta pro LLM
     print(f"Curador · {len(cfg['canais'])} canais · últimos {cfg['dias']} dias · "
-          f"{cfg['duracao_min']}-{cfg['duracao_max']} min")
+          f"{cfg['duracao_min']}-{cfg['duracao_max']} min · modo {modo}")
 
     novos = []
     for canal in cfg["canais"]:
@@ -823,13 +984,16 @@ def _rodada(cfg: dict, dry_run: bool, sem_pipeline: bool, forcar: bool) -> int:
     aviso_canal = sincronizar_canal(dry_run)        # antes do estoque: o que já subiu sai dele
     estoque = calcular_estoque(cfg)
     minimo = cfg["estoque"]["dias_minimos"]
-    precisa = forcar or estoque["dias"] < minimo
+    baixo = estoque["dias"] < minimo
+    precisa = forcar or (baixo and modo == "automatico")
     evento_on = modo_evento(hoje, cfg)
     print(f"\nEstoque pronto: {_texto_estoque(estoque)} (mínimo {minimo}) → "
-          f"{'processa 1 vídeo' if precisa else 'não processa hoje'}")
+          + ("processa 1 vídeo" if precisa else
+             "estoque baixo: escolha uma sugestão no painel" if baixo else "não processa hoje"))
     if evento_on:
-        print(f"MODO EVENTO até {evento_on['ate']:%d/%m}: processa 1 vídeo de "
-              f"{evento_on['desde']:%d/%m} em diante mesmo com o canal coberto")
+        print(f"MODO EVENTO até {evento_on['ate']:%d/%m}: " + (
+            f"processa 1 vídeo de {evento_on['desde']:%d/%m} em diante mesmo com o canal coberto"
+            if modo == "automatico" else "prioriza o tema (modo sugerir: não processa sozinho)"))
     na_fila = sum(1 for v in estado.values() if v.get("decisao") == "fila")
     print(f"{len(novos)} novo(s) pro Claude, {na_fila} na fila")
     if dry_run:
@@ -842,8 +1006,11 @@ def _rodada(cfg: dict, dry_run: bool, sem_pipeline: bool, forcar: bool) -> int:
     aviso_analytics, termos = coletar_analytics(hoje)
     em_alta = em_alta_atual()                       # vídeos antigos em alta → temas pro Claude
     agora = datetime.now().isoformat(timespec="seconds")
-    rodada = {"quando": agora, "custo": 0.0, "estoque": estoque, "escolhidos": [],
-              "fila": [], "recusados": [], "processados": [], "aviso_canal": aviso_canal,
+    for k, v in estado.items():                     # mandado por link direto: sai da fila
+        if v.get("decisao") == "fila" and k in ja_processados:
+            v["decisao"] = "manual"
+            gravar_sugestao(k, status="processada", mensagem="processado por link direto")
+    rodada = {**_rodada_vazia(agora), "estoque": estoque, "modo": modo, "aviso_canal": aviso_canal,
               "aviso_placar": aviso_placar, "aviso_analytics": aviso_analytics,
               "termos_semana": termos, "em_alta": em_alta, "modo_evento": evento_on,
               "thumb_ab": placar_thumb_ab()}
@@ -872,6 +1039,7 @@ def _rodada(cfg: dict, dry_run: bool, sem_pipeline: bool, forcar: bool) -> int:
                 continue
             registro = {"titulo": c["titulo"], "canal": c["canal"], "url": c["url"],
                         "data": c["data"], "prefixo": c["prefixo"], "zoom": c.get("zoom"),
+                        "duracao_min": round((c.get("duracao_s") or 0) / 60) or None,
                         "prioridade": a["prioridade"], "motivo": a["motivo"],
                         "avaliado_em": agora, "tentativas": 0,
                         "decisao": "fila" if a["vale"] else "recusado"}
@@ -882,15 +1050,27 @@ def _rodada(cfg: dict, dry_run: bool, sem_pipeline: bool, forcar: bool) -> int:
                 rodada["recusados"].append(registro)
                 evento(None, "curadoria", "recusado", agente="curador",
                        mensagem=f"{c['canal']}: {c['titulo']} — {a['motivo']}")
-    expirar_fila(estado, hoje)
+    for k in expirar_fila(estado, hoje):
+        gravar_sugestao(k, status="expirada")
     gravar_estado(estado)
+    espelhar_fila(estado)
 
-    vid = None
+    vid, porque, rede = None, "", False
+    pedidos = bool(listar_sugestoes(["pedida"]))
     if not sem_pipeline:
-        if evento_on:                               # conteúdo do evento passa na frente
+        if evento_on and modo == "automatico":     # conteúdo do evento passa na frente
             vid = proximo_da_fila(estado, evento_on["desde"], PRIORIDADE_EVENTO)
         if vid is None and precisa:
             vid = proximo_da_fila(estado)
+        if vid is None and modo == "sugerir" and not pedidos and sem_longo_amanha(estoque, hoje):
+            vid = proximo_da_fila(estado)          # rede de segurança: canal ficaria sem vídeo
+            rede = vid is not None
+        if vid:
+            porque = ("rede de segurança: canal sem longo amanhã" if rede else
+                      f"prioridade {estado[vid].get('prioridade')}, estoque {estoque['dias']:.1f} dia(s)")
+    if modo == "sugerir" and baixo and not rede:
+        rodada["estoque_baixo"] = (f"estoque baixo ({estoque['dias']:.1f} dia(s), mínimo {minimo}): "
+                                   "escolha uma sugestão no painel (aba Hoje → Processar)")
     if vid and (ocupado := esperar_livre()):
         # nunca dois processamentos ao mesmo tempo: o vídeo fica na fila (sem gastar tentativa)
         rodada["pulado"] = (f"pulei o processamento: outro já estava rodando "
@@ -900,29 +1080,19 @@ def _rodada(cfg: dict, dry_run: bool, sem_pipeline: bool, forcar: bool) -> int:
         print(f"\n[!] {rodada['pulado']}")
         vid = None
     if vid:
-        e = estado[vid]
-        canal = _canal_de(cfg, e["canal"])
-        item = {"id": vid, "url": e["url"], "titulo": e["titulo"], "canal": e["canal"],
-                "prefixo": e.get("prefixo") or canal.get("prefixo", "video"),
-                "zoom": e.get("zoom", canal.get("zoom"))}
-        item["stem"] = e.get("stem") or montar_stem(item["prefixo"], item["titulo"])
-        e.update(decisao="escolhido", stem=item["stem"])
-        gravar_estado(estado)
-        rodada["escolhidos"].append(e)
-        rodada["fila"] = [x for x in rodada["fila"] if x is not e]
-        evento(item["stem"], "curadoria", "ok", agente="curador",
-               mensagem=f"escolhido (prioridade {e['prioridade']}, estoque "
-                        f"{estoque['dias']:.1f} dia(s)): {e['motivo']}")
-        print(f"\nProcessando: {item['titulo']} (~US$ {CUSTO_POR_VIDEO:.2f})")
-        res = processar_seguro(item)
-        rodada["processados"].append(res)
-        if not res["ok"] and not (INPUTS / f"{item['stem']}.url").exists():
-            # nem baixou: volta pra fila (sem nova chamada de LLM) até MAX_TENTATIVAS
-            e["tentativas"] = e.get("tentativas", 0) + 1
-            e["decisao"] = "fila" if e["tentativas"] < MAX_TENTATIVAS else "falhou"
-            gravar_estado(estado)
+        titulo = estado[vid]["titulo"]
+        res = processar_escolhido(cfg, estado, vid, rodada, porque)
+        if rede:
+            rodada["rede"] = (f"processei \"{titulo}\" porque o canal ficaria sem vídeo amanhã"
+                              + ("" if res["ok"] else f" (mas falhou: {res.get('erro', '?')})"))
+            evento(res["stem"], "curador_rede", "aviso", agente="curador",
+                   mensagem=rodada["rede"][:300])
+    if not sem_pipeline and not rodada.get("pulado"):
+        processar_pedidos(cfg, estado, rodada)      # o Gu clicou durante a rodada (ou antes)
+    if rodada["processados"]:
         rodada["estoque_depois"] = calcular_estoque(cfg)
 
+    rodada["sugestoes"] = listar_sugestoes(["sugerida", "pedida", "falhou"])
     marcar_etapa("escrevendo o resumo")
     print("\n" + escrever_resumo(rodada))
     ok = all(p["ok"] for p in rodada["processados"]) and not rodada.get("falha_llm")

@@ -90,6 +90,24 @@ def carregar_custo_lives() -> pd.DataFrame:
         con.close()
 
 
+@st.cache_data(ttl=5)
+def carregar_sugestoes() -> pd.DataFrame:
+    """Sugestões do Curador em aberto (sugerida/pedida/processando/falhou)."""
+    vazio = pd.DataFrame(columns=["video_id", "titulo", "canal", "duracao_min", "prioridade",
+                                  "motivo", "url", "data", "status", "mensagem"])
+    if not DB_PATH.exists():
+        return vazio
+    con = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
+    try:
+        return pd.read_sql("SELECT * FROM sugestoes WHERE status IN "
+                           "('sugerida', 'pedida', 'processando', 'falhou') "
+                           "ORDER BY prioridade DESC, data DESC", con)
+    except pd.errors.DatabaseError:   # banco anterior à tabela (o 13 cria na 1ª rodada)
+        return vazio
+    finally:
+        con.close()
+
+
 @st.cache_data(ttl=60)
 def carregar_estoque() -> dict | None:
     return hoje.estoque()   # lê outputs/ inteiro: não precisa rodar a cada 10s
@@ -280,7 +298,13 @@ def corpo() -> None:
     with aba_h:
         custo = hoje.custo_mes(carregar_custo_mes(agora.strftime("%Y-%m-01")),
                                cfg["orcamento_mensal_usd"], agora)
-        hoje.aba_hoje(blocos, tarefas, est, custo, agora)
+        for vid in hoje.aba_hoje(blocos, tarefas, est, custo, agora, carregar_sugestoes()):
+            erro = hoje.disparar_processamento(vid)
+            if erro:
+                st.error(f"Não consegui disparar o processamento: {erro}")
+            else:
+                st.toast("Pedido enviado: o Curador baixa e processa (acompanhe na faixa de cima).")
+            carregar_sugestoes.clear()
     with aba_k:
         esteira(blocos, eventos)
         kanban(videos, blocos)
