@@ -302,7 +302,7 @@ def revisar_bloco(client, anthropic, stem, pasta, b, nn, video, titulo, texto_th
     except (anthropic.APIError, subprocess.CalledProcessError, json.JSONDecodeError) as e:
         print(f"  [!] {nn}: revisão falhou ({type(e).__name__}: {str(e)[:200]})")
         evento(stem, "11_revisor", "falha", agente="revisor", bloco_id=bid,
-               mensagem=type(e).__name__, duracao_s=time.time() - t0)
+               mensagem=_custo.descrever_erro(e), duracao_s=time.time() - t0)
         return None
     tin, tout, usd = custo(resp)
     evento(stem, "11_revisor", "llm", agente="revisor", bloco_id=bid, tokens_in=tin,
@@ -325,7 +325,8 @@ def editar(client, anthropic, stem, pasta, b, titulo, texto_thumb, problema, tra
         novo, resp = _editor.reescrever(client, pedido)
     except (anthropic.APIError, json.JSONDecodeError) as e:
         print(f"  [!] {nn}: editor falhou ({type(e).__name__}: {str(e)[:200]})")
-        evento(stem, "11_editor", "falha", agente="editor", bloco_id=bid, mensagem=type(e).__name__)
+        evento(stem, "11_editor", "falha", agente="editor", bloco_id=bid,
+               mensagem=_custo.descrever_erro(e))
         return None, 0.0
     tin, tout, usd = _editor.custo(resp)
     evento(stem, "11_editor", "llm", agente="editor", bloco_id=bid, tokens_in=tin,

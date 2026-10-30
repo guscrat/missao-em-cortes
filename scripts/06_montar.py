@@ -5,6 +5,7 @@ import subprocess
 import sys
 sys.stdout.reconfigure(encoding='utf-8')
 from pathlib import Path
+from _eventos import ler_bloco
 from _ffmpeg import VENC, AENC, SCALE_PAD
 from _paths import achar_pasta, stem_de
 
@@ -189,8 +190,14 @@ else:
 with BLOCOS_JSON.open(encoding="utf-8") as f:
     data = json.load(f)
 
+NAO_MEXER = {"agendado", "publicado", "arquivado"}
+falhas = []   # blocos sem vídeo final: o 06 sai com erro (antes dizia "OK" com a pasta vazia)
 for b in data["blocos"]:
     if ONLY_BLOCO is not None and b["id"] != ONLY_BLOCO:
+        continue
+    status = (ler_bloco(stem, b["id"]) or {}).get("status")
+    if status in NAO_MEXER:   # como no 04c: o arquivo pode nem existir mais, e não é erro
+        print(f"\n  bloco {b['id']}: já {status}, não mexe")
         continue
     if b.get("remover") and not USE_POLIDO:
         print(f"\n[!] Bloco {b['id']}: tem trecho em 'remover' (ex.: propaganda da live), que só "
@@ -203,6 +210,7 @@ for b in data["blocos"]:
             print(f"\n[!] Bloco {b['id']}: corte polido{' legendado' if USE_LEGENDADO else ''} "
                   f"não encontrado, pulando (rode 04b_polir.py"
                   f"{' e 04c_legendas.py --polido' if USE_LEGENDADO else ''} antes ou tire o --polido)")
+            falhas.append(b["id"])
             continue
     else:
         cortes = [p for p in fonte_cortes.glob(f"corte_{b['id']:02d}_*.mp4")
@@ -210,6 +218,7 @@ for b in data["blocos"]:
         if not cortes:
             print(f"\n[!] Bloco {b['id']}: corte{' legendado' if USE_LEGENDADO else ''} "
                   f"não encontrado, pulando{' (rode 04c_legendas.py antes)' if USE_LEGENDADO else ''}")
+            falhas.append(b["id"])
             continue
     corte = cortes[0]
 
@@ -266,9 +275,12 @@ for b in data["blocos"]:
 
     if result.returncode != 0:
         print(f"  ERRO:\n{result.stderr[-800:]}")
+        falhas.append(b["id"])
     else:
         size_mb = saida.stat().st_size / (1024 * 1024)
         print(f"  OK {saida.name} ({modo})")
         print(f"    {size_mb:.1f} MB · {duracao_s(saida)/60:.1f} min")
 
+if falhas:
+    sys.exit(f"\n[!] Bloco(s) {', '.join(map(str, falhas))} sem vídeo final (veja os [!] acima).")
 print(f"\nOK Vídeos finais salvos em {OUT_DIR}")

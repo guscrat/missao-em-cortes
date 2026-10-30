@@ -133,6 +133,18 @@ def gasto_live(stem: str) -> float | None:
         return None
 
 
+def descrever_erro(e: Exception) -> str:
+    """Erro da API em pt-BR pro painel: o limite mensal da conta vira texto claro, não só
+    'BadRequestError' (29/10: o limite estourou no meio da live e ninguém entendeu)."""
+    texto = str(e).lower()
+    if "usage limit" in texto:
+        return ("limite de uso da API atingido — suba em platform.claude.com "
+                "(Settings > Limits) e rode de novo")
+    if "credit balance" in texto:
+        return "sem crédito na API — recarregue em platform.claude.com e rode de novo"
+    return type(e).__name__
+
+
 class OrcamentoEstourado(SystemExit):
     """A live passou do teto: o script para (exit com a mensagem) até o Gu liberar."""
 
