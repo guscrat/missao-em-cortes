@@ -280,12 +280,16 @@ def corpo() -> None:
     agora = pd.Timestamp.now()
     cfg = hoje.config_painel()
     est = carregar_estoque()
+    custo_lives = carregar_custo_lives()
     hoje.faixa_alertas(hoje.curador_rodando(eventos, agora)
                        + hoje.alertas_curador(eventos, agora) + hoje.alertas_token(eventos, agora)
                        + hoje.alerta_cota(pct_alerta=cfg["cota_alerta_pct"])
-                       + hoje.alertas_custo_live(carregar_custo_lives(), agora,
+                       + hoje.alertas_custo_live(custo_lives, agora,
                                                  cfg["alerta_live_usd"], cfg["trava_live_usd"])
                        + hoje.alertas_operacao(est, hoje.no_ar(blocos, (agora + pd.Timedelta(days=1)).date())))
+    hoje.historico_alertas(hoje.falhas_com_resolucao(eventos, agora - hoje.JANELA_HISTORICO),
+                           hoje.historico_custo_live(custo_lives, agora, cfg["alerta_live_usd"],
+                                                     cfg["trava_live_usd"]))
     faixa_decisoes(tarefas)
     if videos.empty and tarefas.empty:
         st.warning("Banco vazio. Clique em **Sincronizar com outputs/** na barra lateral "
