@@ -25,7 +25,7 @@ dev = [
 ]
 painel = [
     "pandas>=3.0.6",
-    "streamlit>=1.50",
+    "streamlit>=1.66",
 ]
 
 [tool.uv]

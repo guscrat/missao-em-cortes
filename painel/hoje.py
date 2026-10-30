@@ -497,14 +497,18 @@ ROTULO_SUGESTAO = {"sugerida": "", "pedida": "na fila", "processando": "processa
 
 
 def secao_sugestoes(sug: pd.DataFrame, curador_ocupado: bool) -> list[str]:
-    """Sugestões em aberto, maior prioridade primeiro, com o botão Processar. Devolve os
-    video_id clicados nesta passada (quem chama dispara)."""
+    """Sugestões em aberto, maior prioridade primeiro, com o botão Processar. Fica num
+    expander fechado (a lista é longa); o rótulo mostra o que está andando ou falhou. A
+    key fixa mantém aberto/fechado quando o rótulo muda. Devolve os video_id clicados
+    nesta passada (quem chama dispara)."""
     clicados = []
-    with st.container(border=True):
-        st.markdown(f"<h3>Sugestões do Curador · {len(sug)}</h3>", unsafe_allow_html=True)
-        if sug.empty:
-            st.caption("Nenhuma sugestão em aberto. O Curador lê os canais todo dia às 17h.")
-            return clicados
+    if sug.empty:
+        st.caption("Sugestões do Curador: nenhuma em aberto. O Curador lê os canais todo dia às 17h.")
+        return clicados
+    andando = [f"{n} {ROTULO_SUGESTAO[s]}" for s in ("processando", "pedida", "falhou")
+               if (n := int((sug["status"] == s).sum()))]
+    with st.expander(" · ".join([f"Sugestões do Curador · {len(sug)}", *andando]),
+                     key="sugestoes_curador"):
         st.caption("Você escolhe o que vira corte: Processar baixa e roda o pipeline (~US$ 0,65), "
                    "um vídeo por vez.")
         for s in sug.itertuples():
