@@ -163,3 +163,26 @@ def test_gerar_com_auditoria_mantem_cabecalho_do_short(tmp_path, monkeypatch):
     texto = pub.gerar(pasta, datetime(2026, 10, 22, 9))[0].read_text(encoding="utf-8")
     assert "NÃO suba à mão" in texto and "SHORT:   (sem Short)" in texto
     assert "Só os vídeos LONGOS" not in texto
+
+
+def _tres_aprovados(tmp_path):
+    rev = {f"0{i}": {"status": "aprovado"} for i in (1, 2, 3)}
+    return _pasta(tmp_path, rev, [_bloco(i, 9 - i) for i in (1, 2, 3)],
+                  [f"video_0{i}_a.mp4" for i in (1, 2, 3)])
+
+
+def _datas(caminho):
+    import re
+    return re.findall(r"^\w{3} (\d\d/\d\d) \d+h · VÍDEO", caminho.read_text(encoding="utf-8"), re.M)
+
+
+def test_gerar_sem_modo_evento_3_aprovados_1_por_dia(tmp_path, monkeypatch):
+    monkeypatch.setattr(pub, "modo_evento", lambda *_a, **_k: None)
+    caminho, _ = pub.gerar(_tres_aprovados(tmp_path), datetime(2026, 10, 22, 9))
+    assert _datas(caminho) == ["22/10", "23/10", "24/10"]
+
+
+def test_gerar_com_modo_evento_3_aprovados_2_por_dia(tmp_path, monkeypatch):
+    monkeypatch.setattr(pub, "modo_evento", lambda *_a, **_k: {"ate": date(2026, 10, 30)})
+    caminho, _ = pub.gerar(_tres_aprovados(tmp_path), datetime(2026, 10, 22, 9))
+    assert _datas(caminho) == ["22/10", "22/10", "23/10"]
