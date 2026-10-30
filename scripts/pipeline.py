@@ -32,10 +32,12 @@ import time
 from pathlib import Path
 from _paths import stem_de
 from _eventos import evento
+from _rodar import rodar
 
 ROOT = Path(__file__).parent.parent
 SCRIPTS = Path(__file__).parent
 OUTPUTS = ROOT / "outputs"
+
 
 args = [a for a in sys.argv[1:] if not a.startswith("--")]
 flags = [a for a in sys.argv[1:] if a.startswith("--")]
@@ -114,11 +116,11 @@ for num, script, sargs in steps:
     t_step = time.time()
     etapa = script.removesuffix(".py")
     evento(stem, etapa, "inicio")
-    result = subprocess.run([sys.executable, str(SCRIPTS / script), *sargs])
-    if result.returncode != 0:
-        evento(stem, etapa, "falha", mensagem=f"exit {result.returncode}",
+    codigo, erro = rodar([sys.executable, str(SCRIPTS / script), *sargs])
+    if codigo != 0:
+        evento(stem, etapa, "falha", mensagem=f"exit {codigo}" + (f": {erro}" if erro else ""),
                duracao_s=time.time() - t_step)
-        sys.exit(f"\n[!] Step {rotulo[num]} ({script}) falhou (exit {result.returncode}). "
+        sys.exit(f"\n[!] Step {rotulo[num]} ({script}) falhou (exit {codigo}). "
                  f"Depois de corrigir, retome com:\n"
                  f"    uv run py scripts/pipeline.py {alvo}"
                  f"{' --polir' if polir else ''}{' --sem-llm' if sem_llm else ''}"

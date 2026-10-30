@@ -317,6 +317,23 @@ def test_ok_de_outra_stem_ou_anterior_nao_resolve(tmp_path):
     assert f["resolvida"].isna().all()
 
 
+def _res(*linhas):
+    f = hoje.falhas_com_resolucao(_ev(*linhas), AGORA - pd.Timedelta(hours=48))
+    return f[f["etapa"] == "03_segmentar"]["resolvida"]
+
+
+def test_falha_pipeline_resolvida_por_step_posterior():
+    assert _res((10, "pipeline", "03_segmentar", "falha", "exit 1: x", "a"),
+                (2, "pipeline", "06_montar", "ok", "", "a")).notna().all()
+
+
+def test_falha_pipeline_nao_resolvida_por_step_anterior_outra_stem_ou_outro_agente():
+    assert _res((10, "pipeline", "03_segmentar", "falha", "exit 1", "a"),
+                (5, "pipeline", "02_transcribe", "ok", "", "a"),
+                (4, "pipeline", "06_montar", "ok", "", "b"),
+                (3, "revisor", "11_revisor", "ok", "", "a")).isna().all()
+
+
 def test_falhas_com_resolucao_vazio():
     f = hoje.falhas_com_resolucao(pd.DataFrame(), AGORA)
     assert f.empty and "resolvida" in f.columns

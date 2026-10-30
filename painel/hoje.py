@@ -192,7 +192,9 @@ def decisoes(tarefas: pd.DataFrame, blocos: pd.DataFrame) -> list[tuple[str, str
 def falhas_com_resolucao(eventos: pd.DataFrame, desde: pd.Timestamp) -> pd.DataFrame:
     """Falhas desde `desde` + coluna `resolvida` (ts do 1º ok posterior na mesma live, na mesma
     etapa ou no script citado na mensagem; NaT = em aberto). Ex.: o Curador grava
-    curador_pipeline "11_revisor.py falhou"; o 11 rodado à mão depois resolve."""
+    curador_pipeline "11_revisor.py falhou"; o 11 rodado à mão depois resolve. Falha de step
+    do pipeline também se resolve com ok de um step igual ou posterior (03 falhou num
+    --refazer, mas o 06 passou depois: o pipeline seguiu em frente)."""
     if eventos.empty:
         return eventos.assign(resolvida=pd.Series(dtype="datetime64[ns]"))
     falhas = eventos[(eventos["status"] == "falha") & (eventos["ts"] >= desde)].sort_values("ts")
@@ -202,8 +204,11 @@ def falhas_com_resolucao(eventos: pd.DataFrame, desde: pd.Timestamp) -> pd.DataF
     for f in falhas.itertuples():
         msg = f.mensagem if isinstance(f.mensagem, str) else ""
         stem = f.stem if isinstance(f.stem, str) else ""
-        ok = oks[(oks["ts"] > f.ts) & (stem_ok == stem)
-                 & oks["etapa"].isin({f.etapa, *RE_SCRIPT.findall(msg)})]
+        mesma = oks["etapa"].isin({f.etapa, *RE_SCRIPT.findall(msg)})
+        if f.agente == "pipeline":   # ordem pelo prefixo: "03_segmentar" < "04b_polir" < "06_montar"
+            # (step novo do pipeline precisa seguir o prefixo numérico)
+            mesma |= (oks["agente"] == "pipeline") & (oks["etapa"] >= f.etapa)
+        ok = oks[(oks["ts"] > f.ts) & (stem_ok == stem) & mesma]
         resolvida.append(ok["ts"].min() if not ok.empty else pd.NaT)
     return falhas.assign(resolvida=pd.to_datetime(pd.Series(resolvida, index=falhas.index,
                                                             dtype="object")))
