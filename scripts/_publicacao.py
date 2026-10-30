@@ -4,7 +4,8 @@ Só os blocos APROVADOS pelo revisor (revisao.json), em ordem de score, com arqu
 as thumbs a/b/c pro "Testar e comparar" do Studio (cada uma marcada template ou colagem; a
 manual escolhida pelo revisor sobe sozinha), título/descrição/tags do descricoes.txt (edição manual vale)
 e uma sugestão de dia: 1 por dia; 2 por dia só no modo evento com 3+ aprovados (live
-extraordinária que precisa sair rápido e se mesclar com o que já está agendado). As datas continuam DEPOIS do último longo agendado/publicado no canal
+extraordinária que precisa sair rápido e se mesclar com o que já está agendado). As datas
+continuam DEPOIS do último longo agendado/publicado no canal
 (state/canal.json do 14_canal + publish_at do banco), pra não brigar com o que já está na
 fila do YouTube (no modo evento do config/canais.json, começam hoje/amanhã: na frente
 dos agendados). Enquanto config/upload.json → auditoria_aprovada for false, a lista
