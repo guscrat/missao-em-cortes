@@ -5,6 +5,7 @@ import subprocess
 import sys
 sys.stdout.reconfigure(encoding='utf-8')
 from pathlib import Path
+from _eventos import ler_bloco
 from _ffmpeg import VENC, AENC, SCALE_PAD
 from _paths import achar_pasta, stem_de
 
@@ -189,9 +190,14 @@ else:
 with BLOCOS_JSON.open(encoding="utf-8") as f:
     data = json.load(f)
 
+NAO_MEXER = {"agendado", "publicado", "arquivado"}
 falhas = []   # blocos sem vídeo final: o 06 sai com erro (antes dizia "OK" com a pasta vazia)
 for b in data["blocos"]:
     if ONLY_BLOCO is not None and b["id"] != ONLY_BLOCO:
+        continue
+    status = (ler_bloco(stem, b["id"]) or {}).get("status")
+    if status in NAO_MEXER:   # como no 04c: o arquivo pode nem existir mais, e não é erro
+        print(f"\n  bloco {b['id']}: já {status}, não mexe")
         continue
     if b.get("remover") and not USE_POLIDO:
         print(f"\n[!] Bloco {b['id']}: tem trecho em 'remover' (ex.: propaganda da live), que só "
