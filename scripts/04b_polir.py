@@ -2,7 +2,8 @@
 
 Pra cada corte_NN_*.mp4 ja gerado pelo 04_cortar.py:
   1. Reaproveita os word-timestamps do words.json (fallback: re-transcreve com whisper)
-  2. Detecta silencios >3s PROGRAMATICAMENTE (gap entre palavras — sem API)
+  2. Detecta silencios >3s PROGRAMATICAMENTE (gap entre palavras confirmado pelo
+     silencedetect do ffmpeg no audio — sem API)
   3. Envia palavras pro Claude (conservador), que devolve so o que exige julgamento:
      fillers extremos e problemas tecnicos
   4. Funde os intervalos e aplica jump cut via ffmpeg filter_complex select/aselect
@@ -233,29 +234,63 @@ def intervalos_fixos(bloco):
              "fixo": True} for r in remover]
 
 
-# Silêncios são detectados PROGRAMATICAMENTE (gap entre palavras consecutivas):
-# determinístico e grátis. O LLM fica só com o que exige julgamento (fillers,
+# Silêncios são detectados PROGRAMATICAMENTE: gap entre palavras consecutivas E silêncio
+# de verdade no áudio (silencedetect do ffmpeg). Só o gap não basta: vídeo tocando na live,
+# plateia ou fala fora do microfone não viram palavra no whisper, mas têm som (medido em
+# 30/10: ~1/3 dos "silêncios" da arthur_live_segundo_turno estavam acima de -35 dB).
+# Determinístico e grátis. O LLM fica só com o que exige julgamento (fillers,
 # problemas técnicos, speaker procurando conteúdo).
 GAP_SILENCIO_S    = 3.0   # gap mínimo entre palavras pra virar corte
 MARGEM_SILENCIO_S = 0.3   # respiro mantido em cada ponta do gap
+RUIDO_SILENCIO_DB = -35   # abaixo disso o áudio conta como silêncio (chute, ver acima)
+SILENCIO_AUDIO_S  = 1.5   # silêncio de áudio mínimo dentro do gap pra cortar
 PROTECAO_INICIO_S = 30.0  # nunca cortar os primeiros 30s (mesma regra do prompt)
 PROTECAO_FIM_S    = 20.0  # nem os últimos 20s: a conclusão/frase de impacto fecha o vídeo
 MIN_INTERVALO_S   = 0.3   # intervalo menor que isso depois de alinhar não vale o jump cut
 
 
-def detectar_silencios(palavras):
-    """Intervalos de silêncio >GAP_SILENCIO_S entre palavras consecutivas."""
+def silencios_do_audio(video):
+    """Trechos [(ini, fim)] em silêncio no áudio do corte, via silencedetect (1 passada)."""
+    out = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-nostats", "-i", str(video), "-vn",
+         "-af", f"silencedetect=noise={RUIDO_SILENCIO_DB}dB:d={SILENCIO_AUDIO_S}",
+         "-f", "null", "-"],
+        capture_output=True, text=True, encoding="utf-8", errors="ignore", check=True
+    ).stderr
+    return parse_silencedetect(out, duracao_video(video))
+
+
+def parse_silencedetect(stderr, duracao):
+    trechos, ini = [], None
+    for linha in stderr.splitlines():
+        if "silence_start:" in linha:
+            ini = max(0.0, float(linha.split("silence_start:")[1].split()[0]))
+        elif "silence_end:" in linha and ini is not None:
+            trechos.append((ini, float(linha.split("silence_end:")[1].split()[0])))
+            ini = None
+    if ini is not None:   # silêncio até o fim do arquivo: o ffmpeg não imprime o end
+        trechos.append((ini, duracao))
+    return trechos
+
+
+def detectar_silencios(palavras, audio):
+    """Intervalos de silêncio: gap >GAP_SILENCIO_S entre palavras consecutivas, recortado
+    pros trechos em que o áudio (`audio`, de silencios_do_audio) também está em silêncio."""
     out = []
     for a, b in zip(palavras, palavras[1:]):
         gap = b["start"] - a["end"]
         if gap <= GAP_SILENCIO_S:
             continue
-        ini = a["end"] + MARGEM_SILENCIO_S
-        fim = b["start"] - MARGEM_SILENCIO_S
-        if ini < PROTECAO_INICIO_S:
-            continue
-        out.append({"t_inicio": round(ini, 3), "t_fim": round(fim, 3),
-                    "motivo": f"silêncio de {gap:.1f}s (detectado automaticamente)"})
+        for s_ini, s_fim in audio:
+            ini, fim = max(a["end"], s_ini), min(b["start"], s_fim)
+            if fim - ini < SILENCIO_AUDIO_S:
+                continue
+            ini, fim = ini + MARGEM_SILENCIO_S, fim - MARGEM_SILENCIO_S
+            if ini < PROTECAO_INICIO_S:
+                continue
+            out.append({"t_inicio": round(ini, 3), "t_fim": round(fim, 3),
+                        "motivo": f"silêncio de {fim - ini + 2 * MARGEM_SILENCIO_S:.1f}s "
+                                  f"(gap de {gap:.1f}s sem fala, detectado automaticamente)"})
     return out
 
 
@@ -428,11 +463,18 @@ for b in data["blocos"]:
                   f"({sum(iv['t_fim'] - iv['t_inicio'] for iv in fixos):.0f}s)")
             palavras = [w for w in palavras
                         if not any(iv["t_inicio"] <= w["start"] < iv["t_fim"] for iv in fixos)]
-        silencios = detectar_silencios(palavras)
+        try:
+            audio = silencios_do_audio(corte)
+        except Exception as e:
+            print(f"  ERRO silencedetect: {e}. Pulando este bloco.")
+            falhas.append((b["id"], f"silencedetect: {type(e).__name__}"))
+            continue
+        silencios = detectar_silencios(palavras, audio)
         if silencios:
             t_sil = sum(iv["t_fim"] - iv["t_inicio"] for iv in silencios)
-            print(f"  {len(silencios)} silêncio(s) >{GAP_SILENCIO_S:g}s detectados "
-                  f"automaticamente ({t_sil:.1f}s, sem API)")
+            print(f"  {len(silencios)} silêncio(s) detectados automaticamente "
+                  f"(gap >{GAP_SILENCIO_S:g}s + áudio abaixo de {RUIDO_SILENCIO_DB} dB; "
+                  f"{t_sil:.1f}s, sem API)")
 
         if sem_llm:
             intervalos = mesclar_intervalos(proteger(silencios, palavras, dur) + fixos)
