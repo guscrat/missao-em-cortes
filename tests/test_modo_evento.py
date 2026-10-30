@@ -63,6 +63,7 @@ def test_modo_evento_le_canais_json_quando_sem_cfg(tmp_path, monkeypatch):
 
 HOJE = date.today()
 CFG = {"dias": 3, "duracao_min": 20, "duracao_max": 240, "max_por_dia": 1, "por_canal": 8,
+       "curador_modo": "automatico",
        "canais": [{"nome": "Renan Santos", "url": "https://www.youtube.com/@renan",
                    "prefixo": "renan", "zoom": "1696:954:16:0"}]}
 

@@ -41,6 +41,10 @@ Identifique os blocos temáticos CONTÍNUOS da live (não compilação de trecho
    - **desenvolvimento** (o argumento, o dado, a história),
    - **conclusão** que termina numa **frase de impacto** (`frase_final`).
    - Nada de cortar no meio da fala: se a ideia só fecha em 2 min, o Short tem 2 min. Pode conter o cold open, mas costuma ser maior que ele.
+9. **Capítulos** (vão na descrição do YouTube): de 3 a 8 capítulos que marcam as mudanças de subassunto DENTRO do bloco, na ordem da fala.
+   - O 1º começa na frase de abertura do bloco; os outros, onde o speaker muda de subassunto (novo exemplo, nova pergunta, virada do argumento). Cada capítulo com pelo menos 1 minuto de fala.
+   - `titulo`: 2-6 palavras (máx. ~40 chars), descrevendo o que é dito ali, FIEL à fala (nada que o trecho não entregue). Sem palavrão nem termo que soe como ofensa a um grupo. Não repita o `titulo_sugerido`.
+   - `frase_de_abertura`: as primeiras palavras do capítulo, LITERAIS da transcrição (o pipeline acha o tempo exato por elas).
 
 ## REGRAS RÍGIDAS
 
@@ -85,6 +89,9 @@ Responda APENAS com o JSON abaixo, sem markdown, sem texto antes ou depois.
         "frase_final": "a frase de impacto que fecha o Short (literal)",
         "justificativa": "por que fecha uma ideia completa"
       },
+      "capitulos": [
+        {"timestamp_inicio": "HH:MM:SS", "titulo": "rótulo curto do subassunto", "frase_de_abertura": "primeiras palavras do capítulo (literal)"}
+      ],
       "cold_open": {
         "timestamp_inicio": "HH:MM:SS",
         "timestamp_fim": "HH:MM:SS",

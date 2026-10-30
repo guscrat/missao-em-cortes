@@ -25,6 +25,9 @@ e responde 4 checagens em JSON estruturado:
   4. corte sem sentido (o trecho não se sustenta sozinho)
   5. momentos_fora: itens de "Principais momentos" da descrição que não estão na transcrição
      do trecho → saem sozinhos do descricoes.txt e dos ganchos do blocos.json ($0)
+  6. capitulos_errados: capítulos da descrição ("MM:SS Título") cujo título não bate com o
+     trecho dele (a transcrição vai com marcas [CAPÍTULO ...]) → saem sozinhos do descricoes.txt
+     e do blocos.json ($0); sem o de 00:00 ou com menos de 3, a seção inteira sai
 
 Quem decide é o código, não o modelo (regra de produto da quarentena):
   - problema de CONTEÚDO (3 ou 4) → "descartado" com o motivo; não sobe, não chama ninguém
@@ -60,12 +63,14 @@ sys.stdout.reconfigure(encoding='utf-8')
 import time
 from pathlib import Path
 
+import _capitulos
 import _colagem
 import _custo
 import _editor
 import _fronteira
 import _grafias
-from _descricoes import ler_descricoes, momentos as momentos_da_descricao, remover_momentos
+from _descricoes import (ler_descricoes, momentos as momentos_da_descricao, remover_capitulos,
+                         remover_momentos, trocar_capitulos)
 from _eventos import atualizar_tarefa, evento, ler_bloco, termos_semana, upsert_bloco
 from _legenda import hhmmss_para_segundos, palavras_na_janela
 from _paths import achar_pasta, escolher_thumb, stem_de
@@ -91,10 +96,11 @@ SCHEMA = {
         "corte_sem_sentido": {"type": "boolean"},
         "sentido_problema": {"type": "string"},
         "momentos_fora": {"type": "array", "items": {"type": "string"}},
+        "capitulos_errados": {"type": "array", "items": {"type": "string"}},
     },
     "required": ["titulo_fiel", "titulo_problema", "thumb_ok", "thumb_problema",
                  "tela_compartilhada", "tela_problema", "corte_sem_sentido", "sentido_problema",
-                 "momentos_fora"],
+                 "momentos_fora", "capitulos_errados"],
     "additionalProperties": False,
 }
 
@@ -141,7 +147,8 @@ de assunto sem fio condutor. Começo abrupto mas compreensível é false.
 5. momentos_fora: cada item dos PRINCIPAIS MOMENTOS DA DESCRIÇÃO tem que estar DENTRO da \
 transcrição do trecho (fala citada ou fato dito nele; paráfrase fiel de algo dito no trecho é \
 ok). Liste, copiando o item EXATAMENTE como veio, cada um que não está: fala de outro momento \
-da live, inventada ou distorcida. Lista vazia [] quando todos estão (ou não há itens)."""
+da live, inventada ou distorcida. Lista vazia [] quando todos estão (ou não há itens).
+6. capitulos_errados: se a transcrição traz marcas [CAPÍTULO MM:SS: título], cada título tem \nque descrever o que é dito no trecho dele (da marca até a próxima). Liste, copiando o título \nEXATAMENTE como veio na marca, cada um que fala de outra coisa, promete o que o trecho não \nentrega ou destaca palavrão/termo ofensivo. Rótulo genérico mas correto é ok. Lista vazia [] \nquando todos batem (ou não há marcas)."""
 
 
 def ler_imagem_b64(path: Path, largura: int = LARGURA_IMG) -> str:
@@ -494,9 +501,83 @@ def refazer_bloco(pasta: Path, bid: int) -> bool:
     cmd = [sys.executable, str(SCRIPTS / "pipeline.py"), pasta.name, f"--bloco={bid}",
            *flags_refazer(pasta, f"{bid:02d}")]
     try:
-        return subprocess.run(cmd, capture_output=True, timeout=1800).returncode == 0
+        ok = subprocess.run(cmd, capture_output=True, timeout=1800).returncode == 0
     except subprocess.TimeoutExpired:
         return False
+    if ok:
+        recalcular_capitulos(pasta, bid)
+    return ok
+
+
+def recalcular_capitulos(pasta: Path, bid: int) -> None:
+    """Bloco refeito com outros tempos: o relógio do vídeo mudou, então a seção "Capítulos:" do
+    descricoes.txt é refeita a partir do blocos.json ($0). Bloco sem capítulos: não mexe."""
+    desc, blocos_path = pasta / "descricoes.txt", pasta / "blocos.json"
+    if not (desc.exists() and blocos_path.exists()):
+        return
+    b = next((x for x in json.loads(blocos_path.read_text(encoding="utf-8"))["blocos"]
+              if x["id"] == bid), None)
+    if not (b and b.get("capitulos")):
+        return
+    wj = pasta / "words.json"
+    todas = json.loads(wj.read_text(encoding="utf-8")).get("words", []) if wj.exists() else []
+    linhas = _capitulos.linhas(b["capitulos"], _capitulos.LinhaDoTempo(pasta, b, todas),
+                               _grafias.corrigir)
+    desc.write_text(trocar_capitulos(desc.read_text(encoding="utf-8"), bid, linhas),
+                    encoding="utf-8")
+
+
+def transcricao_com_capitulos(pasta: Path, b: dict, todas: list[dict], descricao: str,
+                              removidos_s: list[tuple[float, float]]) -> tuple[str, list[str]]:
+    """Transcrição do trecho com uma marca [CAPÍTULO MM:SS: título] onde cada capítulo da
+    descrição começa (tempo do vídeo final levado de volta pra live). Devolve (texto, títulos);
+    sem capítulos na descrição, a transcrição pura e []."""
+    ini = hhmmss_para_segundos(b["timestamp_inicio"])
+    fim = hhmmss_para_segundos(b["timestamp_fim"])
+    caps = _capitulos.no_video(descricao)
+    tempo = _capitulos.LinhaDoTempo(pasta, b, todas) if caps else None
+    marcas = [(ini if i == 0 else tempo.para_live(t), f"[CAPÍTULO {_capitulos.mmss(t)}: {titulo}]")
+              for i, (t, titulo) in enumerate(caps)]
+    partes = []
+    for w in palavras_na_janela(todas, ini, fim):
+        t = ini + w["start"]
+        if any(a <= t < z for a, z in removidos_s):
+            continue
+        while marcas and marcas[0][0] <= t + 0.01:
+            partes.append("\n" + marcas.pop(0)[1] + "\n")
+        partes.append(w["word"])
+    partes += ["\n" + m for _, m in marcas]
+    return " ".join(partes), [titulo for _, titulo in caps]
+
+
+def limpar_capitulos(pasta: Path, bid: int, errados: list[str], titulos: list[str]) -> list[str]:
+    """Capítulo cujo título não bate com o trecho sai do descricoes.txt e do blocos.json (o 08
+    não traz de volta). Sem o de 00:00 ou com menos de 3, sai a seção inteira. $0."""
+    norm = _fronteira._norm
+    removidos = []
+    for e in errados:
+        par = max(titulos, key=lambda t: difflib.SequenceMatcher(None, norm(t), norm(e)).ratio(),
+                  default=None)
+        if par and par not in removidos and \
+                difflib.SequenceMatcher(None, norm(par), norm(e)).ratio() >= _MOMENTO_PARECIDO:
+            removidos.append(par)
+    if not removidos:
+        return []
+    desc = pasta / "descricoes.txt"
+    if desc.exists():
+        desc.write_text(remover_capitulos(desc.read_text(encoding="utf-8"), bid, removidos,
+                                          _capitulos.MIN_CAPITULOS), encoding="utf-8")
+    blocos_path = pasta / "blocos.json"
+    data = json.loads(blocos_path.read_text(encoding="utf-8"))
+    alvo = {norm(r) for r in removidos}
+    for x in data["blocos"]:
+        if x["id"] == bid and x.get("capitulos"):
+            ficam = [c for c in x["capitulos"] if norm(_grafias.corrigir(c["titulo"])) not in alvo
+                     and norm(c["titulo"]) not in alvo]
+            # sem o 1º (00:00), o 08 rotularia a abertura com o título errado: tira todos
+            x["capitulos"] = ficam if ficam and ficam[0] is x["capitulos"][0] else []
+    blocos_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    return removidos
 
 
 def gravar_tempos(stem: str, pasta: Path, b: dict, novo_ini: float, novo_fim: float) -> None:
@@ -718,10 +799,14 @@ def main(argv: list[str]) -> int:
         transcricao = " ".join(w["word"] for w in palavras_na_janela(todas, ini, fim)
                                if not any(a <= ini + w["start"] < z for a, z in removidos_s))
         momentos = momentos_da_descricao(descricoes.get(bid, {}).get("descricao", ""))
+        transcricao_rev, capitulos = transcricao_com_capitulos(
+            pasta, b, todas,   # relido: o reajuste da fronteira pode ter refeito os capítulos
+            (ler_descricoes(desc_txt.read_text(encoding="utf-8")) if desc_txt.exists() else {})
+            .get(bid, {}).get("descricao", ""), removidos_s)
         tentativas, custo_bloco = [], 0.0
         while True:
             r = revisar_bloco(client, anthropic, stem, pasta, b, nn, video, titulo, texto_thumb,
-                              transcricao, momentos)
+                              transcricao_rev, momentos)
             if r is None:
                 falhas += 1
                 break
@@ -758,7 +843,7 @@ def main(argv: list[str]) -> int:
             if _editor.voltar_template(pasta, bid):
                 texto_thumb = texto_base
                 r2 = revisar_bloco(client, anthropic, stem, pasta, b, nn, video, titulo,
-                                   texto_thumb, transcricao, momentos)
+                                   texto_thumb, transcricao_rev, momentos)
                 if r2 is not None:
                     checagens, status, motivo, usd = r2
                     total += usd
@@ -796,11 +881,19 @@ def main(argv: list[str]) -> int:
                 status = "quarentena"
                 motivo = (f"{len(removidos)} de {len(momentos)} momentos da descrição eram de fora "
                           f"do trecho (removidos) — confira se os tempos do bloco estão certos")
+        # capítulo com título que não bate com o trecho: sai da descrição sozinho ($0)
+        caps_fora = limpar_capitulos(pasta, bid, (checagens or {}).get("capitulos_errados") or [],
+                                     capitulos)
+        if caps_fora:
+            print(f"  {nn}: {len(caps_fora)} capítulo(s) não batem com o trecho — removido(s): "
+                  + " | ".join(caps_fora))
+            evento(stem, "11_revisor", "aviso", agente="revisor", bloco_id=bid,
+                   mensagem=f"capítulos removidos: {' | '.join(caps_fora)}"[:300])
         upsert_bloco(stem, bid, status=status, forcar_status=True, motivo=motivo)
         thumb = escolher_thumb(pasta / "thumbs", nn)
         revisao[nn] = {"status": status, "motivo": motivo, "checagens": checagens,
                        "fronteira": fronteira, "abertura": abertura,
-                       "momentos_removidos": removidos,
+                       "momentos_removidos": removidos, "capitulos_removidos": caps_fora,
                        "titulo": titulo, "texto_thumb": texto_thumb,
                        "thumb": thumb.name if thumb else None,
                        "reescritas": tentativas, "trocas_thumb": trocas_thumb[1:],

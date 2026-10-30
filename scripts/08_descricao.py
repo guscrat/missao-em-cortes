@@ -3,6 +3,9 @@
 Le do blocos.json (que ja tem titulo_sugerido, resumo, ganchos, tags) e monta
 o arquivo formatado em outputs/<pasta>/descricoes.txt. Sem chamada de API.
 
+Capítulos (corte de 8+ min com `capitulos` no bloco, vindos do 03): logo depois do resumo, no
+tempo do vídeo final (cold open + intro + card + jump cuts do polido; ver _capitulos.py).
+
 "Conteúdo original" = URL da FONTE (inputs/<stem>.url). O link do nosso canal só
 entra na linha "Inscreva-se".
 
@@ -13,6 +16,7 @@ sys.stdout.reconfigure(encoding='utf-8')
 from pathlib import Path
 import json
 import re
+import _capitulos
 from _canal import CANAL_URL, eh_nosso_canal
 from _descricoes import trocar_creditos
 from _grafias import carregar as carregar_grafias, corrigir as corrigir_grafia
@@ -48,7 +52,7 @@ def ler_url_fonte(stem, inputs=None):
         return ""
     return url
 
-def bloco_para_texto(b, url_fonte=""):
+def bloco_para_texto(b, url_fonte="", capitulos=()):
     # grafia oficial em tudo que vai pro YouTube (título, corpo, convidados, tags/hashtags)
     grafias = carregar_grafias()   # lê o config uma vez por bloco, não por campo
     titulo = corrigir_grafia(b.get("titulo_sugerido", b["tema"]), grafias)
@@ -84,6 +88,10 @@ def bloco_para_texto(b, url_fonte=""):
     linhas.append("")
     linhas.append(resumo)
     linhas.append("")
+    if capitulos:
+        linhas.append(_capitulos.CABECALHO)
+        linhas.extend(capitulos)
+        linhas.append("")
     if ganchos:
         linhas.append("Principais momentos:")
         for g in ganchos:
@@ -134,13 +142,29 @@ def main(argv):
         cabecalho.append("# Lembrete: preencher a URL da live original em cada bloco antes de subir")
     cabecalho += ["", ""]
 
+    words_json = pasta / "words.json"
+    palavras = (json.loads(words_json.read_text(encoding="utf-8")).get("words", [])
+                if words_json.exists() else [])
+    grafias = carregar_grafias()
     partes = ["\n".join(cabecalho)]
+    com_capitulos = 0
     for b in data["blocos"]:
-        partes.append(bloco_para_texto(b, url_fonte))
+        caps = []
+        if b.get("capitulos"):
+            tempo = _capitulos.LinhaDoTempo(pasta, b, palavras)
+            if tempo.reserva:
+                print(f"   [!] bloco {b['id']}: sem medir {', '.join(tempo.reserva)} (ffprobe) — "
+                      f"capítulos com a duração padrão; confira no YouTube")
+            caps = _capitulos.linhas(b["capitulos"], tempo, lambda t: corrigir_grafia(t, grafias))
+            if not caps:
+                print(f"   bloco {b['id']}: sem capítulos (corte < {_capitulos.MIN_CORTE_MIN:g} min "
+                      f"ou < {_capitulos.MIN_CAPITULOS} capítulos de {_capitulos.MIN_CAPITULO_S:g}s+)")
+        com_capitulos += bool(caps)
+        partes.append(bloco_para_texto(b, url_fonte, caps))
 
     texto = repor_creditos("\n".join(partes), pasta, data["blocos"])
     out.write_text(texto, encoding="utf-8")
-    print(f"OK {len(data['blocos'])} descrições salvas em {out}")
+    print(f"OK {len(data['blocos'])} descrições salvas em {out} ({com_capitulos} com capítulos)")
     if url_fonte:
         print(f"   URL da fonte preenchida: {url_fonte}")
     else:

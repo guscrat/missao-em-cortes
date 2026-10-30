@@ -16,6 +16,8 @@ Tabelas:
              Reach da YouTube Reporting API (17_analytics)
   em_alta  — vídeos antigos (30+ dias) cujas views dispararam na última semana, com o tema
              (17_analytics); painel, resumo semanal e Curador (prioriza lives desses temas)
+  sugestoes — vídeos que o Curador (13) achou que valem virar corte; no modo "sugerir" o Gu
+             escolhe no painel (botão Processar → status pedida → o 13 processa)
 
 Uso:
     from _eventos import evento, upsert_video, upsert_bloco
@@ -46,6 +48,9 @@ STATUS_BLOCO = STATUS_AUTO + STATUS_DECISAO
 STATUS_ARQUIVAVEL = ["segmentado", "cortado", "montado", "revisao", "aprovado", "quarentena"]
 
 STATUS_VIDEO = ["curadoria", "baixado", "transcrito", "segmentado", "descartado"]
+
+STATUS_SUGESTAO = ["sugerida", "pedida", "processando", "processada", "falhou", "expirada"]
+SUGESTAO_ABERTA = ["sugerida", "pedida", "processando", "falhou"]   # o que o painel mostra
 
 ETAPAS_TAREFA = ["backlog", "fazendo", "testando", "revisando", "pronto", "bloqueado"]
 ETAPAS_ATIVAS = ["fazendo", "testando", "revisando"]
@@ -174,6 +179,24 @@ CREATE TABLE IF NOT EXISTS em_alta (
     views_total   INTEGER,
     fator         REAL,               -- views da semana ÷ média semanal de antes
     PRIMARY KEY (data, youtube_id)
+);
+
+-- Sugestões do Curador (13). status: sugerida → pedida (Gu clicou Processar) → processando →
+-- processada | falhou; expirada (mais velha que 15 dias, a mesma regra da fila).
+CREATE TABLE IF NOT EXISTS sugestoes (
+    video_id      TEXT PRIMARY KEY,   -- id do YouTube da fonte
+    titulo        TEXT,
+    canal         TEXT,
+    duracao_min   REAL,
+    prioridade    INTEGER,
+    motivo        TEXT,
+    url           TEXT,
+    data          TEXT,               -- data do vídeo na fonte (AAAA-MM-DD)
+    status        TEXT NOT NULL DEFAULT 'sugerida',
+    stem          TEXT,
+    mensagem      TEXT,               -- erro da falha / "processado por link direto"
+    sugerida_em   TEXT NOT NULL,
+    atualizado_em TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS ix_eventos_ts ON eventos(ts);
@@ -443,6 +466,46 @@ def ultima_coleta() -> dict:
                     "SELECT origem, SUM(views) FROM trafego_video WHERE data = ? GROUP BY origem",
                     (data,))}}
     return _executar("ler analytics", ler, padrao={"data": None, "metricas": [], "trafego": {}})
+
+
+# ── sugestões do Curador (13) ──────────────────────────────────────────────
+
+def gravar_sugestao(video_id: str, *, status: str | None = None, **campos) -> None:
+    """Cria/atualiza a sugestão. Sem `status`, uma já existente mantém o dela (o Gu pode ter
+    pedido): só os campos passados mudam."""
+    permitidos = {"titulo", "canal", "duracao_min", "prioridade", "motivo", "url", "data",
+                  "stem", "mensagem"}
+    invalidos = set(campos) - permitidos
+    if invalidos:
+        raise ValueError(f"campos inválidos pra sugestão: {invalidos}")
+    if status and status not in STATUS_SUGESTAO:
+        raise ValueError(f"status inválido: {status}")
+    agora = _agora()
+    with _seguro(f"gravar sugestão {video_id}") as con:
+        con.execute("INSERT INTO sugestoes (video_id, status, sugerida_em, atualizado_em) "
+                    "VALUES (?, COALESCE(?, 'sugerida'), ?, ?) ON CONFLICT(video_id) DO NOTHING",
+                    (video_id, status, agora, agora))
+        sets = {**campos, **({"status": status} if status else {})}
+        if sets:
+            con.execute(f"UPDATE sugestoes SET {', '.join(f'{k} = ?' for k in sets)}, "
+                        f"atualizado_em = ? WHERE video_id = ?", (*sets.values(), agora, video_id))
+
+
+def pedir_sugestao(video_id: str) -> bool:
+    """Gu clicou Processar: sugerida/falhou → pedida. False = não existe ou já andou."""
+    return bool(_executar(f"pedir sugestão {video_id}", lambda con: con.execute(
+        "UPDATE sugestoes SET status = 'pedida', mensagem = NULL, atualizado_em = ? "
+        "WHERE video_id = ? AND status IN ('sugerida', 'falhou')",
+        (_agora(), video_id)).rowcount, padrao=0))
+
+
+def listar_sugestoes(status: list[str] | None = None) -> list[dict]:
+    """Sugestões (todas ou só dos status pedidos), maior prioridade primeiro; pedidas na
+    ordem do clique (atualizado_em). Banco fora do ar = []."""
+    filtro = f"WHERE status IN ({', '.join('?' * len(status))})" if status else ""
+    return _executar("ler sugestões", lambda con: [dict(r) for r in con.execute(
+        f"SELECT * FROM sugestoes {filtro} ORDER BY prioridade DESC, data DESC, atualizado_em",
+        status or [])], padrao=[])
 
 
 # ── tarefas do time de dev ─────────────────────────────────────────────────

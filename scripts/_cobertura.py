@@ -6,6 +6,7 @@ sugeridas depois do último agendado) e pelo painel (aba Hoje: "Canal coberto at
 
   agenda_canal()  → último longo agendado/publicado + quantos agendados ainda vão sair
   cobertura(...)  → dias cobertos = até o último agendado + prontos a longos_por_dia/dia
+  longos_no_dia() → quantos longos agendados/publicados saem num dia (rede de segurança do 13)
 
 Fontes da agenda: state/canal.json (ultimo_longo, gravado pelo 14_canal lendo o canal) e
 publish_at dos blocos agendado/publicado no banco. Só longos (Short não vira bloco).
@@ -75,3 +76,22 @@ def cobertura(longos: int, longos_por_dia: float, hoje: date | None = None,
             "coberto_ate": hoje + timedelta(days=math.ceil(dias))
             if dias or (ultimo and ultimo >= hoje) else None,
             "ultimo_agendado": ultimo, "agendados_futuros": agenda["futuros"]}
+
+
+def longos_no_dia(dia: date) -> int:
+    """Blocos agendado/publicado com publish_at (horário de Brasília) no dia. Banco fora do
+    ar = 0 (a rede de segurança do Curador prefere processar a deixar o canal vazio)."""
+    try:
+        from _eventos import conectar
+        con = conectar()
+        try:
+            linhas = con.execute("SELECT publish_at FROM blocos WHERE publish_at IS NOT NULL "
+                                 "AND status IN ('agendado', 'publicado')").fetchall()
+        finally:
+            con.close()
+    except Exception as e:  # noqa: BLE001 — banco é best-effort
+        import sys
+        print(f"[aviso] não li a agenda de {dia:%d/%m} no banco ({e}): considerando vazia",
+              file=sys.stderr)
+        return 0
+    return sum(1 for (p,) in linhas if (q := _local(p)) is not None and q.date() == dia)

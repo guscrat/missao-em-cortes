@@ -41,6 +41,18 @@ def modo_thumb() -> str:
     return "ab" if modo == "ab" else "classica"
 
 
+def curador_modo(cfg: dict | None = None) -> str:
+    """config/canais.json → "curador_modo": 'automatico' (o Curador escolhe e processa quando
+    o estoque cai) ou 'sugerir' (só sugere; o Gu escolhe no painel, e o Curador processa
+    sozinho só se o canal ficaria sem longo amanhã). Ausente/ilegível/outro valor = 'sugerir'
+    (o modo que não gasta sem o Gu). cfg = canais.json já lido (o Curador)."""
+    try:
+        cfg = cfg if cfg is not None else json.loads(CANAIS_JSON.read_text(encoding="utf-8"))
+        return "automatico" if cfg.get("curador_modo") == "automatico" else "sugerir"
+    except (OSError, ValueError, AttributeError):
+        return "sugerir"
+
+
 def modo_evento(hoje: date | None = None, cfg: dict | None = None) -> dict | None:
     """Modo evento do config/canais.json (ex.: 2º turno): {"desde", "ate", "tema"} enquanto
     "modo_evento" for true e hoje estiver entre modo_evento_desde e modo_evento_ate
