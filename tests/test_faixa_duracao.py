@@ -3,6 +3,7 @@
 import ast
 import importlib.util
 import json
+import io
 import runpy
 import sqlite3
 import subprocess
@@ -205,12 +206,15 @@ PIPELINE = SCRIPTS / "pipeline.py"
 def _rodar(monkeypatch, argv):
     cmds = []
 
-    def fake_run(cmd, *a, **k):
-        nome = Path(cmd[1]).name
-        if nome != "sincronizar_estado.py":
-            cmds.append((nome, list(cmd[2:])))
-        return SimpleNamespace(returncode=0)
-    monkeypatch.setattr(subprocess, "run", fake_run)
+    class FakePopen:   # os steps rodam via Popen (pipeline.rodar)
+        def __init__(self, cmd, *a, **k):
+            cmds.append((Path(cmd[1]).name, list(cmd[2:])))
+            self.stderr = io.BufferedReader(io.BytesIO(b""))
+
+        def wait(self):
+            return 0
+    monkeypatch.setattr(subprocess, "Popen", FakePopen)
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=0))
     monkeypatch.setattr(_eventos, "evento", lambda *a, **k: None)
     monkeypatch.setattr(sys, "argv", ["pipeline.py", "stem_x", *argv])
     try:

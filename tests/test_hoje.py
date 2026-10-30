@@ -299,6 +299,67 @@ def test_token_invalid_grant_ate_ok_posterior(tmp_path):
     assert hoje.alertas_token(ev, AGORA, secrets=tmp_path) == []
 
 
+def test_curador_pipeline_resolvido_por_ok_do_script_citado(tmp_path):
+    ev = _ev((5, "curador_pipeline", "pipeline", "falha", "11_revisor.py falhou", "a"),
+             (2, "revisor", "11_revisor", "ok", "aprovou", "a"))
+    ev["agente"] = ev["agente"].replace("curador_pipeline", "curador")
+    assert hoje.alertas_curador(ev, AGORA, log=tmp_path / "x.log") == []
+    assert hoje.falhas_com_resolucao(ev, AGORA - pd.Timedelta(hours=48))["resolvida"].notna().all()
+
+
+def test_ok_de_outra_stem_ou_anterior_nao_resolve(tmp_path):
+    ev = _ev((5, "curador", "pipeline", "falha", "11_revisor.py falhou", "a"),
+             (2, "revisor", "11_revisor", "ok", "outra live", "b"),
+             (8, "revisor", "11_revisor", "ok", "antes da falha", "a"))
+    r = hoje.alertas_curador(ev, AGORA, log=tmp_path / "x.log")
+    assert len(r) == 1
+    f = hoje.falhas_com_resolucao(ev, AGORA - pd.Timedelta(hours=48))
+    assert f["resolvida"].isna().all()
+
+
+def _res(*linhas):
+    f = hoje.falhas_com_resolucao(_ev(*linhas), AGORA - pd.Timedelta(hours=48))
+    return f[f["etapa"] == "03_segmentar"]["resolvida"]
+
+
+def test_falha_pipeline_resolvida_por_step_posterior():
+    assert _res((10, "pipeline", "03_segmentar", "falha", "exit 1: x", "a"),
+                (2, "pipeline", "06_montar", "ok", "", "a")).notna().all()
+
+
+def test_falha_pipeline_nao_resolvida_por_step_anterior_outra_stem_ou_outro_agente():
+    assert _res((10, "pipeline", "03_segmentar", "falha", "exit 1", "a"),
+                (5, "pipeline", "02_transcribe", "ok", "", "a"),
+                (4, "pipeline", "06_montar", "ok", "", "b"),
+                (3, "revisor", "11_revisor", "ok", "", "a")).isna().all()
+
+
+def test_falhas_com_resolucao_vazio():
+    f = hoje.falhas_com_resolucao(pd.DataFrame(), AGORA)
+    assert f.empty and "resolvida" in f.columns
+
+
+def test_historico_alertas_render_sem_quebrar():
+    ev = _ev((5, "curador", "pipeline", "falha", "11_revisor.py falhou", "a"),
+             (2, "revisor", "11_revisor", "ok", "x", "a"))
+    f = hoje.falhas_com_resolucao(ev, AGORA - pd.Timedelta(days=30))
+    c = pd.DataFrame([("a", 1.5, 2.0, pd.Timestamp("2026-10-20"), "cara")],
+                     columns=["stem", "custo_usd", "teto", "ultimo", "situacao"])
+
+    import tempfile
+    from pathlib import Path
+    d = Path(tempfile.mkdtemp())
+    f.to_pickle(d / "f.pkl")
+    c.to_pickle(d / "c.pkl")
+    src = chr(10).join(["import sys", f"sys.path.insert(0, {str(Path(hoje.__file__).parent)!r})",
+                     "import pandas as pd", "import hoje",
+                     f"hoje.historico_alertas(pd.read_pickle({str(d / 'f.pkl')!r}), "
+                     f"pd.read_pickle({str(d / 'c.pkl')!r}))"])
+    at = AppTest.from_string(src).run()
+    assert not at.exception
+    assert len(at.expander) == 1 and "1 falha" in at.expander[0].label
+
+
 # ── cota ───────────────────────────────────────────────────────────────────
 
 def _cota(tmp_path, dia, usadas, limite=10_000):

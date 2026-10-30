@@ -44,7 +44,7 @@ tests/            pytest, tudo mockado
 Scripts (`scripts/`):
 - **Pipeline:** `pipeline.py` (orquestrador) · `01_baixar` · `02_transcribe` · `03_segmentar` · `04_cortar` · `04b_polir` · `04c_legendas` · `05_cards` · `06_montar` · `08_descricao`
 - **Off-pipeline:** `07_thumb` · `07b_colagem` · `09_upload` · `10_shorts` · `11_revisor` · `12_metricas` · `13_curador` · `14_canal` · `15_placar` · `16_thumb_ab` · `17_analytics` · `dia_d` · `calibrar_zoom` · `personagens` · `sincronizar_estado` · `tarefa` · `hook_agente` · `curador_oculto` (Agendador → Curador sem janela)
-- **Helpers (`_*.py`):** `_paths` (resolve pasta por stem, falha alto se ambíguo) · `_ffmpeg` (formato canônico) · `_eventos` (banco) · `_descricoes` · `_legenda` · `_grafias` · `_editor` · `_colagem` · `_thumb_rosto` · `_publicacao` · `_google` · `_youtube_leitura` · `_canal` · `_fronteira` (ponto de corte natural: fim de frase + pausa, faixas de duração)
+- **Helpers (`_*.py`):** `_paths` (resolve pasta por stem, falha alto se ambíguo) · `_ffmpeg` (formato canônico) · `_eventos` (banco) · `_descricoes` · `_legenda` · `_grafias` · `_editor` · `_colagem` · `_thumb_rosto` · `_publicacao` · `_google` · `_youtube_leitura` · `_canal` · `_rodar` (roda step do pipeline com stderr ao vivo; a última linha vira o detalhe da falha) · `_fronteira` (ponto de corte natural: fim de frase + pausa, faixas de duração)
 
 ## Pipeline
 
