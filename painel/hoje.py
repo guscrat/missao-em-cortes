@@ -8,14 +8,20 @@ e é ele quem grava no banco.
 
 Alertas (faixa acima das abas, aparece em qualquer aba):
   - Curador rodando agora (desde HH:MM — etapa X) ou parado no meio (processo sumiu)
-  - falha do Curador (evento de falha, Traceback no state/curador.log ou não rodou às 17h)
+  - falha do Curador (evento de falha, Traceback no state/curador.log ou não rodou às 17h); some
+    quando a mesma etapa, ou o script citado na mensagem ("11_revisor.py falhou"), dá ok depois
+    na mesma live, mesmo rodado fora do Curador
   - erro de download (01_baixar falhou dentro do Curador)
   - token do YouTube/Analytics ausente, sem refresh_token ou recusado (invalid_grant)
   - cota diária do YouTube perto do limite (state/cota_youtube.json, gravado pelo 09)
   - estoque abaixo de dias_minimos (modo sugerir: "escolha uma sugestão") e nada agendado pra amanhã
   - Curador processou sozinho pela rede de segurança (evento curador_rede, últimas 24h)
-  - custo de API de uma live acima de alerta_live_usd (US$ 1); acima de trava_live_usd (US$ 2)
-    os scripts pagos param (scripts/_custo.py) até o Gu liberar
+  - live travada por custo: acima de trava_live_usd (US$ 2) os scripts pagos param
+    (scripts/_custo.py) até o Gu liberar
+
+Histórico de alertas (expander abaixo da faixa): falhas dos últimos 30 dias, resolvidas ou não,
+e lives que passaram de alerta_live_usd (US$ 1). Informativo: não pede ação, por isso não fica
+na faixa.
 
 Placar do canal: o Analista grava state/placar.json; até lá a seção fica com o espaço vazio.
   {"atualizado": "2026-11-01T10:00:00-03:00", "inscritos": 312,
@@ -53,6 +59,8 @@ JANELA_FALHA = timedelta(hours=48)
 JANELA_TOKEN = timedelta(days=7)
 JANELA_CUSTO_LIVE = timedelta(days=7)        # live sem gasto há mais que isso sai do alerta
 JANELA_REDE = timedelta(hours=24)            # aviso "processei X porque o canal ficaria sem vídeo"
+JANELA_HISTORICO = timedelta(days=30)
+RE_SCRIPT = re.compile(r"\b(\d{2}[a-z]?_[a-z]+)")   # "11_revisor.py falhou" → 11_revisor
 LOG_PEDIDOS = STATE / "curador_pedidos.log"  # saída do botão Processar (o curador.log é das 17h)
 TOKENS = [("YouTube (publicar)", "youtube_token.json"), ("YouTube Analytics", "analytics_token.json")]
 RE_TOKEN = re.compile(r"invalid_grant|RefreshError|token.*(expir|venc|revog|inv[aá]lid)|"
@@ -181,14 +189,35 @@ def decisoes(tarefas: pd.DataFrame, blocos: pd.DataFrame) -> list[tuple[str, str
 
 # ── alertas: (nível "erro"|"aviso", título, detalhe) ──────────────────────
 
-def _falhas_sem_ok(eventos: pd.DataFrame, desde: pd.Timestamp) -> pd.DataFrame:
-    """Falhas recentes que não foram seguidas por um ok da mesma etapa+stem."""
+def falhas_com_resolucao(eventos: pd.DataFrame, desde: pd.Timestamp) -> pd.DataFrame:
+    """Falhas desde `desde` + coluna `resolvida` (ts do 1º ok posterior na mesma live, na mesma
+    etapa ou no script citado na mensagem; NaT = em aberto). Ex.: o Curador grava
+    curador_pipeline "11_revisor.py falhou"; o 11 rodado à mão depois resolve."""
     if eventos.empty:
-        return eventos
-    ev = eventos[eventos["ts"] >= desde].sort_values("ts")
-    ultimo = ev[ev["status"].isin({"ok", "falha"})] \
-        .groupby([ev["etapa"], ev["stem"].fillna("")]).tail(1)
-    return ultimo[ultimo["status"] == "falha"]
+        return eventos.assign(resolvida=pd.Series(dtype="datetime64[ns]"))
+    falhas = eventos[(eventos["status"] == "falha") & (eventos["ts"] >= desde)].sort_values("ts")
+    oks = eventos[eventos["status"] == "ok"]
+    stem_ok = oks["stem"].fillna("")
+    resolvida = []
+    for f in falhas.itertuples():
+        msg = f.mensagem if isinstance(f.mensagem, str) else ""
+        stem = f.stem if isinstance(f.stem, str) else ""
+        ok = oks[(oks["ts"] > f.ts) & (stem_ok == stem)
+                 & oks["etapa"].isin({f.etapa, *RE_SCRIPT.findall(msg)})]
+        resolvida.append(ok["ts"].min() if not ok.empty else pd.NaT)
+    return falhas.assign(resolvida=pd.to_datetime(pd.Series(resolvida, index=falhas.index,
+                                                            dtype="object")))
+
+
+def _falhas_sem_ok(eventos: pd.DataFrame, desde: pd.Timestamp, agente: str | None = None) -> pd.DataFrame:
+    """Falhas recentes ainda em aberto (a última de cada etapa+stem)."""
+    falhas = falhas_com_resolucao(eventos, desde)
+    if agente is not None and not falhas.empty:
+        falhas = falhas[falhas["agente"] == agente]
+    if falhas.empty:
+        return falhas
+    abertas = falhas[falhas["resolvida"].isna()]
+    return abertas.groupby([abertas["etapa"], abertas["stem"].fillna("")]).tail(1)
 
 
 def _alerta_pulado(eventos: pd.DataFrame, agora: pd.Timestamp) -> list[tuple[str, str, str]]:
@@ -223,8 +252,7 @@ def alertas_curador(eventos: pd.DataFrame, agora: pd.Timestamp,
                     log: Path | None = None) -> list[tuple[str, str, str]]:
     log = log or STATE / "curador.log"
     saida = []
-    falhas = _falhas_sem_ok(eventos[eventos["agente"] == "curador"] if not eventos.empty
-                            else eventos, agora - JANELA_FALHA)
+    falhas = _falhas_sem_ok(eventos, agora - JANELA_FALHA, agente="curador")
     for f in falhas.itertuples():
         msg = f.mensagem if isinstance(f.mensagem, str) else ""
         quando = f.ts.strftime("%d/%m %Hh%M")
@@ -358,27 +386,40 @@ def alertas_operacao(est: dict | None, amanha: pd.DataFrame) -> list[tuple[str, 
     return saida
 
 
+def _tetos(custos: pd.DataFrame, trava: float, liberadas_path: Path | None) -> pd.Series:
+    """Teto de cada live: a trava padrão ou o que o Gu liberou (state/orcamento_lives.json)."""
+    liberadas = ler_json(liberadas_path or STATE / "orcamento_lives.json")
+    return custos["stem"].map(lambda s: max(trava, float(liberadas.get(s) or 0)))
+
+
 def alertas_custo_live(custos: pd.DataFrame, agora: pd.Timestamp, alerta: float, trava: float,
                        liberadas_path: Path | None = None) -> list[tuple[str, str, str]]:
     """custos: colunas stem, custo_usd (soma da live), ultimo (ts do último gasto).
-    >= trava (e acima do que o Gu liberou) = erro: os scripts pagos dessa live estão parados."""
+    Só >= teto vai pra faixa (erro: os scripts pagos dessa live estão parados). Live cara
+    (>= alerta, abaixo do teto) é informativa: fica no historico_custo_live."""
     if custos.empty:
         return []
-    liberadas = ler_json(liberadas_path or STATE / "orcamento_lives.json")
     recentes = custos[pd.to_datetime(custos["ultimo"]) >= agora - JANELA_CUSTO_LIVE]
-    saida = []
-    for c in recentes.sort_values("custo_usd", ascending=False).itertuples():
-        teto = max(trava, float(liberadas.get(c.stem) or 0))
-        if c.custo_usd >= teto:
-            saida.append(("erro", f"Live travada por custo: {c.stem}",
-                          f"já gastou US$ {c.custo_usd:.2f} de API (teto US$ {teto:.2f}); as "
-                          f"etapas pagas param até você liberar: uv run py scripts/_custo.py "
-                          f"liberar {c.stem}"))
-        elif c.custo_usd >= alerta:
-            extra = f" (liberada até US$ {teto:.2f})" if teto > trava else f"; trava em US$ {teto:.2f}"
-            saida.append(("aviso", f"Live cara: {c.stem}",
-                          f"US$ {c.custo_usd:.2f} de API{extra}."))
-    return saida
+    recentes = recentes.assign(teto=_tetos(recentes, trava, liberadas_path))
+    return [("erro", f"Live travada por custo: {c.stem}",
+             f"já gastou US$ {c.custo_usd:.2f} de API (teto US$ {c.teto:.2f}); as etapas pagas "
+             f"param até você liberar: uv run py scripts/_custo.py liberar {c.stem}")
+            for c in recentes.sort_values("custo_usd", ascending=False).itertuples()
+            if c.custo_usd >= c.teto]
+
+
+def historico_custo_live(custos: pd.DataFrame, agora: pd.Timestamp, alerta: float, trava: float,
+                         liberadas_path: Path | None = None) -> pd.DataFrame:
+    """Lives que passaram de `alerta` com gasto nos últimos 30 dias, a mais recente primeiro."""
+    colunas = ["stem", "custo_usd", "teto", "ultimo", "situacao"]
+    if custos.empty:
+        return pd.DataFrame(columns=colunas)
+    c = custos.assign(ultimo=pd.to_datetime(custos["ultimo"]))
+    c = c[(c["ultimo"] >= agora - JANELA_HISTORICO) & (c["custo_usd"] >= alerta)]
+    c = c.assign(teto=_tetos(c, trava, liberadas_path))
+    c = c.assign(situacao=[("travada" if v >= t else f"liberada até US$ {t:.2f}" if t > trava
+                            else "cara") for v, t in zip(c["custo_usd"], c["teto"])])
+    return c.sort_values("ultimo", ascending=False)[colunas]
 
 
 def faixa_alertas(alertas: list[tuple[str, str, str]]) -> None:
@@ -387,6 +428,35 @@ def faixa_alertas(alertas: list[tuple[str, str, str]]) -> None:
     itens = "".join(f"<div class='al {nivel}'><b>{html.escape(titulo)}</b> · {html.escape(detalhe)}</div>"
                     for nivel, titulo, detalhe in alertas)
     st.markdown(f"{CSS}<div class='alertas'>{itens}</div>", unsafe_allow_html=True)
+
+
+def historico_alertas(falhas: pd.DataFrame, custos: pd.DataFrame) -> None:
+    """Expander abaixo da faixa: falhas (resolvidas ou não) e lives caras dos últimos 30 dias."""
+    if falhas.empty and custos.empty:
+        return
+    abertas = int(falhas["resolvida"].isna().sum()) if not falhas.empty else 0
+    partes = [f"{len(falhas)} falha(s)" + (f", {abertas} em aberto" if abertas else ""),
+              f"{len(custos)} live(s) cara(s)"]
+    with st.expander(f"Histórico de alertas · {' · '.join(partes)} (30 dias)"):
+        if not falhas.empty:
+            st.markdown("**Falhas**")
+            st.dataframe(
+                falhas.sort_values("ts", ascending=False)
+                .assign(situacao=falhas["resolvida"].map(lambda r: "em aberto" if pd.isna(r)
+                                                         else f"resolvida {r:%d/%m %Hh%M}"))
+                [["ts", "agente", "etapa", "stem", "mensagem", "situacao"]],
+                width="stretch", hide_index=True,
+                column_config={"ts": st.column_config.DatetimeColumn("quando", format="DD/MM HH:mm"),
+                               "stem": "live", "situacao": "situação"})
+        if not custos.empty:
+            st.markdown("**Lives caras**")
+            st.dataframe(custos, width="stretch", hide_index=True,
+                         column_config={"stem": "live",
+                                        "custo_usd": st.column_config.NumberColumn("gasto", format="$%.2f"),
+                                        "teto": st.column_config.NumberColumn("teto", format="$%.2f"),
+                                        "ultimo": st.column_config.DatetimeColumn(
+                                            "último gasto", format="DD/MM HH:mm"),
+                                        "situacao": "situação"})
 
 
 # ── sugestões do Curador (modo sugerir) ──────────────────────────────────

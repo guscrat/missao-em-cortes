@@ -227,9 +227,9 @@ def test_alerta_vazio_e_abaixo_do_alerta(tmp_path):
                                    tmp_path / "n.json") == []
 
 
-def test_alerta_aviso_a_partir_de_1(tmp_path):
+def test_alerta_live_cara_nao_vai_pra_faixa(tmp_path):
     r = hoje.alertas_custo_live(_custos(("a", 1.0, "2026-10-26 10:00")), AGORA, 1, 2, tmp_path / "n.json")
-    assert [x[0] for x in r] == ["aviso"] and "a" in r[0][1]
+    assert r == []   # live cara só aparece no histórico, não na faixa
 
 
 def test_alerta_erro_a_partir_de_2(tmp_path):
@@ -237,11 +237,11 @@ def test_alerta_erro_a_partir_de_2(tmp_path):
     assert [x[0] for x in r] == ["erro"] and "liberar a" in r[0][2]
 
 
-def test_alerta_liberada_vira_aviso_e_depois_erro(tmp_path):
+def test_alerta_liberada_some_da_faixa_e_depois_erro(tmp_path):
     lib = tmp_path / "lib.json"
     lib.write_text(json.dumps({"a": 4.0}), encoding="utf-8")
     r = hoje.alertas_custo_live(_custos(("a", 2.5, "2026-10-26 10:00")), AGORA, 1, 2, lib)
-    assert [x[0] for x in r] == ["aviso"] and "liberada até US$ 4.00" in r[0][2]
+    assert r == []   # liberada e abaixo do novo teto: sem faixa
     r = hoje.alertas_custo_live(_custos(("a", 4.0, "2026-10-26 10:00")), AGORA, 1, 2, lib)
     assert [x[0] for x in r] == ["erro"]
 
@@ -260,3 +260,31 @@ def test_alerta_ordena_pelo_maior_gasto(tmp_path):
 
 def test_padrao_do_painel_tem_limites():
     assert hoje.PADRAO["alerta_live_usd"] == 1.0 and hoje.PADRAO["trava_live_usd"] == 2.0
+
+
+# ── historico_custo_live ───────────────────────────────────────────────────
+
+def test_historico_vazio_tem_colunas():
+    h = hoje.historico_custo_live(_custos(), AGORA, 1, 2)
+    assert h.empty and list(h.columns) == ["stem", "custo_usd", "teto", "ultimo", "situacao"]
+
+
+def test_historico_limiar_janela_situacao_e_ordem(tmp_path):
+    lib = tmp_path / "lib.json"
+    lib.write_text(json.dumps({"lib": 4.0}), encoding="utf-8")
+    c = _custos(("baixa", 0.99, "2026-10-26 10:00"),        # abaixo do alerta
+                ("cara", 1.0, "2026-10-20 10:00"),
+                ("lib", 2.5, "2026-10-25 10:00"),
+                ("trav", 2.0, "2026-10-26 09:00"),
+                ("velha", 9.0, "2026-09-01 10:00"))          # fora dos 30 dias
+    h = hoje.historico_custo_live(c, AGORA, 1, 2, lib)
+    assert list(h["stem"]) == ["trav", "lib", "cara"]       # último gasto desc
+    assert list(h["situacao"]) == ["travada", "liberada até US$ 4.00", "cara"]
+    assert list(h["teto"]) == [2.0, 4.0, 2.0]
+
+
+def test_historico_liberada_que_alcancou_o_teto_e_travada(tmp_path):
+    lib = tmp_path / "lib.json"
+    lib.write_text(json.dumps({"a": 4.0}), encoding="utf-8")
+    h = hoje.historico_custo_live(_custos(("a", 4.0, "2026-10-26 10:00")), AGORA, 1, 2, lib)
+    assert list(h["situacao"]) == ["travada"]
