@@ -51,11 +51,12 @@ def test_aprovados_ordem_de_score_e_so_aprovados(tmp_path):
     assert lista[0]["titulo"] == "Título 3" and lista[0]["tags"] == ["a", "b"]
 
 
-def test_agenda_1_ou_2_por_dia():
+def test_agenda_1_por_dia_e_2_so_quando_pedido():
     manha = datetime(2026, 10, 22, 9)
     noite = datetime(2026, 10, 22, 20)
     assert pub.agenda(2, manha) == [date(2026, 10, 22), date(2026, 10, 23)]
-    assert pub.agenda(3, noite) == [date(2026, 10, 23), date(2026, 10, 23), date(2026, 10, 24)]
+    assert pub.agenda(3, noite) == [date(2026, 10, 23), date(2026, 10, 24), date(2026, 10, 25)]
+    assert pub.agenda(3, noite, por_dia=2) == [date(2026, 10, 23), date(2026, 10, 23), date(2026, 10, 24)]
 
 
 def test_gerar_sem_aprovados_nao_grava(tmp_path):
