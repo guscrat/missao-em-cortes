@@ -1,4 +1,5 @@
 """pipeline.py: legenda karaokê (04c) ligada por padrão. subprocess/evento mockados."""
+import io
 import runpy
 import subprocess
 import sys
@@ -9,6 +10,7 @@ import pytest
 
 import _eventos
 
+NL = chr(10)
 PIPELINE = Path(__file__).parent.parent / "scripts" / "pipeline.py"
 
 
@@ -16,11 +18,20 @@ def _rodar(monkeypatch, argv, falha_em=None, desde="--desde=3"):
     """Roda pipeline.py como módulo. Retorna (comandos [(script, args)], SystemExit|None)."""
     cmds = []
 
-    def fake_run(cmd, *a, **k):
-        script = Path(cmd[1]).name
-        cmds.append((script, list(cmd[2:])))
-        return SimpleNamespace(returncode=1 if script == falha_em else 0)
+    class FakePopen:
+        def __init__(self, cmd, *a, **k):
+            self.script = Path(cmd[1]).name
+            cmds.append((self.script, list(cmd[2:])))
+            self.stderr = io.BufferedReader(io.BytesIO(b""))
 
+        def wait(self):
+            return 1 if self.script == falha_em else 0
+
+    def fake_run(cmd, *a, **k):   # sincronizar_estado ao fim continua via subprocess.run
+        cmds.append((Path(cmd[1]).name, list(cmd[2:])))
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(subprocess, "Popen", FakePopen)
     monkeypatch.setattr(subprocess, "run", fake_run)
     monkeypatch.setattr(_eventos, "evento", lambda *a, **k: None)
     monkeypatch.setattr(sys, "argv", ["pipeline.py", "stem_x", *([desde] if desde else []), *argv])
@@ -101,3 +112,71 @@ def test_refazer_vai_so_pro_03(monkeypatch):
 def test_sem_refazer_03_nao_recebe_flag(monkeypatch):
     cmds, _ = _rodar(monkeypatch, [], desde="--desde=3")
     assert "--refazer" not in _por_script(cmds)["03_segmentar.py"]
+
+
+# ── rodar(): stderr ao vivo + detalhe da falha ──────────────────────────────
+
+def _rodar_fn():
+    sys.path.insert(0, str(PIPELINE.parent))
+    import _rodar
+    return _rodar.rodar
+
+
+def test_rodar_captura_ultima_linha_com_acento(tmp_path, capsys):
+    rodar = _rodar_fn()
+    f = tmp_path / "s.py"
+    f.write_text(NL.join(["import sys", "print('ruido', file=sys.stderr)", "sys.exit('msg com acento á')"]), encoding="utf-8")
+    cod, msg = rodar([sys.executable, str(f)])
+    assert (cod, msg) == (1, "msg com acento á")
+
+
+def test_rodar_ok_sem_stderr(tmp_path):
+    rodar = _rodar_fn()
+    f = tmp_path / "ok.py"
+    f.write_text("print('oi')", encoding="utf-8")
+    assert rodar([sys.executable, str(f)]) == (0, "")
+
+
+def test_rodar_trunca_em_200(tmp_path):
+    rodar = _rodar_fn()
+    f = tmp_path / "g.py"
+    f.write_text(NL.join(["import sys", "sys.exit('x' * 500)"]), encoding="utf-8")
+    cod, msg = rodar([sys.executable, str(f)])
+    assert cod == 1 and len(msg) == 200
+
+
+def test_evento_de_falha_inclui_detalhe(monkeypatch):
+    eventos = []
+
+    class FakePopen:
+        def __init__(self, cmd, *a, **k):
+            self.stderr = io.BufferedReader(io.BytesIO("ValueError: inválido".encode() + bytes([10])))
+
+        def wait(self):
+            return 2
+
+    monkeypatch.setattr(subprocess, "Popen", FakePopen)
+    monkeypatch.setattr(_eventos, "evento", lambda *a, **k: eventos.append((a, k)))
+    monkeypatch.setattr(sys, "argv", ["pipeline.py", "stem_x", "--desde=3"])
+    with pytest.raises(SystemExit):
+        runpy.run_path(str(PIPELINE), run_name="__main__")
+    falha = [(a, k) for a, k in eventos if "falha" in a]
+    assert falha and falha[0][1]["mensagem"] == "exit 2: ValueError: inválido"
+
+
+def test_evento_de_falha_sem_stderr_so_exit(monkeypatch):
+    eventos = []
+
+    class FakePopen:
+        def __init__(self, cmd, *a, **k):
+            self.stderr = io.BufferedReader(io.BytesIO(b""))
+
+        def wait(self):
+            return 3
+
+    monkeypatch.setattr(subprocess, "Popen", FakePopen)
+    monkeypatch.setattr(_eventos, "evento", lambda *a, **k: eventos.append((a, k)))
+    monkeypatch.setattr(sys, "argv", ["pipeline.py", "stem_x", "--desde=3"])
+    with pytest.raises(SystemExit):
+        runpy.run_path(str(PIPELINE), run_name="__main__")
+    assert [k["mensagem"] for a, k in eventos if "falha" in a] == ["exit 3"]
