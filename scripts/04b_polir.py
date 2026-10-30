@@ -400,6 +400,7 @@ if only_bloco is not None and not reaplicar:
     print(f"Modo --bloco={only_bloco}: processando só esse bloco")
 
 usos = []   # um _custo.uso() por chamada; vira um evento só no fim
+falhas = []  # (bloco, motivo): sem polido, o 06 --polido não monta o bloco → sai com erro
 
 for b in data["blocos"]:
     if only_bloco is not None and b["id"] != only_bloco:
@@ -443,6 +444,7 @@ for b in data["blocos"]:
                 usos.append(_custo.uso(resp, MODELO))
             except Exception as e:
                 print(f"  ERRO Claude: {e}. Pulando este bloco.")
+                falhas.append((b["id"], _custo.descrever_erro(e)))
                 continue
             intervalos = mesclar_intervalos(proteger(silencios + intervalos_llm, palavras, dur)
                                             + fixos)
@@ -463,6 +465,7 @@ for b in data["blocos"]:
         print(f"  OK polido: {saida.name} ({size_mb:.1f} MB)")
     except Exception as e:
         print(f"  ERRO ffmpeg: {e}")
+        falhas.append((b["id"], f"ffmpeg: {type(e).__name__}"))
         continue
 
     if not reaplicar:
@@ -491,3 +494,9 @@ else:
         print(f"Custo total: input {uso['tokens_in']:,} tok · output {uso['tokens_out']:,} tok "
               f"(~${uso['custo_usd']:.2f}){_custo.resumo(uso)}")
         evento(stem, "04b_polir", "llm", agente="editor", **uso, mensagem=MODELO)
+
+if falhas:
+    resumo = "; ".join(f"bloco {bid}: {motivo}" for bid, motivo in falhas)
+    evento(stem, "04b_polir", "falha", agente="editor", mensagem=resumo[:300])
+    sys.exit(f"\n[!] {len(falhas)} bloco(s) sem polimento ({resumo}). Os que deram certo "
+             f"ficaram salvos; rode de novo depois de resolver.")
