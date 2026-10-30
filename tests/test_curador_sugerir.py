@@ -355,14 +355,14 @@ def test_disparar_processamento_devolve_erro_se_todas_falham(monkeypatch):
     assert "sem permissão" in hoje.disparar_processamento("abc")
 
 
-def _render_sugestoes(tmp_path, linhas):
+def _render_sugestoes(tmp_path, linhas, ocupado=False):
     from streamlit.testing.v1 import AppTest
     cols = ["video_id", "titulo", "canal", "url", "duracao_min", "data", "prioridade",
             "motivo", "status", "mensagem"]
     pd.DataFrame(linhas, columns=cols).to_pickle(tmp_path / "s.pkl")
     src = "\n".join(["import sys", f"sys.path.insert(0, {str(hoje.Path(hoje.__file__).parent)!r})",
                      "import pandas as pd", "import hoje",
-                     f"hoje.secao_sugestoes(pd.read_pickle({str(tmp_path / 's.pkl')!r}), False)"])
+                     f"hoje.secao_sugestoes(pd.read_pickle({str(tmp_path / 's.pkl')!r}), {ocupado})"])
     return AppTest.from_string(src).run()
 
 
@@ -376,6 +376,22 @@ def test_secao_sugestoes_fica_num_expander_fechado(tmp_path):
     assert exp.label == "Sugestões do Curador · 3 · 1 processando · 1 falhou"
     assert not exp.proto.expanded
     assert [b.label for b in exp.button] == ["Tentar de novo", "Processar"]
+
+
+_PEDIDA = [("p", "Live P", "Kim", "u", 60.0, "2026-10-28", 4, "m", "pedida", None)]
+
+
+def test_secao_sugestoes_pedida_parada_tem_disparar_dentro_do_expander(tmp_path):
+    at = _render_sugestoes(tmp_path, _PEDIDA, ocupado=False)
+    exp, = at.expander
+    assert exp.label == "Sugestões do Curador · 1 · 1 na fila"
+    assert [b.label for b in exp.button] == ["Disparar"]
+    assert not at.button[0].proto.disabled and len(at.button) == 1
+
+
+def test_secao_sugestoes_pedida_com_curador_ocupado_sem_botao(tmp_path):
+    at = _render_sugestoes(tmp_path, _PEDIDA, ocupado=True)
+    assert not at.exception and not at.button
 
 
 def test_secao_sugestoes_vazia_sem_expander(tmp_path):
