@@ -355,6 +355,35 @@ def test_disparar_processamento_devolve_erro_se_todas_falham(monkeypatch):
     assert "sem permissão" in hoje.disparar_processamento("abc")
 
 
+def _render_sugestoes(tmp_path, linhas):
+    from streamlit.testing.v1 import AppTest
+    cols = ["video_id", "titulo", "canal", "url", "duracao_min", "data", "prioridade",
+            "motivo", "status", "mensagem"]
+    pd.DataFrame(linhas, columns=cols).to_pickle(tmp_path / "s.pkl")
+    src = "\n".join(["import sys", f"sys.path.insert(0, {str(hoje.Path(hoje.__file__).parent)!r})",
+                     "import pandas as pd", "import hoje",
+                     f"hoje.secao_sugestoes(pd.read_pickle({str(tmp_path / 's.pkl')!r}), False)"])
+    return AppTest.from_string(src).run()
+
+
+def test_secao_sugestoes_fica_num_expander_fechado(tmp_path):
+    at = _render_sugestoes(tmp_path, [
+        ("a", "Live A", "Kim", "u", 90.0, "2026-10-29", 8, "m", "processando", None),
+        ("b", "Live B", "Renan", "u", None, None, 5, "m", "falhou", "erro"),
+        ("c", "Live C", "Renan", "u", 60.0, "2026-10-28", 3, "m", "sugerida", None)])
+    assert not at.exception
+    exp, = at.expander
+    assert exp.label == "Sugestões do Curador · 3 · 1 processando · 1 falhou"
+    assert not exp.proto.expanded
+    assert [b.label for b in exp.button] == ["Tentar de novo", "Processar"]
+
+
+def test_secao_sugestoes_vazia_sem_expander(tmp_path):
+    at = _render_sugestoes(tmp_path, [])
+    assert not at.exception and not at.expander
+    assert "nenhuma em aberto" in at.caption[0].value
+
+
 # --- sugestão presa em "processando" (processo caiu no meio) ------------------------------
 
 def test_destravar_zumbis_volta_processando_pra_falhou(banco):
