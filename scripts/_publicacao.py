@@ -3,8 +3,9 @@
 Só os blocos APROVADOS pelo revisor (revisao.json), em ordem de score, com arquivo final,
 as thumbs a/b/c pro "Testar e comparar" do Studio (cada uma marcada template ou colagem; a
 manual escolhida pelo revisor sobe sozinha), título/descrição/tags do descricoes.txt (edição manual vale)
-e uma sugestão de dia: 1 por dia, ou 2 por dia quando há 3+ aprovados (conteúdo de live
-envelhece rápido). As datas continuam DEPOIS do último longo agendado/publicado no canal
+e uma sugestão de dia: 1 por dia; 2 por dia só no modo evento com 3+ aprovados (live
+extraordinária que precisa sair rápido e se mesclar com o que já está agendado). As datas
+continuam DEPOIS do último longo agendado/publicado no canal
 (state/canal.json do 14_canal + publish_at do banco), pra não brigar com o que já está na
 fila do YouTube (no modo evento do config/canais.json, começam hoje/amanhã: na frente
 dos agendados). Enquanto config/upload.json → auditoria_aprovada for false, a lista
@@ -100,14 +101,14 @@ def ultimo_agendado() -> date | None:
     return agenda_canal()["ultimo"]
 
 
-def agenda(n: int, agora: datetime | None = None, depois_de: date | None = None) -> list[date]:
+def agenda(n: int, agora: datetime | None = None, depois_de: date | None = None,
+           por_dia: int = 1) -> list[date]:
     """Dia sugerido pra cada um dos n vídeos (já em ordem de score), começando depois do
-    último agendado (depois_de), se houver."""
+    último agendado (depois_de), se houver. por_dia=2 só no modo evento (ver gerar)."""
     agora = agora or datetime.now()
     inicio = agora.date() if agora.hour < CORTE_HOJE else agora.date() + timedelta(days=1)
     if depois_de and depois_de >= inicio:
         inicio = depois_de + timedelta(days=1)
-    por_dia = 2 if n >= 3 else 1
     return [inicio + timedelta(days=i // por_dia) for i in range(n)]
 
 
@@ -153,7 +154,7 @@ def gerar(pasta: Path, agora: datetime | None = None,
             inicio = depois_de + timedelta(days=1)
         dias = [inicio + timedelta(days=i // len(grade)) for i in range(len(lista))]
     else:
-        dias = agenda(len(lista), agora, depois_de)
+        dias = agenda(len(lista), agora, depois_de, por_dia=2 if evento and len(lista) >= 3 else 1)
     hs = horas(grade, dias, agora)
     com_shorts = auditoria_aprovada()
     linhas = [f"# Publicação manual — {pasta.name}",
