@@ -78,6 +78,33 @@ def test_cortes_publicados_canal_que_falha_e_pulado(cache, capsys):
     assert "Canal A" in capsys.readouterr().out
 
 
+def test_cortes_publicados_canal_que_falha_mantem_os_cortes_do_cache(cache):
+    f = Fontes({"a1": ["liveX"], "b1": ["liveY"]})
+    cu.cortes_publicados([CANAL_A, CANAL_B], 30, listar=lambda c, n: {"Canal A": ["a1"],
+                                                                      "Canal B": ["b1"]}[c["nome"]],
+                         fontes=f)
+
+    def listar(c, n):
+        if c["nome"] == "Canal A":
+            raise RuntimeError("yt-dlp caiu")
+        return ["b1"]
+    achados = cu.cortes_publicados([CANAL_A, CANAL_B], 30, listar=listar, fontes=f)
+    assert achados == {"liveX": {"Canal A": 1}, "liveY": {"Canal B": 1}}
+    assert set(json.loads(cache.read_text(encoding="utf-8"))) == {"a1", "b1"}
+
+
+def test_cortes_publicados_nenhum_canal_lista_levanta_e_nao_mexe_no_cache(cache):
+    f = Fontes({"a1": ["liveX"]})
+    cu.cortes_publicados([CANAL_A], 30, listar=lambda c, n: ["a1"], fontes=f)
+    antes = cache.read_text(encoding="utf-8")
+
+    def cai(c, n):
+        raise RuntimeError("yt-dlp caiu")
+    with pytest.raises(RuntimeError, match="nenhum canal de corte listou"):
+        cu.cortes_publicados([CANAL_A, CANAL_B], 30, listar=cai, fontes=f)
+    assert cache.read_text(encoding="utf-8") == antes
+
+
 def test_cortes_publicados_descricao_que_falha_nao_entra_no_cache(cache):
     f = Fontes({"a1": ["liveX"], "a2": ["liveY"]}, falham=["a2"])
     achados = cu.cortes_publicados([CANAL_A], 30, listar=lambda c, n: ["a1", "a2"], fontes=f)
@@ -259,6 +286,19 @@ def test_views_primeiros_7d_janela_idade_e_feitos():
     c = fake.chamadas[0]
     assert (c["startDate"], c["endDate"]) == ("2026-10-19", "2026-10-25")    # pub .. pub+6
     assert len(fake.chamadas) == 2
+
+
+def test_views_primeiros_7d_falha_num_video_guarda_os_outros(monkeypatch):
+    def basicas(analytics, ids, ini, fim):
+        if ids == ["ruim"]:
+            raise RuntimeError("quota")
+        return {ids[0]: {"views": 7}}
+    monkeypatch.setattr(an, "basicas", basicas)
+    videos = [_vid("ruim", "2026-10-01"), _vid("bom", "2026-10-02")]
+    r = an.views_primeiros_7d(None, videos, date(2026, 10, 28), set())
+    assert [x["youtube_id"] for x in r] == ["bom"]
+    with pytest.raises(RuntimeError):                     # nenhum deu certo: o erro sobe (vira aviso)
+        an.views_primeiros_7d(None, [_vid("ruim", "2026-10-01")], date(2026, 10, 28), set())
 
 
 def test_views_primeiros_7d_sem_candidatos_nao_consulta():

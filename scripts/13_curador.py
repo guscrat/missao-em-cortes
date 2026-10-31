@@ -352,18 +352,20 @@ def cortes_publicados(canais: list[dict], n: int, listar=listar_cortes,
                       fontes=fontes_do_corte) -> dict[str, dict[str, int]]:
     """{id da live: {canal de corte: quantos cortes}} pelos `n` vídeos recentes de cada canal.
     A descrição de cada corte é lida 1 vez só (CORTES_CACHE); corte que saiu da listagem sai
-    do cache. Canal que falha na listagem fica de fora com aviso."""
+    do cache. Canal que falha na listagem conta com os cortes dele que já estavam no cache;
+    se nenhum canal listar, levanta erro (a marcação da rodada anterior fica como estava)."""
     try:
         cache = json.loads(CORTES_CACHE.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         cache = {}
-    novo, achados = {}, {}
+    novo, achados, falhas = {}, {}, []
     for canal in canais:
         try:
             ids = listar(canal, n)
         except Exception as e:  # noqa: BLE001 — yt-dlp levanta DownloadError genérico
             print(f"   [aviso] não listei o canal de corte {canal['nome']}: {e}")
-            continue
+            falhas.append(canal["nome"])
+            ids = [vid for vid, c in cache.items() if c.get("canal") == canal["nome"]]
         for vid in ids:
             if vid not in cache:
                 try:
@@ -375,6 +377,8 @@ def cortes_publicados(canais: list[dict], n: int, listar=listar_cortes,
             for fonte in cache[vid]["fontes"]:
                 por_canal = achados.setdefault(fonte, {})
                 por_canal[canal["nome"]] = por_canal.get(canal["nome"], 0) + 1
+    if canais and len(falhas) == len(canais):
+        raise RuntimeError(f"nenhum canal de corte listou ({', '.join(falhas)})")
     CORTES_CACHE.parent.mkdir(parents=True, exist_ok=True)
     CORTES_CACHE.write_text(json.dumps(novo, ensure_ascii=False, indent=1), encoding="utf-8")
     return achados

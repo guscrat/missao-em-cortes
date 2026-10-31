@@ -168,15 +168,22 @@ def trafego_canal(analytics, inicio: str, fim: str) -> list[dict]:
 
 def views_primeiros_7d(analytics, videos: list[dict], hoje: date, feitos: set[str]) -> list[dict]:
     """Views dos 7 primeiros dias (dia da publicação + 6) dos vídeos com DIAS_7D_PRONTO+ dias
-    que ainda não estão em `feitos`. 1 consulta por vídeo."""
-    saida = []
+    que ainda não estão em `feitos`. 1 consulta por vídeo; o que falhar fica pra amanhã (se
+    nenhum der certo, levanta o erro do último)."""
+    saida, erro = [], None
     for v in videos:
         if v["id"] in feitos or _idade(v["publicado"], hoje) < DIAS_7D_PRONTO:
             continue
         ini = date.fromisoformat(v["publicado"][:10])
-        base = basicas(analytics, [v["id"]], ini.isoformat(), (ini + timedelta(days=6)).isoformat())
+        try:
+            base = basicas(analytics, [v["id"]], ini.isoformat(), (ini + timedelta(days=6)).isoformat())
+        except Exception as e:  # noqa: BLE001 — esse vídeo entra na próxima coleta
+            erro = e
+            continue
         saida.append({"youtube_id": v["id"], "titulo": v["titulo"], "publicado": v["publicado"],
                       "duracao_s": v["duracao_s"], "views": base.get(v["id"], {}).get("views", 0)})
+    if erro and not saida:
+        raise erro
     return saida
 
 
