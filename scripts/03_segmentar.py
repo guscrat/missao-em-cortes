@@ -476,8 +476,8 @@ for v in validos:
                           f"{'score maior' if sa != sb else 'o mesmo score e veio antes'}")
         vivos[-1] = fica
 
-# Mínimo de 8 min (anúncio no meio depois da monetização): com os tempos reais (âncora pelo
-# texto), bloco curto sai. O LLM não sente duração; a regra é do código.
+# Mínimo de LONGO_MIN (5 min; sem alvo fixo, o tamanho é o do assunto): com os tempos reais
+# (âncora pelo texto), bloco curto sai. O LLM não sente duração; a regra é do código.
 for b in list(data["blocos"]):
     if b in [v[3] for v in vivos] and (b.get("duracao_minutos") or 0) < fr.LONGO_MIN:
         descartar(b, f"{b['duracao_minutos']:.1f}min com os tempos reais (mínimo é "
@@ -488,11 +488,6 @@ avisos = [a for a in avisos if a.startswith(tuple(f"bloco {i} descartado" for i 
           or not any(a.startswith((f"bloco {i}:", f"bloco {i} (")) for i in fora)]
 if descartados:
     data["descartados"] = descartados
-
-faixas = [b.get("faixa_duracao") for b in data["blocos"] if b.get("faixa_duracao")]
-if len(faixas) >= 3 and len(set(faixas)) == 1:
-    avisos.append(f"todos os {len(faixas)} blocos na faixa '{faixas[0]}': a regra pede variar "
-                  f"(curtos 8-12, médios 12-20, longos 20-30)")
 
 if not data["blocos"] and not erros:
     erros.append("nenhum bloco sobrou depois dos descartes (veja 'descartados')")

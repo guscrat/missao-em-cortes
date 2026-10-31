@@ -520,6 +520,10 @@ def secao_sugestoes(sug: pd.DataFrame, curador_ocupado: bool) -> list[str]:
                      if rotulo else "")
             erro = (f"<small>{html.escape(s.mensagem)}</small>"
                     if s.status == "falhou" and isinstance(s.mensagem, str) else "")
+            cortado = getattr(s, "cortado_por", None)
+            if isinstance(cortado, str):    # None = o Curador não conferiu (sem canais_corte)
+                erro += (f"<small>já cortado por {html.escape(cortado)}</small>" if cortado
+                         else "<small>ninguém cortou ainda</small>")
             with c1:
                 st.markdown(
                     f"<div class='hj-dec'><b>[{int(s.prioridade or 0)}]</b> "
