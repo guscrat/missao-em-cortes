@@ -496,6 +496,21 @@ ROTULO_SUGESTAO = {"sugerida": "", "pedida": "na fila", "processando": "processa
                    "falhou": "falhou"}
 
 
+def marcar_novas(sug: pd.DataFrame) -> pd.DataFrame:
+    """Coluna `nova` = sugerida no dia da última rodada do Curador; novas vão pro topo
+    (depois, maior prioridade). Sem isso a sugestão de hoje some no meio das antigas."""
+    sug = sug.copy()
+    if "sugerida_em" not in sug or sug["sugerida_em"].isna().all():
+        sug["nova"] = False
+        return sug
+    dia = sug["sugerida_em"].astype(str).str[:10]
+    sug["nova"] = dia == dia.max()
+    if sug["nova"].all():          # 1ª rodada (ou todas do mesmo dia): ninguém é "nova"
+        sug["nova"] = False
+    return sug.sort_values(["nova", "prioridade", "data"], ascending=[False, False, False],
+                           kind="stable")
+
+
 def secao_sugestoes(sug: pd.DataFrame, curador_ocupado: bool) -> list[str]:
     """Sugestões em aberto, maior prioridade primeiro, com o botão Processar. Fica num
     expander fechado (a lista é longa); o rótulo mostra o que está andando ou falhou. A
@@ -505,8 +520,11 @@ def secao_sugestoes(sug: pd.DataFrame, curador_ocupado: bool) -> list[str]:
     if sug.empty:
         st.caption("Sugestões do Curador: nenhuma em aberto. O Curador lê os canais todo dia às 17h.")
         return clicados
+    sug = marcar_novas(sug)
     andando = [f"{n} {ROTULO_SUGESTAO[s]}" for s in ("processando", "pedida", "falhou")
                if (n := int((sug["status"] == s).sum()))]
+    if n_novas := int(sug["nova"].sum()):
+        andando.insert(0, f"{n_novas} nova{'s' if n_novas > 1 else ''}")
     with st.expander(" · ".join([f"Sugestões do Curador · {len(sug)}", *andando]),
                      key="sugestoes_curador"):
         st.caption("Você escolhe o que vira corte: Processar baixa e roda o pipeline (~US$ 0,65), "
@@ -518,6 +536,8 @@ def secao_sugestoes(sug: pd.DataFrame, curador_ocupado: bool) -> list[str]:
             rotulo = ROTULO_SUGESTAO.get(s.status, s.status)
             extra = (f"<span class='pill {html.escape(s.status)}'>{html.escape(rotulo)}</span>"
                      if rotulo else "")
+            if s.nova:
+                extra = "<span class='pill nova'>nova</span>" + extra
             erro = (f"<small>{html.escape(s.mensagem)}</small>"
                     if s.status == "falhou" and isinstance(s.mensagem, str) else "")
             cortado = getattr(s, "cortado_por", None)
