@@ -241,10 +241,14 @@ def coletar_dados(yt, analytics, hoje: date | None = None, reach: dict | None = 
         avisos.append(f"vídeos antigos em alta não calculados ({str(e)[:150]})")
     try:
         traf_canal = trafego_canal(analytics, semana_ini, fim)
+    except Exception as e:  # noqa: BLE001 — sem elas, a foto do dia vale; tenta de novo amanhã
+        traf_canal = []
+        avisos.append(f"origens de tráfego do canal não lidas ({str(e)[:150]})")
+    try:
         v7 = views_primeiros_7d(analytics, videos, hoje, feitos_7d)
-    except Exception as e:  # noqa: BLE001 — sem eles, a foto do dia vale; tenta de novo amanhã
-        traf_canal, v7 = [], []
-        avisos.append(f"origens do canal / views dos 7 primeiros dias não lidas ({str(e)[:150]})")
+    except Exception as e:  # noqa: BLE001 — os que faltaram entram amanhã
+        v7 = []
+        avisos.append(f"views dos 7 primeiros dias não lidas ({str(e)[:150]})")
     return {"data": fim, "metricas": metricas, "trafego": traf, "termos": ters,
             "termos_canal": canal, "trafego_canal": traf_canal, "views_7d": v7,
             "em_alta": em_alta(metricas, semana, hoje), "avisos": avisos}
