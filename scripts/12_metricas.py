@@ -1,5 +1,5 @@
 """Step 12 (off-pipeline): retenção dos vídeos COM legenda karaokê x média dos antigos, e
-retenção + horas assistidas por FAIXA DE DURAÇÃO (curto 8-12, médio 12-20, longo 20-30 min)
+retenção + horas assistidas por FAIXA DE DURAÇÃO (curto 5-10, médio 10-20, longo 20-30 min)
 pra achar a duração ideal pro nosso público.
 
 Uso:
@@ -34,7 +34,7 @@ from pathlib import Path
 
 from _descricoes import ler_descricoes
 from _eventos import evento
-from _fronteira import FAIXAS, LONGO_MIN, faixa
+from _fronteira import FAIXAS, MONTAGEM_S, faixa_do_video
 from _google import credenciais
 from _paths import OUTPUTS
 from _youtube_leitura import (CLIENT_SECRET, ESCOPOS, TOKEN, duracao_iso,  # noqa: F401
@@ -45,7 +45,6 @@ SAIDA = ROOT / "state" / "metricas_retencao.json"
 LEGENDA_PADRAO_DESDE = "2026-10-21"   # pipeline passou a legendar por padrão
 MAX_SHORT_S = 180
 MIN_VIEWS = 20
-MONTAGEM_S = 33   # cold open (~22s) + intro 3s + card 3s + outro 5s em volta do corte (06)
 
 
 def titulos_locais(outputs: Path) -> dict[str, bool]:
@@ -83,21 +82,11 @@ def resumo_grupo(videos: list[dict]) -> dict | None:
             "horas_assistidas": round(horas, 1), "horas_por_video": round(horas / len(validos), 1)}
 
 
-def faixa_do_video(duracao_s: float) -> str:
-    """Faixa pela duração do CORTE (a do banco): desconta cold open + intro + card + outro.
-    Fora de 8-30: 'abaixo_8' (os antigos de 5-7 min, a linha de base) ou 'acima_30'."""
-    corte_min = max(0.0, duracao_s - MONTAGEM_S) / 60
-    nome = faixa(corte_min)
-    if nome == "fora":
-        return "abaixo_8" if corte_min < LONGO_MIN else "acima_30"
-    return nome
-
-
 def por_faixa(videos: list[dict]) -> dict[str, dict | None]:
-    """Longos agrupados pela faixa de duração (curto 8-12, médio 12-20, longo 20-30, mais
-    abaixo_8/acima_30). Pra achar a duração ideal pro nosso público."""
+    """Longos agrupados pela faixa de duração (curto 5-10, médio 10-20, longo 20-30, mais
+    abaixo_5/acima_30; _fronteira.faixa_do_video). Pra achar a duração ideal pro nosso público."""
     grupos: dict[str, list] = {nome: [] for nome, _, _ in FAIXAS}
-    grupos.update(abaixo_8=[], acima_30=[])
+    grupos.update(abaixo_5=[], acima_30=[])
     for v in videos:
         if v["duracao_s"] > MAX_SHORT_S:
             grupos[faixa_do_video(v["duracao_s"])].append(v)
@@ -160,8 +149,8 @@ def main(argv: list[str]) -> int:
 
     faixas = por_faixa(videos)
     print("\n  Por faixa de duração (retenção · horas assistidas):")
-    rotulos = {"curto": "curto 8-12min", "medio": "médio 12-20min", "longo": "longo 20-30min",
-               "abaixo_8": "abaixo de 8min (antigos)", "acima_30": "acima de 30min"}
+    rotulos = {"curto": "curto 5-10min", "medio": "médio 10-20min", "longo": "longo 20-30min",
+               "abaixo_5": "abaixo de 5min", "acima_30": "acima de 30min"}
     for nome, g in faixas.items():
         print(f"    {rotulos[nome]:<22} " + (
             f"{g['retencao_pct']}% · {g['horas_assistidas']}h ({g['horas_por_video']}h/vídeo, "

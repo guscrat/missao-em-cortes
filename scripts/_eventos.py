@@ -73,7 +73,7 @@ CREATE TABLE IF NOT EXISTS blocos (
     texto_thumb   TEXT,
     score         REAL,
     duracao_min   REAL,               -- duração real do corte (tempos encaixados no 03/11)
-    faixa_duracao TEXT,               -- curto 8-12 | medio 12-20 | longo 20-30 | fora
+    faixa_duracao TEXT,               -- curto 5-10 | medio 10-20 | longo 20-30 | fora
     status        TEXT NOT NULL DEFAULT 'segmentado',
     motivo        TEXT,               -- por que foi pra quarentena/devolvido
     video_path    TEXT,
@@ -154,6 +154,24 @@ CREATE TABLE IF NOT EXISTS termos_canal (
     PRIMARY KEY (data, termo)
 );
 
+-- Origens de tráfego do canal inteiro nos 7 dias até `data` (% que não vem da busca).
+CREATE TABLE IF NOT EXISTS trafego_canal (
+    data        TEXT NOT NULL,
+    origem      TEXT NOT NULL,
+    views       INTEGER,
+    PRIMARY KEY (data, origem)
+);
+
+-- Views de cada vídeo nos 7 primeiros dias depois de publicado (não muda mais: calculado 1 vez).
+CREATE TABLE IF NOT EXISTS views_7d (
+    youtube_id    TEXT PRIMARY KEY,
+    titulo        TEXT,
+    publicado     TEXT,
+    duracao_s     INTEGER,
+    views         INTEGER,
+    calculado_em  TEXT NOT NULL
+);
+
 -- Relatório Reach (Reporting API): 1 CSV por dia; backfill do mesmo dia substitui o anterior.
 CREATE TABLE IF NOT EXISTS reach_dia (
     dia         TEXT NOT NULL,        -- dia que o relatório cobre (AAAA-MM-DD)
@@ -192,6 +210,7 @@ CREATE TABLE IF NOT EXISTS sugestoes (
     motivo        TEXT,
     url           TEXT,
     data          TEXT,               -- data do vídeo na fonte (AAAA-MM-DD)
+    cortado_por   TEXT,               -- canais de corte grandes que já cortaram ("X (2)"); "" = ninguém
     status        TEXT NOT NULL DEFAULT 'sugerida',
     stem          TEXT,
     mensagem      TEXT,               -- erro da falha / "processado por link direto"
@@ -218,7 +237,7 @@ def conectar(db_path: Path | None = None) -> sqlite3.Connection:
     con.executescript(SCHEMA)
     # migração: bancos criados antes das colunas tarefa_id, titulo_youtube, cache_* e faixa_duracao
     for tabela, coluna in (("eventos", "tarefa_id INTEGER"), ("blocos", "titulo_youtube TEXT"),
-                           ("blocos", "faixa_duracao TEXT"),
+                           ("blocos", "faixa_duracao TEXT"), ("sugestoes", "cortado_por TEXT"),
                            ("eventos", "cache_escrita INTEGER DEFAULT 0"),
                            ("eventos", "cache_leitura INTEGER DEFAULT 0")):
         if coluna.split()[0] not in {r["name"] for r in con.execute(f"PRAGMA table_info({tabela})")}:
@@ -370,13 +389,15 @@ def evento(stem: str | None, etapa: str, status: str, *, agente: str = "pipeline
 # ── YouTube Analytics (17_analytics) ───────────────────────────────────────
 
 def gravar_analytics(data: str, metricas: list[dict], trafego: list[dict],
-                     termos: list[dict], termos_canal: list[dict]) -> None:
+                     termos: list[dict], termos_canal: list[dict],
+                     trafego_canal: list[dict] = ()) -> None:
     """Foto do dia: substitui o que já houver do mesmo `data` (rodar 2x no dia não duplica)."""
     tabelas = (("metricas_video", ("youtube_id", "titulo", "publicado", "duracao_s", "views",
                                    "impressoes", "ctr_pct", "retencao_pct", "assistido_s"), metricas),
                ("trafego_video", ("youtube_id", "origem", "views", "minutos"), trafego),
                ("termos_busca", ("youtube_id", "termo", "views"), termos),
-               ("termos_canal", ("termo", "views"), termos_canal))
+               ("termos_canal", ("termo", "views"), termos_canal),
+               ("trafego_canal", ("origem", "views"), trafego_canal))
     with _seguro(f"gravar analytics de {data}") as con:
         for tabela, colunas, linhas in tabelas:
             con.execute(f"DELETE FROM {tabela} WHERE data = ?", (data,))
@@ -384,6 +405,22 @@ def gravar_analytics(data: str, metricas: list[dict], trafego: list[dict],
                 f"INSERT INTO {tabela} (data, {', '.join(colunas)}) "
                 f"VALUES (?, {', '.join('?' * len(colunas))})",
                 [(data, *(linha.get(c) for c in colunas)) for linha in linhas])
+
+
+def gravar_views_7d(linhas: list[dict]) -> None:
+    """Views dos 7 primeiros dias de cada vídeo (calculado 1 vez; recalcular substitui)."""
+    colunas = ("youtube_id", "titulo", "publicado", "duracao_s", "views")
+    with _seguro("gravar views dos 7 primeiros dias") as con:
+        con.executemany(f"INSERT OR REPLACE INTO views_7d ({', '.join(colunas)}, calculado_em) "
+                        f"VALUES ({', '.join('?' * len(colunas))}, ?)",
+                        [(*(x.get(c) for c in colunas), _agora()) for x in linhas])
+
+
+def views_7d() -> list[dict]:
+    """[{youtube_id, titulo, publicado, duracao_s, views}], mais recente primeiro. Sem banco = []."""
+    return _executar("ler views dos 7 primeiros dias", lambda con: [dict(r) for r in con.execute(
+        "SELECT youtube_id, titulo, publicado, duracao_s, views FROM views_7d "
+        "ORDER BY publicado DESC")], padrao=[])
 
 
 def temas_por_youtube(ids: list[str]) -> dict[str, str]:
@@ -456,16 +493,26 @@ def termos_semana(limite: int = 10) -> list[dict]:
 
 def ultima_coleta() -> dict:
     """Coleta mais recente: {data, metricas: [linha de metricas_video], trafego: {origem:
-    views somadas}}. Best-effort: sem banco ou sem coleta, data None e listas vazias."""
+    views somadas}, trafego_semana: {origem: views do canal nos 7 dias}, trafego_semana_antes:
+    o mesmo da coleta de 7+ dias antes}. Best-effort: sem banco ou sem coleta, data None e
+    tudo vazio."""
+    def semana(con, data):
+        return {r[0]: r[1] for r in con.execute(
+            "SELECT origem, views FROM trafego_canal WHERE data = ?", (data,))}
+
     def ler(con):
         data = con.execute("SELECT MAX(data) FROM metricas_video").fetchone()[0]
+        antes = con.execute("SELECT MAX(data) FROM trafego_canal WHERE data <= date(?, '-7 days')",
+                            (data,)).fetchone()[0] if data else None
         return {"data": data,
                 "metricas": [dict(r) for r in con.execute(
                     "SELECT * FROM metricas_video WHERE data = ?", (data,))],
                 "trafego": {r[0]: r[1] for r in con.execute(
                     "SELECT origem, SUM(views) FROM trafego_video WHERE data = ? GROUP BY origem",
-                    (data,))}}
-    return _executar("ler analytics", ler, padrao={"data": None, "metricas": [], "trafego": {}})
+                    (data,))},
+                "trafego_semana": semana(con, data), "trafego_semana_antes": semana(con, antes)}
+    return _executar("ler analytics", ler, padrao={"data": None, "metricas": [], "trafego": {},
+                                                   "trafego_semana": {}, "trafego_semana_antes": {}})
 
 
 # ── sugestões do Curador (13) ──────────────────────────────────────────────
@@ -474,7 +521,7 @@ def gravar_sugestao(video_id: str, *, status: str | None = None, **campos) -> No
     """Cria/atualiza a sugestão. Sem `status`, uma já existente mantém o dela (o Gu pode ter
     pedido): só os campos passados mudam."""
     permitidos = {"titulo", "canal", "duracao_min", "prioridade", "motivo", "url", "data",
-                  "stem", "mensagem"}
+                  "stem", "mensagem", "cortado_por"}
     invalidos = set(campos) - permitidos
     if invalidos:
         raise ValueError(f"campos inválidos pra sugestão: {invalidos}")

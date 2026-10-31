@@ -5,21 +5,32 @@ description: Linha editorial do canal Missão em Cortes (cortes do Partido Miss�
 
 # Editorial — Missão em Cortes
 
-O canal pega lives/entrevistas longas das figuras do Partido Missão (legenda 14) — Renan Santos, Kim Kataguiri, Arthur do Val, Guto Zacarias, Amanda Vettorazzo — e gera vários cortes de **8 a 30 min**, cada um sobre **um único assunto**, mais um Short por bloco. Tudo o que é texto público (título, thumb, descrição) segue as regras abaixo, e os agentes (revisor, editor, Curador) existem pra aplicá-las sem o Gu precisar olhar cada vídeo.
+O canal pega lives/entrevistas longas das figuras do Partido Missão (legenda 14) — Renan Santos, Kim Kataguiri, Arthur do Val, Guto Zacarias, Amanda Vettorazzo — e gera vários cortes de **5 a 30 min** (a duração é a do assunto, sem alvo), cada um sobre **um único assunto**, mais um Short por bloco. Tudo o que é texto público (título, thumb, descrição) segue as regras abaixo, e os agentes (revisor, editor, Curador) existem pra aplicá-las sem o Gu precisar olhar cada vídeo.
 
 ## Regra nº 1: coerência acima da duração (26/10/2026, alta prioridade)
 
 O tamanho do corte é o tamanho do assunto. Nunca cortar no meio da fala.
 
-- **Longos: faixa flexível de 8 a 30 min**, guiada pelo assunto. Mínimo de 8 (vídeo de 8+ min pode ter anúncio no meio depois da monetização), máximo de 30. Assunto que passa de 30 min vira **Parte 1 e Parte 2** (campo `parte`, título termina com "(Parte N)"), divididas num ponto natural — nunca no meio.
-- **Varie as durações**: curtos de 8-12, médios de 12-20, longos de 20-30. O 03 avisa se todos os blocos de uma live caem na mesma faixa.
+- **Longos: sem duração-alvo (31/10/2026)**. O tamanho é o do assunto, de **5 a 30 min**, sempre começando e terminando em ponto natural e fechando o raciocínio. O mínimo era 8 (anúncio no meio), mas isso só vale depois do YPP: até lá, nada de esticar assunto pra chegar a 8. Mínimo de 5 (`_fronteira.LONGO_MIN`), máximo de 30. Assunto que passa de 30 min vira **Parte 1 e Parte 2** (campo `parte`, título termina com "(Parte N)"), divididas num ponto natural — nunca no meio.
+- **Não existe faixa a perseguir**: o 03 não pede variar nem avisa "todos na mesma faixa". As faixas (curto 5-10, médio 10-20, longo 20-30) só servem pra medir **minutos assistidos por view** e retenção (resumo semanal do 17, skill `youtube-compliance`).
 - **Início e fim sempre em ponto natural**: fim de frase ou de raciocínio, pelos tempos das palavras (`words.json`) e as pausas. Quem garante é código (`scripts/_fronteira.py`, $0): o 03 encaixa os tempos do LLM no fim de frase + pausa mais perto (até 30s); o padding do 04 não vaza pra frase vizinha; o 04b nunca parte palavra, não mexe nos primeiros 30s nem nos últimos 20s (a frase de impacto que fecha o vídeo).
   - Fim natural = palavra termina com `.` `!` `?` e tem ≥ 0,5s de pausa depois; ou não tem pontuação e a pausa é ≥ 1,2s (whisper às vezes não pontua). Vírgula ou reticências + pausa **não** é fim.
 - **Shorts: até 3 min** (limite do YouTube), **ideal 30-90s**, sempre fechando uma ideia completa — gancho, desenvolvimento e conclusão — e terminando numa **frase de impacto**. Campo `short` do bloco (o 10 usa ele; blocos antigos sem `short` usam o cold open).
 - **Revisor (11) reprova** corte que começa ou termina no meio de frase (confere as últimas palavras e se há pausa depois, antes da chamada paga). Reprovou → **reajusta o ponto de corte sozinho** e refaz o bloco (`pipeline.py --bloco=N`); sem ponto natural a até 30s → `quarentena`.
-- **Duração no banco**: `blocos.duracao_min` (real, dos tempos encaixados) + `blocos.faixa_duracao` (`curto`/`medio`/`longo`/`fora`). O Analista (12) mostra retenção e horas assistidas por faixa; os antigos de 5-7 min aparecem como `fora` (linha de base). O objetivo é achar a duração ideal pro nosso público.
-- **Nenhum corte abre com propaganda ou patrocínio da live original** (Valete Plus, revista, festival, cupom, "deixa o like / se inscreve"). Propaganda no meio do corte é ok. Quem garante é o código (`_fronteira.pular_propaganda`, termos em `config/propaganda.json`, $0): se um termo aparece nos primeiros 30s, o início vai pra 1ª frase depois da propaganda — no 03 (ao segmentar) e no 11 (reajusta e refaz o bloco; sem ela o corte fica < 8 min → `quarentena`). Também está no prompt do 03. Fala sobre o produto sem nenhum termo (ex.: "o autor da revista é um baita antipetista") passa: o código não pega. **Propaganda no meio de um assunto que continua depois** (o assunto antes e depois dela é o mesmo): o bloco cobre os dois lados e o campo `remover` do bloco tira a propaganda no polimento (04b; ver `docs/pipeline.md`). Caso real: o bloco 03 do Renan pós-eleição (voto útil → 5 min de Valete → Marçal).
+- **Duração no banco**: `blocos.duracao_min` (real, dos tempos encaixados) + `blocos.faixa_duracao` (`curto`/`medio`/`longo`/`fora`). O Analista (12) mostra retenção e horas assistidas por faixa, e o resumo semanal (17) abre com minutos assistidos por view por faixa (`_fronteira.faixa_do_video`, que desconta a montagem; abaixo de 5 = `abaixo_5`). O objetivo é achar a duração ideal pro nosso público.
+- **Nenhum corte abre com propaganda ou patrocínio da live original** (Valete Plus, revista, festival, cupom, "deixa o like / se inscreve"). Propaganda no meio do corte é ok. Quem garante é o código (`_fronteira.pular_propaganda`, termos em `config/propaganda.json`, $0): se um termo aparece nos primeiros 30s, o início vai pra 1ª frase depois da propaganda — no 03 (ao segmentar) e no 11 (reajusta e refaz o bloco; sem ela o corte fica < 5 min → `quarentena`). Também está no prompt do 03. Fala sobre o produto sem nenhum termo (ex.: "o autor da revista é um baita antipetista") passa: o código não pega. **Propaganda no meio de um assunto que continua depois** (o assunto antes e depois dela é o mesmo): o bloco cobre os dois lados e o campo `remover` do bloco tira a propaganda no polimento (04b; ver `docs/pipeline.md`). Caso real: o bloco 03 do Renan pós-eleição (voto útil → 5 min de Valete → Marçal).
 - **Toda fala citada na descrição ("Principais momentos") está DENTRO do trecho do vídeo.** O 03 pede ganchos literais do próprio bloco; o revisor (11) confere cada item na transcrição do corte (`momentos_fora`) e o que estiver fora **sai sozinho** do `descricoes.txt` e dos `ganchos` do `blocos.json` ($0, sem refazer vídeo). Se 2+ e mais da metade estavam fora → `quarentena` ("confira os tempos do bloco": sinal de tempos trocados). O editor também só cita fala do trecho. (Caso real: no bloco 03 do Renan pós-eleição o LLM deu tempos de um trecho e frases de outro, e a descrição citava falas de 8 min antes.)
+
+## Títulos: busca de cauda longa (31/10/2026)
+
+O canal pequeno vive de **busca** (80% das views em out/2026; o nosso hit, "Flávio Bolsonaro destruiu a Lava Jato…", veio quase todo de buscas como "bolsonaro acabou com a lava jato"). Por isso o `titulo_sugerido` é escrito como o que alguém digitaria no YouTube:
+
+- **Nome completo** de quem fala ou de quem é o alvo, na grafia oficial ("Flávio Bolsonaro", não "Flávio"; "Renan Santos", não "Renan").
+- **Tema concreto**: o caso, a lei, o escândalo, o número ("Lava Jato", "Banco Master", "tarifa do Trump"), nunca tema vago ("a política", "o sistema").
+- **Prefira pergunta** quando o trecho responde a uma pergunta que as pessoas fazem: "Flávio Bolsonaro acabou com a Lava Jato?". A pergunta tem que ser respondida no trecho e não pode insinuar o que a fala não sustenta (o revisor reprova pergunta-insinuação, aceita a que o trecho responde).
+- Continua valendo tudo o de baixo: fidelidade, nada de palavrão/ofensa, até ~70 chars.
+
+Onde mora: `prompts/segmentacao.md` (critério 6 + schema), `_editor.SISTEMA` (reescrita) e o critério `titulo_fiel` do `11_revisor`. O Editor também recebe os termos de busca da semana (17_analytics).
 
 ## Postura
 
@@ -44,7 +55,7 @@ Nomes próprios sempre na **grafia oficial** (`config/grafias.json`, ex.: Nikola
 ## Estrutura do vídeo final
 
 ```
-[Cold open 15-30s] → [Intro 3s] → [Card de contexto 3s] → [Corte 8-30min] → [Outro 5s]
+[Cold open 15-30s] → [Intro 3s] → [Card de contexto 3s] → [Corte 5-30min] → [Outro 5s]
 ```
 
 Cada parte soma "valor agregado" pro YouTube Partner Program, que pune *reused content* desde Jul/2025.
@@ -66,6 +77,6 @@ Quem decide é o **código**, a partir das checagens do revisor:
 - `references/revisor-editor.md` — step 11 completo (entrada, checagens, loop do editor, colagem aplicada, custos, flags).
 - `references/segmentacao-descricao.md` — prompt de segmentação (03) e gerador de descrições (08).
 - `references/grafias.md` — grafias oficiais: onde entram e como acrescentar personagem.
-- `references/curador.md` — agente Curador (13): fila, estoque, processamento, falhas, agendamento no Windows.
+- `references/curador.md` — agente Curador (13): fila, estoque, processamento, falhas, agendamento no Windows, **"já cortado" pelos canais de corte grandes** (prioridade pro que eles não cortaram: convidados menores, entrevistas em outros canais, podcasts).
 
 Ao mexer em qualquer prompt de LLM: logue custo estimado e registre evento com o `agente` certo (skill `painel-eventos`).

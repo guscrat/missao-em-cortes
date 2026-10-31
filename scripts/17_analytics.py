@@ -9,8 +9,16 @@ Por vídeo PÚBLICO do canal, acumulado desde a publicação (o Analytics atrasa
   - retenção média (% média assistida) e duração média assistida
   - origens de tráfego (insightTrafficSourceType: busca, sugeridos, inscritos, Shorts...)
   - termos de pesquisa do YouTube que trouxeram views (até 25 por vídeo)
-Do canal inteiro: os termos de pesquisa dos últimos 7 dias — é deles que sai o destaque do
-resumo semanal e a lista que o Editor (_editor) recebe pra usar nos títulos.
+Do canal inteiro, nos últimos 7 dias: os termos de pesquisa (a lista que o Editor recebe pra
+usar nos títulos) e as origens de tráfego (tabela trafego_canal: % das views que NÃO vem da
+busca, o sinal de que o algoritmo começou a recomendar).
+Por vídeo novo: as views dos 7 primeiros dias depois de publicado (tabela views_7d, 1 consulta
+por vídeo, 1 vez só, quando ele faz DIAS_7D_PRONTO dias: o Analytics atrasa ~2).
+
+Resumo semanal (sexta, pelo Curador): a métrica principal é MINUTOS ASSISTIDOS POR VIEW, com
+a retenção ao lado, por faixa de duração do corte (_fronteira.faixa_do_video); depois o % que
+não vem da busca (semana x semana anterior), as views dos 7 primeiros dias dos vídeos novos,
+os termos de busca, os antigos em alta, as origens e o CTR das miniaturas.
 
 Vídeos EM ALTA: publicados há mais de DIAS_ANTIGO dias cujas views dos últimos 7 dias
 passaram de MIN_VIEWS_SEMANA e de FATOR_ALTA x a média semanal de antes (o assunto voltou a
@@ -39,8 +47,9 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from _eventos import (em_alta_atual, evento, gravar_analytics, gravar_em_alta, gravar_reach,
-                      reach_importados, reach_por_video, temas_por_youtube, termos_semana,
-                      ultima_coleta)
+                      gravar_views_7d, reach_importados, reach_por_video, temas_por_youtube,
+                      termos_semana, ultima_coleta, views_7d)
+from _fronteira import FAIXAS, faixa_do_video
 from _google import credenciais
 from _youtube_leitura import (CLIENT_SECRET, ESCOPOS, MAX_SHORT_S, TOKEN, listar_videos,
                               nome_origem)
@@ -53,6 +62,11 @@ REACH_JOB = "missao-em-cortes-reach"
 DIAS_ANTIGO = 30         # "vídeo antigo": publicado há mais que isso
 MIN_VIEWS_SEMANA = 50    # abaixo disso é ruído, não alta
 FATOR_ALTA = 3.0         # views da semana >= isso x a média semanal de antes
+DIAS_7D_PRONTO = 9       # idade em que os 7 primeiros dias já estão no Analytics (atrasa ~2)
+SEMANAS_7D = 4           # resumo: média das views em 7 dias dos publicados nas últimas N semanas
+RECOMENDACAO = ("SUBSCRIBER", "RELATED_VIDEO", "SHORTS")   # início/feed + sugeridos + Shorts
+ROTULO_FAIXA = {"curto": "curto 5-10 min", "medio": "médio 10-20 min", "longo": "longo 20-30 min",
+                "abaixo_5": "abaixo de 5 min", "acima_30": "acima de 30 min"}
 
 
 def _query(analytics, **kw) -> list[list]:
@@ -145,6 +159,27 @@ def termos(analytics, inicio: str, fim: str, vid: str | None = None) -> list[dic
         metrics="views", filters=filtro, sort="-views", maxResults=MAX_TERMOS)]
 
 
+def trafego_canal(analytics, inicio: str, fim: str) -> list[dict]:
+    """Origens de tráfego do canal inteiro no período."""
+    return [{"origem": origem, "views": int(views)} for origem, views in _query(
+        analytics, startDate=inicio, endDate=fim, dimensions="insightTrafficSourceType",
+        metrics="views", sort="-views")]
+
+
+def views_primeiros_7d(analytics, videos: list[dict], hoje: date, feitos: set[str]) -> list[dict]:
+    """Views dos 7 primeiros dias (dia da publicação + 6) dos vídeos com DIAS_7D_PRONTO+ dias
+    que ainda não estão em `feitos`. 1 consulta por vídeo."""
+    saida = []
+    for v in videos:
+        if v["id"] in feitos or _idade(v["publicado"], hoje) < DIAS_7D_PRONTO:
+            continue
+        ini = date.fromisoformat(v["publicado"][:10])
+        base = basicas(analytics, [v["id"]], ini.isoformat(), (ini + timedelta(days=6)).isoformat())
+        saida.append({"youtube_id": v["id"], "titulo": v["titulo"], "publicado": v["publicado"],
+                      "duracao_s": v["duracao_s"], "views": base.get(v["id"], {}).get("views", 0)})
+    return saida
+
+
 def _idade(publicado: str, hoje: date) -> int:
     return (hoje - date.fromisoformat(publicado[:10])).days
 
@@ -167,16 +202,19 @@ def em_alta(metricas: list[dict], semana: dict[str, int], hoje: date) -> list[di
     return sorted(saida, key=lambda x: (-x["fator"], -x["views_semana"]))
 
 
-def coletar_dados(yt, analytics, hoje: date | None = None, reach: dict | None = None) -> dict:
-    """Lê o canal e devolve {data, metricas, trafego, termos, termos_canal, em_alta, avisos}.
-    reach: {youtube_id: {impressoes, ctr_pct}} já somado do relatório Reach (reach_por_video)."""
+def coletar_dados(yt, analytics, hoje: date | None = None, reach: dict | None = None,
+                  feitos_7d: set[str] = frozenset()) -> dict:
+    """Lê o canal e devolve {data, metricas, trafego, termos, termos_canal, trafego_canal,
+    views_7d, em_alta, avisos}. reach: {youtube_id: {impressoes, ctr_pct}} já somado do
+    relatório Reach (reach_por_video); feitos_7d: ids que já têm as views dos 7 primeiros dias."""
     hoje = hoje or date.today()
     fim = hoje.isoformat()
     videos = [v for v in listar_videos(yt) if v["privacidade"] == "public"]
     avisos = []
     if not videos:
         return {"data": fim, "metricas": [], "trafego": [], "termos": [], "termos_canal": [],
-                "em_alta": [], "avisos": ["nenhum vídeo público no canal"]}
+                "trafego_canal": [], "views_7d": [], "em_alta": [],
+                "avisos": ["nenhum vídeo público no canal"]}
     inicio = min(v["publicado"][:10] for v in videos)
     ids = [v["id"] for v in videos]
     base = basicas(analytics, ids, inicio, fim)
@@ -201,8 +239,15 @@ def coletar_dados(yt, analytics, hoje: date | None = None, reach: dict | None = 
     except Exception as e:  # noqa: BLE001 — sem a semana, a foto do dia vale sem os "em alta"
         semana = {}
         avisos.append(f"vídeos antigos em alta não calculados ({str(e)[:150]})")
+    try:
+        traf_canal = trafego_canal(analytics, semana_ini, fim)
+        v7 = views_primeiros_7d(analytics, videos, hoje, feitos_7d)
+    except Exception as e:  # noqa: BLE001 — sem eles, a foto do dia vale; tenta de novo amanhã
+        traf_canal, v7 = [], []
+        avisos.append(f"origens do canal / views dos 7 primeiros dias não lidas ({str(e)[:150]})")
     return {"data": fim, "metricas": metricas, "trafego": traf, "termos": ters,
-            "termos_canal": canal, "em_alta": em_alta(metricas, semana, hoje), "avisos": avisos}
+            "termos_canal": canal, "trafego_canal": traf_canal, "views_7d": v7,
+            "em_alta": em_alta(metricas, semana, hoje), "avisos": avisos}
 
 
 def coletar(interativo: bool = True) -> dict:
@@ -226,12 +271,13 @@ def coletar(interativo: bool = True) -> dict:
     desde, reach = reach_por_video()
     dados = coletar_dados(build("youtube", "v3", credentials=creds, cache_discovery=False),
                           build("youtubeAnalytics", "v2", credentials=creds, cache_discovery=False),
-                          reach=reach)
+                          reach=reach, feitos_7d={x["youtube_id"] for x in views_7d()})
     if aviso_reach:
         dados["avisos"].append(aviso_reach)
     dados["reach_desde"] = desde
     gravar_analytics(dados["data"], dados["metricas"], dados["trafego"], dados["termos"],
-                     dados["termos_canal"])
+                     dados["termos_canal"], dados["trafego_canal"])
+    gravar_views_7d(dados["views_7d"])
     temas = temas_por_youtube([x["youtube_id"] for x in dados["em_alta"]])
     for x in dados["em_alta"]:
         x["tema"] = temas.get(x["youtube_id"])
@@ -254,11 +300,86 @@ def linha_em_alta(x: dict) -> str:
             f"antes) · \"{x['titulo'][:60]}\", de {x['publicado'][8:10]}/{x['publicado'][5:7]}")
 
 
+def minutos_por_faixa(metricas: list[dict]) -> list[dict]:
+    """[{faixa, n, views, min_por_view, retencao_pct}] dos longos com view, por faixa de duração
+    do corte (só as que têm vídeo) + 'todos' no fim. Médias ponderadas pelas views."""
+    longos = [m for m in metricas if (m.get("duracao_s") or 0) > MAX_SHORT_S and m.get("views")
+              and m.get("assistido_s") is not None]
+    grupos = {nome: [] for nome in ("abaixo_5", *(f[0] for f in FAIXAS), "acima_30")}
+    for m in longos:
+        grupos[faixa_do_video(m["duracao_s"])].append(m)
+
+    def linha(nome, ms):
+        views = sum(m["views"] for m in ms)
+        return {"faixa": nome, "n": len(ms), "views": views,
+                "min_por_view": round(sum(m["assistido_s"] * m["views"] for m in ms) / views / 60, 1),
+                "retencao_pct": round(sum((m["retencao_pct"] or 0) * m["views"] for m in ms) / views, 1)}
+    saida = [linha(nome, ms) for nome, ms in grupos.items() if ms]
+    return saida + [linha("todos", longos)] if longos else []
+
+
+def fora_da_busca(trafego: dict[str, int]) -> dict | None:
+    """{total, fora_pct, recomendacao_pct} das views de um período (None sem views)."""
+    total = sum(trafego.values())
+    if not total:
+        return None
+    return {"total": total, "fora_pct": round(100 * (total - trafego.get("YT_SEARCH", 0)) / total, 1),
+            "recomendacao_pct": round(100 * sum(trafego.get(o, 0) for o in RECOMENDACAO) / total, 1)}
+
+
+def media_7d(v7: list[dict], hoje: date, semanas: int, desloc: int = 0) -> tuple[int, float | None]:
+    """(n, média de views em 7 dias) dos longos publicados entre (semanas + desloc) e desloc
+    semanas atrás."""
+    ini, fim = hoje - timedelta(weeks=semanas + desloc), hoje - timedelta(weeks=desloc)
+    vs = [x["views"] for x in v7 if (x.get("duracao_s") or 0) > MAX_SHORT_S
+          and ini < date.fromisoformat(x["publicado"][:10]) <= fim]
+    return len(vs), (round(sum(vs) / len(vs), 1) if vs else None)
+
+
 def resumo_semanal(termos_top: list[dict], metricas: list[dict], trafego_canal: dict[str, int],
-                   data: str, em_alta_top: list[dict] | None = None) -> str:
-    """Markdown do resumo semanal. Os termos de pesquisa vêm primeiro: é o insumo do Editor."""
+                   data: str, em_alta_top: list[dict] | None = None,
+                   trafego_semana: dict[str, int] | None = None,
+                   trafego_antes: dict[str, int] | None = None,
+                   v7: list[dict] | None = None) -> str:
+    """Markdown do resumo semanal. Abre com a métrica principal (minutos assistidos por view,
+    com a retenção, por faixa de duração), depois o sinal de recomendação (% fora da busca) e
+    as views dos vídeos novos nos 7 primeiros dias; os termos de pesquisa (insumo do Editor) vêm
+    em seguida."""
     linhas = [f"# Analytics da semana ({data})", "",
-              "## Termos de pesquisa que mais trouxeram views (busca do YouTube, 7 dias)",
+              "## Minutos assistidos por view (métrica principal), por faixa de duração",
+              "Longos públicos, acumulado desde a publicação; a duração é a do corte (sem cold open, "
+              "intro, card e outro).", ""]
+    faixas = minutos_por_faixa(metricas)
+    if faixas:
+        linhas += ["| Faixa | Vídeos | Views | Min/view | Retenção |", "|---|---|---|---|---|"]
+        linhas += [f"| {ROTULO_FAIXA.get(f['faixa'], '**todos**')} | {f['n']} | {f['views']} | "
+                   f"{f['min_por_view']:.1f} | {f['retencao_pct']:.0f}% |" for f in faixas]
+    else:
+        linhas.append("- (nenhum longo com views ainda)")
+    linhas += ["", "## Views que não vêm da busca (sinal de que o algoritmo começou a recomendar)", ""]
+    agora, antes = fora_da_busca(trafego_semana or {}), fora_da_busca(trafego_antes or {})
+    if agora:
+        linhas.append(f"- Últimos 7 dias: **{agora['fora_pct']:.0f}%** das {agora['total']} views "
+                      f"(recomendação — início/feed, sugeridos e Shorts: {agora['recomendacao_pct']:.0f}%)")
+        linhas.append(f"- Semana anterior: {antes['fora_pct']:.0f}% das {antes['total']} views "
+                      f"(recomendação: {antes['recomendacao_pct']:.0f}%)" if antes
+                      else "- Semana anterior: sem coleta pra comparar")
+    else:
+        linhas.append("- (sem as origens de tráfego do canal nos últimos 7 dias)")
+    hoje = date.fromisoformat(data) if data[:4].isdigit() else date.today()
+    linhas += ["", "## Vídeos novos: views nos 7 primeiros dias", ""]
+    n, media = media_7d(v7 or [], hoje, SEMANAS_7D)
+    n_antes, media_antes = media_7d(v7 or [], hoje, SEMANAS_7D, desloc=SEMANAS_7D)
+    if media is not None:
+        linhas.append(f"- Média dos longos publicados nas últimas {SEMANAS_7D} semanas: **{media:.1f}** "
+                      f"views ({n} vídeos)" + (f" · {SEMANAS_7D} semanas antes: {media_antes:.1f} "
+                                                f"({n_antes} vídeos)" if media_antes is not None else ""))
+        linhas += [f"- {x['views']} · {x['titulo'][:70]} ({x['publicado'][8:10]}/{x['publicado'][5:7]})"
+                   for x in [x for x in v7 or [] if (x.get("duracao_s") or 0) > MAX_SHORT_S][:5]]
+    else:
+        linhas.append(f"- (nenhum longo com {DIAS_7D_PRONTO}+ dias publicado nas últimas "
+                      f"{SEMANAS_7D} semanas)")
+    linhas += ["", "## Termos de pesquisa que mais trouxeram views (busca do YouTube, 7 dias)",
               "O Editor recebe esta lista ao reescrever títulos: usar um termo só se a fala sustentar.", ""]
     linhas += ([f"{i}. **{t['termo']}** — {t['views']} views" for i, t in enumerate(termos_top, 1)]
                or ["- (nenhuma view vinda da busca nos últimos 7 dias)"])
@@ -286,7 +407,9 @@ def semanal() -> str:
     """Lê a coleta mais recente do banco e grava state/analytics_semanal.md."""
     coleta = ultima_coleta()
     texto = resumo_semanal(termos_semana(), coleta["metricas"], coleta["trafego"],
-                           coleta["data"] or "sem coleta", em_alta_atual())
+                           coleta["data"] or "sem coleta", em_alta_atual(),
+                           coleta.get("trafego_semana"), coleta.get("trafego_semana_antes"),
+                           views_7d())
     SEMANAL.parent.mkdir(parents=True, exist_ok=True)
     SEMANAL.write_text(texto, encoding="utf-8")
     return texto

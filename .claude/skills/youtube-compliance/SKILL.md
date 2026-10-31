@@ -36,6 +36,14 @@ Vídeo enviado por projeto de API **não auditado** fica **bloqueado como privad
 - Os **dois apps ficam "Em produção"** (Google Auth Platform → Público-alvo). Em teste, tokens expiram em 7 dias.
 - Segredo nunca é commitado nem colado no chat. Mudar credencial = perguntar ao Gu antes.
 
+## Outros canais: só yt-dlp, nunca a API (31/10/2026)
+
+Os dois projetos Google declaram (auditoria e políticas de privacidade) que **só acessam dados do nosso canal**. Qualquer leitura de canal de terceiros — os canais monitorados pelo Curador (`canais`) e os canais de corte grandes (`canais_corte`, pra saber se uma live já foi cortada) — é feita com o **yt-dlp** (`uv run yt-dlp` / `yt_dlp` no Python), nunca com a Data API, a Analytics nem a Reporting API. Nada de `search.list`, `videos.list` ou `channels.list` com id de outro canal, nem com o token do publisher nem com o do analytics.
+
+## Métricas que guiam a estratégia (31/10/2026)
+
+O resumo semanal (`17_analytics semanal`, sextas) abre com a **métrica principal: minutos assistidos por view**, com a retenção ao lado, **por faixa de duração** do corte (curto 5-10, médio 10-20, longo 20-30, abaixo de 5, acima de 30). Junto: as **views de cada vídeo novo nos 7 primeiros dias** (média das últimas 4 semanas x as 4 anteriores) e a **% de views que não vem da busca** (últimos 7 dias x semana anterior, com a fatia de recomendação: início/feed, sugeridos e Shorts) — o sinal de que o algoritmo começou a recomendar. Detalhe em `references/metricas.md`.
+
 ## Sempre perguntar antes de
 
 Publicar no YouTube pela primeira vez numa feature nova · rodar upload real (sempre `--dry-run` antes).

@@ -45,6 +45,14 @@ Fluxo:
   Modo evento (config/canais.json → modo_evento, ex.: 2º turno): até modo_evento_ate
      processa 1 vídeo por rodada MESMO com o canal coberto, só da fila a partir de
      modo_evento_desde, e o Claude prioriza modo_evento_tema. Depois do "ate" desliga sozinho.
+  3b. JÁ CORTADO? (config/canais.json → canais_corte, os canais de corte grandes do
+     ecossistema): lista os vídeos recentes de cada um com o yt-dlp (NUNCA a API do YouTube:
+     os projetos Google declaram que não acessam dados de outros canais) e procura na
+     descrição deles o link da live. Vídeo da fila que já tem corte publicado ganha
+     `cortado_por` ("Canal X (2)", aparece no painel) e perde PENALIDADE_CORTADO de prioridade;
+     o que ninguém cortou ainda passa na frente. Refeito a cada rodada pra fila inteira (corte
+     sai dias depois da live). A descrição de cada corte é lida 1 vez só (cache em
+     state/cortes_terceiros.json). Sem canais_corte: não confere (cortado_por fica vazio).
   4. Resumo em state/curador_resumo.md (cortes prontos pra publicar, recusados com motivo,
      avisos) e decisões em state/curadoria.json. Tudo também vira evento no painel.
 
@@ -82,6 +90,8 @@ PROGRESSO = ROOT / "state" / "curador_progresso.json"   # painel: "rodando desde
 MAX_TENTATIVAS = 3           # falhou antes de baixar: volta pra fila até isso, depois desiste
 ESPERA_OCUPADO_MIN = 30      # outro processamento rodando: espera até isso, depois pula
 CHECA_OCUPADO_S = 60
+CORTES_CACHE = ROOT / "state" / "cortes_terceiros.json"   # {id do corte: {canal, fontes}}
+PENALIDADE_CORTADO = 3       # live que um canal de corte grande já cortou: perde isso de prioridade
 PRIORIDADE_EVENTO = 6        # modo evento: abaixo disso não fura o estoque (previsão velha)
 MAX_TEMAS_ALTA = 5           # temas dos vídeos antigos em alta (17_analytics) no pedido ao Claude
 MAX_TEMA_ALTA = 80
@@ -112,7 +122,7 @@ SCHEMA = {
     "additionalProperties": False,
 }
 
-SISTEMA = """Você é o curador do canal "Missão em Cortes", que publica cortes de 8-30 min \
+SISTEMA = """Você é o curador do canal "Missão em Cortes", que publica cortes de 5-30 min \
 de lives, entrevistas e debates do Partido Missão (legenda 14, direita liberal, ligado ao \
 MBL): Renan Santos, Kim Kataguiri, Arthur do Val, Guto Zacarias e Amanda Vettorazzo.
 
@@ -122,7 +132,10 @@ Vale (prioridade alta) quando:
 - uma dessas figuras fala bastante: análise política, eleição, escândalo, debate, \
 entrevista, podcast com convidado relevante
 - o tema é quente agora (rende cliques nos próximos dias)
-- tem cara de render blocos de 8-30 min, cada um com um assunto que se sustenta sozinho
+- tem cara de render blocos de 5-30 min, cada um com um assunto que se sustenta sozinho
+- é entrevista, podcast, participação em outro canal ou traz convidado menos conhecido: os \
+canais de corte grandes costumam cortar só as lives principais, e é no que eles não cortam \
+que o nosso canal tem espaço (prioridade maior que a live principal do mesmo dia)
 
 Não vale quando:
 - jingle, paródia, trailer, aviso, corte já editado, compilação ou reprise
@@ -140,7 +153,7 @@ Avalie TODOS os ids recebidos, um item por id."""
 def carregar_config() -> dict:
     cfg = json.loads(CONFIG.read_text(encoding="utf-8"))
     for chave, padrao in (("dias", 3), ("duracao_min", 20), ("duracao_max", 240),
-                          ("por_canal", 8)):
+                          ("por_canal", 8), ("canais_corte", []), ("cortes_por_canal", 30)):
         cfg.setdefault(chave, padrao)
     cfg["estoque"] = {"dias_minimos": 2, "longos_por_dia": 1, "shorts_por_dia": 2,
                       **cfg.get("estoque", {})}
@@ -318,6 +331,70 @@ def motivo_filtro(item: dict, cfg: dict, hoje: date, vistos: set[str]) -> str | 
     if item.get("data") and (hoje - date.fromisoformat(item["data"])).days > cfg["dias"]:
         return f"antigo ({item['data']})"
     return None
+
+
+# --- já cortado pelos canais de corte grandes (yt-dlp) -----------------------------------
+
+def listar_cortes(canal: dict, n: int) -> list[str]:
+    """Ids dos `n` vídeos mais recentes da aba videos de um canal de corte (flat, rápido)."""
+    info = _ydl({"extract_flat": "in_playlist", "playlistend": n}).extract_info(
+        f"{canal['url'].rstrip('/')}/videos", download=False)
+    return [e["id"] for e in info.get("entries") or [] if e and e.get("id")]
+
+
+def fontes_do_corte(vid: str) -> list[str]:
+    """Ids de vídeo do YouTube citados na descrição de um corte (o crédito da live)."""
+    info = _ydl({}).extract_info(f"https://www.youtube.com/watch?v={vid}", download=False)
+    return sorted({m.group(1) for m in ID_RE.finditer(info.get("description") or "")} - {vid})
+
+
+def cortes_publicados(canais: list[dict], n: int, listar=listar_cortes,
+                      fontes=fontes_do_corte) -> dict[str, dict[str, int]]:
+    """{id da live: {canal de corte: quantos cortes}} pelos `n` vídeos recentes de cada canal.
+    A descrição de cada corte é lida 1 vez só (CORTES_CACHE); corte que saiu da listagem sai
+    do cache. Canal que falha na listagem fica de fora com aviso."""
+    try:
+        cache = json.loads(CORTES_CACHE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        cache = {}
+    novo, achados = {}, {}
+    for canal in canais:
+        try:
+            ids = listar(canal, n)
+        except Exception as e:  # noqa: BLE001 — yt-dlp levanta DownloadError genérico
+            print(f"   [aviso] não listei o canal de corte {canal['nome']}: {e}")
+            continue
+        for vid in ids:
+            if vid not in cache:
+                try:
+                    cache[vid] = {"canal": canal["nome"], "fontes": fontes(vid)}
+                except Exception as e:  # noqa: BLE001 — tenta de novo na próxima rodada
+                    print(f"   [aviso] não li a descrição do corte {vid}: {e}")
+                    continue
+            novo[vid] = cache[vid]
+            for fonte in cache[vid]["fontes"]:
+                por_canal = achados.setdefault(fonte, {})
+                por_canal[canal["nome"]] = por_canal.get(canal["nome"], 0) + 1
+    CORTES_CACHE.parent.mkdir(parents=True, exist_ok=True)
+    CORTES_CACHE.write_text(json.dumps(novo, ensure_ascii=False, indent=1), encoding="utf-8")
+    return achados
+
+
+def marcar_cortados(estado: dict, achados: dict[str, dict[str, int]]) -> list[str]:
+    """Marca `cortado_por` em cada vídeo da fila e ajusta a prioridade: já cortado perde
+    PENALIDADE_CORTADO (mín. 1) da prioridade do Claude (guardada em prioridade_llm); quem
+    deixou de aparecer volta pra ela. Devolve os ids que estão cortados."""
+    cortados = []
+    for vid, v in estado.items():
+        if v.get("decisao") != "fila":
+            continue
+        base = v.setdefault("prioridade_llm", v.get("prioridade", 0))
+        por_canal = achados.get(vid) or {}
+        v["cortado_por"] = ", ".join(f"{c} ({k})" for c, k in sorted(por_canal.items()))
+        v["prioridade"] = max(1, base - PENALIDADE_CORTADO) if por_canal else base
+        if por_canal:
+            cortados.append(vid)
+    return cortados
 
 
 # --- escolha (LLM) ------------------------------------------------------------------------
@@ -664,6 +741,7 @@ def escrever_resumo(rodada: dict) -> str:
         linhas.append("## Sugestões do Curador (painel → aba Hoje → Processar)")
         linhas += [f"- **[{s['prioridade']}]** {s['canal']}: {s['titulo']} "
                    f"({_minutos(s.get('duracao_min'))}) — {s['motivo']} — {s['url']}"
+                   + (f" · já cortado por {s['cortado_por']}" if s.get("cortado_por") else "")
                    + (" *(nova)*" if s["url"] in novas else "")
                    + (f" · **{s['status']}**" if s["status"] != "sugerida" else "")
                    for s in rodada.get("sugestoes") or []]
@@ -690,6 +768,8 @@ def escrever_resumo(rodada: dict) -> str:
         avisos.append(rodada["aviso_placar"])
     if rodada.get("aviso_analytics"):
         avisos.append(rodada["aviso_analytics"])
+    if rodada.get("aviso_cortes"):
+        avisos.append(rodada["aviso_cortes"])
     if rodada.get("falha_llm"):
         avisos.insert(0, f"avaliação dos vídeos novos falhou ({rodada['falha_llm']}); "
                          "eles voltam amanhã")
@@ -882,7 +962,8 @@ def espelhar_fila(estado: dict) -> None:
         if v.get("decisao") == "fila":
             gravar_sugestao(k, titulo=v.get("titulo"), canal=v.get("canal"),
                             duracao_min=v.get("duracao_min"), prioridade=v.get("prioridade"),
-                            motivo=v.get("motivo"), url=v.get("url"), data=v.get("data"))
+                            motivo=v.get("motivo"), url=v.get("url"), data=v.get("data"),
+                            cortado_por=v.get("cortado_por"))
 
 
 def expirar_fila(estado: dict, hoje: date) -> list[str]:
@@ -1064,6 +1145,13 @@ def _rodada(cfg: dict, dry_run: bool, sem_pipeline: bool, forcar: bool) -> int:
                        mensagem=f"{c['canal']}: {c['titulo']} — {a['motivo']}")
     for k in expirar_fila(estado, hoje):
         gravar_sugestao(k, status="expirada")
+    if cfg["canais_corte"]:
+        marcar_etapa("procurando cortes já publicados pelos canais de corte")
+        try:
+            marcar_cortados(estado, cortes_publicados(cfg["canais_corte"], cfg["cortes_por_canal"]))
+        except Exception as e:  # noqa: BLE001 — sem a checagem, a fila segue com a prioridade de antes
+            rodada["aviso_cortes"] = f"não conferi os cortes já publicados ({str(e)[:150]})"
+            evento(None, "curadoria", "aviso", agente="curador", mensagem=rodada["aviso_cortes"])
     gravar_estado(estado)
     espelhar_fila(estado)
 
