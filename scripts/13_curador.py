@@ -258,6 +258,35 @@ def ids_ja_processados() -> set[str]:
     return ids - {None}
 
 
+STATUS_PRONTO = ("aprovado", "agendado", "publicado")   # bloco que já passou do revisor
+
+
+def reconciliar_falhas() -> list[str]:
+    """Sugestão 'falhou' cuja live o Gu terminou na mão (algum bloco aprovado/agendado/
+    publicado) vira 'processada'. Sem isso ela fica 'falhou' no painel pra sempre."""
+    feitas = []
+    for s in listar_sugestoes(["falhou"]):
+        if not s.get("stem"):
+            continue
+        try:
+            con = conectar()
+            try:
+                n = con.execute(
+                    f"SELECT COUNT(*) FROM blocos WHERE stem = ? AND status IN "
+                    f"({', '.join('?' * len(STATUS_PRONTO))})", (s["stem"], *STATUS_PRONTO)
+                ).fetchone()[0]
+            finally:
+                con.close()
+        except Exception as e:  # noqa: BLE001 — banco é best-effort: fica pra próxima rodada
+            print(f"[aviso] não conferi {s['stem']} ({e})", file=sys.stderr)
+            continue
+        if n:
+            gravar_sugestao(s["video_id"], status="processada",
+                            mensagem=f"terminado na mão: {n} corte(s) pronto(s)")
+            feitas.append(s["video_id"])
+    return feitas
+
+
 # --- listagem (yt-dlp) ------------------------------------------------------------------
 
 class _Mudo:
@@ -1107,7 +1136,8 @@ def _rodada(cfg: dict, dry_run: bool, sem_pipeline: bool, forcar: bool) -> int:
         if v.get("decisao") == "fila" and k in ja_processados:
             v["decisao"] = "manual"
             gravar_sugestao(k, status="processada", mensagem="processado por link direto")
-    rodada = {**_rodada_vazia(agora), "estoque": estoque, "modo": modo, "aviso_canal": aviso_canal,
+    reconciliar_falhas()                            # falhou e o Gu terminou na mão
+    rodada ={**_rodada_vazia(agora), "estoque": estoque, "modo": modo, "aviso_canal": aviso_canal,
               "aviso_placar": aviso_placar, "aviso_analytics": aviso_analytics,
               "termos_semana": termos, "em_alta": em_alta, "modo_evento": evento_on,
               "thumb_ab": placar_thumb_ab()}
