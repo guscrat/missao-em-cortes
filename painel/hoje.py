@@ -538,7 +538,7 @@ def secao_sugestoes(sug: pd.DataFrame, curador_ocupado: bool) -> list[str]:
                      if rotulo else "")
             if s.nova:
                 extra = "<span class='pill nova'>nova</span>" + extra
-            erro =(f"<small>{html.escape(s.mensagem)}</small>"
+            erro = (f"<small>{html.escape(s.mensagem)}</small>"
                     if s.status == "falhou" and isinstance(s.mensagem, str) else "")
             cortado = getattr(s, "cortado_por", None)
             if isinstance(cortado, str):    # None = o Curador não conferiu (sem canais_corte)

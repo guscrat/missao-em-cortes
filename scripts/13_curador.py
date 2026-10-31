@@ -1137,7 +1137,7 @@ def _rodada(cfg: dict, dry_run: bool, sem_pipeline: bool, forcar: bool) -> int:
             v["decisao"] = "manual"
             gravar_sugestao(k, status="processada", mensagem="processado por link direto")
     reconciliar_falhas()                            # falhou e o Gu terminou na mão
-    rodada ={**_rodada_vazia(agora), "estoque": estoque, "modo": modo, "aviso_canal": aviso_canal,
+    rodada = {**_rodada_vazia(agora), "estoque": estoque, "modo": modo, "aviso_canal": aviso_canal,
               "aviso_placar": aviso_placar, "aviso_analytics": aviso_analytics,
               "termos_semana": termos, "em_alta": em_alta, "modo_evento": evento_on,
               "thumb_ab": placar_thumb_ab()}
