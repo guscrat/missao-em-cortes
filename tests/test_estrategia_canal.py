@@ -342,7 +342,7 @@ def test_minutos_por_faixa_vazio():
 
 
 def test_minutos_por_faixa_faixas_de_borda():
-    r = {x["faixa"] for x in an.minutos_por_faixa([_m(4, 10, 100), _m(31, 10, 100)])}
+    r = {x["faixa"] for x in an.minutos_por_faixa([_m(2.9, 10, 100), _m(31, 10, 100)])}
     assert r == {"abaixo_3", "acima_30", "todos"}
 
 
