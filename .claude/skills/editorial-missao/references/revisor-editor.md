@@ -15,14 +15,14 @@
 
 ## Checagem 0a — abertura sem propaganda (código, $0, antes da fronteira)
 
-`conferir_abertura` → `_fronteira.pular_propaganda` com os termos de `config/propaganda.json` (`termos` abrem uma propaganda se aparecem nos primeiros 30s; `continua` só emendam uma já aberta, a até 40s uma da outra; desiste se passar de 2,5 min). Achou → o início vai pra 1ª frase depois da propaganda, grava no `blocos.json`/banco (`gravar_tempos`) e refaz o bloco (`pipeline.py --bloco=N`). Sem a propaganda o corte fica < 5 min ou falhou ao refazer → `quarentena`. Resultado em `revisao.json` → `abertura` (`pulado_s`, `trecho`). O `--dry-run` só mostra.
+`conferir_abertura` → `_fronteira.pular_propaganda` com os termos de `config/propaganda.json` (`termos` abrem uma propaganda se aparecem nos primeiros 30s; `continua` só emendam uma já aberta, a até 40s uma da outra; desiste se passar de 2,5 min). Achou → o início vai pra 1ª frase depois da propaganda, grava no `blocos.json`/banco (`gravar_tempos`) e refaz o bloco (`pipeline.py --bloco=N`). Sem a propaganda o corte fica < 3 min ou falhou ao refazer → `quarentena`. Resultado em `revisao.json` → `abertura` (`pulado_s`, `trecho`). O `--dry-run` só mostra.
 
 ## Checagem 0 — fronteira (código, $0, antes da chamada paga)
 
-**Nunca pede revisão manual de ponto de corte** (02/11/2026): `_fronteira.reencaixar` tenta o ponto natural mais perto em que o vídeo passa na checagem; se ele não serve (é o tempo atual, a janela pega a palavra vizinha, sai de 5-30 min), tenta o próximo antes ou depois, até 5 min. Sem nenhum (whisper sem pontuação nem pausa): segue pra revisão com aviso. Só falha ao refazer o bloco (pipeline) vira quarentena. O `_fronteira.janela` não deixa mais a folga passar do início pedido (palavra colada na anterior saía do corte: bloco 01 do Renan boicote).
+**Nunca pede revisão manual de ponto de corte** (02/11/2026): `_fronteira.reencaixar` tenta o ponto natural mais perto em que o vídeo passa na checagem; se ele não serve (é o tempo atual, a janela pega a palavra vizinha, sai de 3-30 min), tenta o próximo antes ou depois, até 5 min. Sem nenhum (whisper sem pontuação nem pausa): segue pra revisão com aviso. Só falha ao refazer o bloco (pipeline) vira quarentena. O `_fronteira.janela` não deixa mais a folga passar do início pedido (palavra colada na anterior saía do corte: bloco 01 do Renan boicote).
 
 
-`_fronteira.checar`: no que se ouve no vídeo (janela do 04), a 1ª palavra abre frase e a última fecha frase com pausa depois (≥ 0,5s; ou sem pontuação e ≥ 1,2s)? Reprovou → `_fronteira.encaixar` leva a ponta reprovada pro ponto natural mais perto (até 30s, sem sair de 5-30 min), grava no `blocos.json` (tempos, `duracao_minutos`, `faixa_duracao`) e no banco, e refaz o bloco com `pipeline.py <pasta> --bloco=N` (04 → 04b → 04c → 06, com as mesmas flags com que ele foi feito; o 04b com LLM custa ~US$ 0,03). Sem ponto natural perto, falha ao refazer ou continua reprovado → `quarentena` com o motivo (sem gastar a chamada do revisor). O `--dry-run` mostra a checagem sem reajustar. Resultado em `revisao.json` → `fronteira` (`ultimas`, `pausa_depois_s`, `reajuste_s`).
+`_fronteira.checar`: no que se ouve no vídeo (janela do 04), a 1ª palavra abre frase e a última fecha frase com pausa depois (≥ 0,5s; ou sem pontuação e ≥ 1,2s)? Reprovou → `_fronteira.encaixar` leva a ponta reprovada pro ponto natural mais perto (até 30s, sem sair de 3-30 min), grava no `blocos.json` (tempos, `duracao_minutos`, `faixa_duracao`) e no banco, e refaz o bloco com `pipeline.py <pasta> --bloco=N` (04 → 04b → 04c → 06, com as mesmas flags com que ele foi feito; o 04b com LLM custa ~US$ 0,03). Sem ponto natural perto, falha ao refazer ou continua reprovado → `quarentena` com o motivo (sem gastar a chamada do revisor). O `--dry-run` mostra a checagem sem reajustar. Resultado em `revisao.json` → `fronteira` (`ultimas`, `pausa_depois_s`, `reajuste_s`).
 
 ## Checagens (JSON estruturado)
 
@@ -77,3 +77,7 @@ O revisor reconhece a colagem aplicada (cópia idêntica em `thumbs/colagem/`, `
 ## Editor também escreve os textos da colagem
 
 `_editor.texto_colagem` (opus, ~US$ 0,03): 3 opções, de preferência em pergunta, com as mesmas regras de título (fiel à fala, sem palavrão/ofensa); só põe `[Nome]` se a cena destacada é dessa pessoa. Ver skill `thumb-colagem`.
+
+## Frame de reserva com outra pessoa (02/11/2026)
+
+Quando o frame da thumb a vem de **reserva** (`fonte` `live` ou `banco` na fila, `fonte_da_thumb`), a revisão completa e o `checar_thumb` levam o `CRITERIO_RESERVA` na mensagem: reprova se aparece **qualquer pessoa além do apresentador**, a não ser que seja a citada no título/texto da thumb **com o nome escrito na tela** ao lado dela. Caso real: frame da live inteira com uma mulher do trailer do Leve Possos ao lado do Renan, numa thumb sobre a Titi Mila. Frame do próprio trecho (corte/cold) segue o critério de sempre.

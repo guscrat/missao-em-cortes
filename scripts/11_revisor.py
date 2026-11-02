@@ -6,7 +6,7 @@ Uso:
 
 Antes de qualquer chamada paga, a checagem de ABERTURA (código, $0): o corte abre com
 propaganda/patrocínio da live (config/propaganda.json)? → o início vai pra 1ª frase depois
-dela e o bloco é refeito; sem ela fica < 5 min → "quarentena". Depois, a de FRONTEIRA: o corte
+dela e o bloco é refeito; sem ela fica < 3 min → "quarentena". Depois, a de FRONTEIRA: o corte
 começa no começo de frase e termina em fim de frase com pausa depois (últimas palavras do
 words.json)? Reprovou → reajusta sozinho: leva a ponta pro fim de frase mais perto (até 30s),
 grava no blocos.json e refaz o bloco (pipeline.py --bloco=N, ~US$ 0.03 do 04b). Sem ponto
@@ -119,6 +119,31 @@ SCHEMA_THUMB = {
     "additionalProperties": False,
 }
 
+# 02/11/2026: frame de RESERVA (live inteira ou banco de rostos) não é do trecho do corte, então
+# outra pessoa nele pode passar pela citada no título (caso real: mulher do trailer do Leve
+# Possos ao lado do Renan numa thumb sobre a Titi Mila). Vai na mensagem quando a thumb a vem
+# de reserva (o system fica igual, no cache).
+CRITERIO_RESERVA = """ATENÇÃO: o frame desta thumb NÃO é do trecho do corte (é de outro \
+momento da live ou de outra live do apresentador). Reprove (thumb_ok=false) se aparece QUALQUER \
+pessoa além do apresentador (quem fala, em primeiro plano), inteira ou em pedaço, em tela, \
+vídeo ou foto — a não ser que seja a pessoa citada no título ou no texto da thumb E o nome \
+dela esteja ESCRITO na tela ao lado dela (tarja, legenda, crachá, @). Sem nome escrito, ou \
+com o nome de outra pessoa: reprove e diga isso em thumb_problema."""
+
+
+def fonte_da_thumb(pasta: Path, bid: int) -> str | None:
+    """De onde veio o frame da thumb a: 'cold'/'corte' (do trecho), 'live' ou 'banco' (reserva)."""
+    try:
+        fila = json.loads((pasta / "thumbs" / f"candidatos_{bid:02d}.json").read_text(encoding="utf-8"))
+        return fila["candidatos"][fila["variantes"]["a"]].get("fonte")
+    except (OSError, ValueError, KeyError, IndexError, TypeError):
+        return None
+
+
+def eh_reserva(pasta: Path, bid: int) -> bool:
+    return fonte_da_thumb(pasta, bid) in ("live", "banco")
+
+
 CRITERIO_THUMB = """a thumb (primeira imagem) é a arte FINAL que vai pro YouTube. Ela mostra \
 o rosto de quem fala INTEIRO (sem cortar testa, queixo ou metade do rosto), visível e bem \
 iluminado, sem sombra, degradê ou escurecimento em cima dele? O texto está legível, sem corte \
@@ -199,12 +224,14 @@ def frames_b64(video: Path, n: int = N_FRAMES) -> list[str]:
 
 def montar_conteudo(titulo: str, texto_thumb: str, transcricao: str,
                     thumb_b64: str | None, frames: list[str],
-                    momentos: list[str] = ()) -> list[dict]:
+                    momentos: list[str] = (), reserva: bool = False) -> list[dict]:
     img = lambda b64: {"type": "image",   # noqa: E731
                        "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}}
     conteudo = []
     if thumb_b64:
         conteudo += [{"type": "text", "text": "THUMB:"}, img(thumb_b64)]
+        if reserva:
+            conteudo.append({"type": "text", "text": CRITERIO_RESERVA})
     conteudo += [{"type": "text", "text": f"FRAMES DO CORTE ({len(frames)}):"}]
     conteudo += [img(f) for f in frames]
     sem_thumb = "" if thumb_b64 else "SEM THUMB ESCOLHIDA: marque thumb_ok=false.\n"
@@ -318,7 +345,7 @@ def revisar_bloco(client, anthropic, stem, pasta, b, nn, video, titulo, texto_th
     try:
         conteudo = montar_conteudo(titulo, texto_thumb, transcricao,
                                    ler_imagem_b64(thumb) if thumb else None, frames_b64(video),
-                                   momentos)
+                                   momentos, reserva=eh_reserva(pasta, bid))
         checagens, resp = chamar_claude(client, conteudo)
     except (anthropic.APIError, subprocess.CalledProcessError, json.JSONDecodeError) as e:
         print(f"  [!] {nn}: revisão falhou ({type(e).__name__}: {str(e)[:200]})")
@@ -370,11 +397,14 @@ e responda o JSON pedido (thumb_problema: uma frase curta em português, "" se o
 thumb_ok: {CRITERIO_THUMB}"""
 
 
-def checar_thumb(client, thumb: Path, titulo: str, texto_thumb: str) -> tuple[dict | None, object]:
-    """Reavalia só a thumb (1 imagem, sem frames nem transcrição): ~US$ 0.01."""
+def checar_thumb(client, thumb: Path, titulo: str, texto_thumb: str,
+                 reserva: bool = False) -> tuple[dict | None, object]:
+    """Reavalia só a thumb (1 imagem, sem frames nem transcrição): ~US$ 0.01. reserva: o frame
+    é da live inteira/banco de rostos (CRITERIO_RESERVA)."""
     conteudo = [{"type": "text", "text": "THUMB:"},
                 {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
                                              "data": ler_imagem_b64(thumb)}},
+                *([{"type": "text", "text": CRITERIO_RESERVA}] if reserva else []),
                 {"type": "text", "text": f"TÍTULO DO YOUTUBE: {titulo}\nTEXTO DA THUMB: {texto_thumb}"}]
     return chamar_claude(client, conteudo, SISTEMA_THUMB, SCHEMA_THUMB, effort="low")
 
@@ -457,7 +487,8 @@ def trocar_thumb(client, anthropic, stem, pasta, bid, nn, titulo, texto_thumb, p
         _custo.checar_orcamento(stem, "11_revisor")
         t0 = time.time()
         try:
-            r, resp = checar_thumb(client, escolher_thumb(pasta / "thumbs", nn), titulo, texto_thumb)
+            r, resp = checar_thumb(client, escolher_thumb(pasta / "thumbs", nn), titulo, texto_thumb,
+                                   reserva=eh_reserva(pasta, bid))
         except (anthropic.APIError, json.JSONDecodeError) as e:
             evento(stem, "11_revisor", "falha", agente="revisor", bloco_id=bid,
                    mensagem=f"thumb: {type(e).__name__}")
@@ -697,7 +728,7 @@ def conferir_abertura(stem: str, pasta: Path, b: dict, todas: list[dict],
     """Regra editorial: nenhum corte abre com propaganda/patrocínio da live original
     (config/propaganda.json). Código, $0. Abre com propaganda → o início vai pra 1ª frase
     depois dela, grava no blocos.json e refaz o bloco sozinho. Sem ela o corte fica com menos
-    de 5 min (LONGO_MIN) → quarentena. (registro pro revisao.json ou None, motivo de quarentena ou None)."""
+    de 3 min (LONGO_MIN) → quarentena. (registro pro revisao.json ou None, motivo de quarentena ou None)."""
     bid, nn = b["id"], f"{b['id']:02d}"
     ini, fim = hhmmss_para_segundos(b["timestamp_inicio"]), hhmmss_para_segundos(b["timestamp_fim"])
     pp = _fronteira.pular_propaganda(todas, ini, *_fronteira.termos_propaganda())
@@ -775,7 +806,7 @@ def conferir_fronteira(stem: str, pasta: Path, b: dict, todas: list[dict],
         return registro, f"corte {pontas} no meio de frase"
     dur = fim - ini
     # Nunca pede ajuste à mão (02/11/2026): se o ponto natural mais perto não serve, o
-    # reencaixar tenta o próximo antes/depois (até REENCAIXE_MAX_S), sempre em 5-30 min.
+    # reencaixar tenta o próximo antes/depois (até REENCAIXE_MAX_S), sempre em 3-30 min.
     e = _fronteira.reencaixar(
         todas, ini, fim,
         _fronteira.LONGO_MIN * 60 if dur >= _fronteira.LONGO_MIN * 60 else None,

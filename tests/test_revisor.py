@@ -459,3 +459,62 @@ def test_thumb_texto_incoerente_refaz_texto_uma_vez(so_bloco_1, monkeypatch):
 def test_schemas_tem_thumb_texto_incoerente():
     assert "thumb_texto_incoerente" in rv.SCHEMA["properties"]
     assert "thumb_texto_incoerente" in rv.SCHEMA_THUMB["properties"]
+
+
+# ── frame de reserva (thumb de outro momento da live / banco de rostos) ────
+
+def _fila(pasta, bid, fonte, variante="a"):
+    (pasta / "thumbs").mkdir(exist_ok=True)
+    cands = [{"fonte": "corte"}, {"fonte": fonte}]
+    (pasta / "thumbs" / f"candidatos_{bid:02d}.json").write_text(
+        json.dumps({"candidatos": cands, "variantes": {variante: 1}}), encoding="utf-8")
+
+
+@pytest.mark.parametrize("fonte,esperado", [("live", True), ("banco", True),
+                                            ("corte", False), ("cold", False)])
+def test_eh_reserva_por_fonte(tmp_path, fonte, esperado):
+    _fila(tmp_path, 3, fonte)
+    assert rv.fonte_da_thumb(tmp_path, 3) == fonte
+    assert rv.eh_reserva(tmp_path, 3) is esperado
+
+
+def test_eh_reserva_sem_fila_ou_fila_quebrada(tmp_path):
+    assert rv.fonte_da_thumb(tmp_path, 1) is None and rv.eh_reserva(tmp_path, 1) is False
+    (tmp_path / "thumbs").mkdir()
+    (tmp_path / "thumbs" / "candidatos_01.json").write_text("{bobagem", encoding="utf-8")
+    assert rv.eh_reserva(tmp_path, 1) is False
+    (tmp_path / "thumbs" / "candidatos_02.json").write_text(
+        json.dumps({"candidatos": [], "variantes": {"a": 4}}), encoding="utf-8")
+    assert rv.eh_reserva(tmp_path, 2) is False
+
+
+def _textos(c):
+    return [x["text"] for x in c if x["type"] == "text"]
+
+
+def test_montar_conteudo_criterio_reserva_so_quando_reserva():
+    sem = rv.montar_conteudo("T", "TX", "fala", "th", ["f1"])
+    com = rv.montar_conteudo("T", "TX", "fala", "th", ["f1"], reserva=True)
+    assert rv.CRITERIO_RESERVA not in _textos(sem)
+    t = _textos(com)
+    assert rv.CRITERIO_RESERVA in t
+    # logo depois da imagem da thumb, antes dos frames
+    i = com.index({"type": "text", "text": rv.CRITERIO_RESERVA})
+    assert com[i - 1]["type"] == "image" and com[i - 2]["text"] == "THUMB:"
+    assert _textos(com)[t.index(rv.CRITERIO_RESERVA) + 1].startswith("FRAMES DO CORTE")
+
+
+def test_montar_conteudo_reserva_sem_thumb_nao_inclui_criterio():
+    c = rv.montar_conteudo("T", "TX", "fala", None, ["f1"], reserva=True)
+    assert rv.CRITERIO_RESERVA not in _textos(c)
+
+
+@pytest.mark.parametrize("reserva", [False, True])
+def test_checar_thumb_manda_criterio_so_quando_reserva(monkeypatch, tmp_path, reserva):
+    monkeypatch.setattr(rv, "ler_imagem_b64", lambda p: "b64")
+    vistos = {}
+    monkeypatch.setattr(rv, "chamar_claude",
+                        lambda client, conteudo, *a, **k: vistos.update(c=conteudo) or ({}, None))
+    rv.checar_thumb(None, tmp_path / "t.jpg", "Título", "TEXTO", reserva=reserva)
+    assert (rv.CRITERIO_RESERVA in _textos(vistos["c"])) is reserva
+    assert _textos(vistos["c"])[-1].startswith("TÍTULO DO YOUTUBE")

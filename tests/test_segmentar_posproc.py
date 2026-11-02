@@ -96,7 +96,7 @@ def test_ancora_corrige_tempo_errado_do_llm(pasta):
 
 
 def test_bloco_curto_descartado_e_nao_derruba_com_erro_de_cold_open(pasta):
-    curto = bloco(1, 5, 8, cold_open={"timestamp_inicio": "bobagem",
+    curto = bloco(1, 5, 7, cold_open={"timestamp_inicio": "bobagem",
                                        "timestamp_fim": "x", "frase": "a b c"})
     bom = bloco(2, 20, 30)
     r, d = rodar(pasta, [curto, bom])
@@ -172,7 +172,7 @@ def test_reaproveitar_sem_bruta_sai_com_erro(pasta):
 
 
 def test_nenhum_bloco_sobra_sai_com_erro_e_dump_com_descartados(pasta):
-    r, d = rodar(pasta, [bloco(1, 1, 5), bloco(2, 10, 14)])
+    r, d = rodar(pasta, [bloco(1, 1, 3), bloco(2, 10, 12)])
     assert r.returncode != 0 and d is None
     dump = json.loads((pasta / "blocos_invalido.json").read_text(encoding="utf-8"))
     assert dump["blocos"] == [] and len(dump["descartados"]) == 2

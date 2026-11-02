@@ -29,7 +29,7 @@ def _carregar(nome, arq):
 
 # ── _eventos ───────────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("minutos,faixa", [(9, "curto"), (15, "medio"), (25, "longo"), (4, "fora")])
+@pytest.mark.parametrize("minutos,faixa", [(9, "curto"), (15, "medio"), (25, "longo"), (2, "fora")])
 def test_upsert_bloco_preenche_faixa(banco, minutos, faixa):
     _eventos.upsert_bloco("v", 1, duracao_min=minutos)
     r = banco("SELECT duracao_min, faixa_duracao FROM blocos")[0]
@@ -65,23 +65,23 @@ def _v(dur_min, views=100, ret=50.0, assistido=300):
 
 
 def test_faixa_do_video_desconta_montagem():
-    assert fr.faixa_do_video(5 * 60 + fr.MONTAGEM_S) == "curto"
-    assert fr.faixa_do_video(5 * 60 + fr.MONTAGEM_S - 1) == "abaixo_5"
+    assert fr.faixa_do_video(3 * 60 + fr.MONTAGEM_S) == "curto"
+    assert fr.faixa_do_video(3 * 60 + fr.MONTAGEM_S - 1) == "abaixo_3"
     assert fr.faixa_do_video(10 * 60 + fr.MONTAGEM_S) == "medio"
     assert fr.faixa_do_video(20 * 60 + fr.MONTAGEM_S) == "longo"
     assert fr.faixa_do_video(30 * 60 + fr.MONTAGEM_S) == "longo"
     assert fr.faixa_do_video(30 * 60 + fr.MONTAGEM_S + 5) == "acima_30"
-    assert fr.faixa_do_video(4 * 60) == "abaixo_5"
+    assert fr.faixa_do_video(2 * 60 + 20) == "abaixo_3"
 
 
 def test_por_faixa_agrupa_e_calcula_horas():
     g = mt.por_faixa([_v(10, views=100, assistido=360), _v(10, views=100, assistido=360),
-                      _v(15), _v(25), _v(4), _v(40), _v(2.5)])   # 2.5 min = Short, ignorado
-    assert set(g) == {"curto", "medio", "longo", "abaixo_5", "acima_30"}
+                      _v(15), _v(25), _v(3.1), _v(40), _v(2.5)])   # 2.5 min = Short, ignorado
+    assert set(g) == {"curto", "medio", "longo", "abaixo_3", "acima_30"}
     assert g["curto"]["n"] == 2 and g["curto"]["views"] == 200
     assert g["curto"]["horas_assistidas"] == 20.0 and g["curto"]["horas_por_video"] == 10.0
     assert g["medio"]["n"] == 1 and g["longo"]["n"] == 1
-    assert g["abaixo_5"]["n"] == 1 and g["acima_30"]["n"] == 1
+    assert g["abaixo_3"]["n"] == 1 and g["acima_30"]["n"] == 1
 
 
 def test_por_faixa_grupo_sem_views_suficientes_e_none():

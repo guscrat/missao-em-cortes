@@ -73,7 +73,7 @@ CREATE TABLE IF NOT EXISTS blocos (
     texto_thumb   TEXT,
     score         REAL,
     duracao_min   REAL,               -- duração real do corte (tempos encaixados no 03/11)
-    faixa_duracao TEXT,               -- curto 5-10 | medio 10-20 | longo 20-30 | fora
+    faixa_duracao TEXT,               -- curto 3-10 | medio 10-20 | longo 20-30 | fora
     status        TEXT NOT NULL DEFAULT 'segmentado',
     motivo        TEXT,               -- por que foi pra quarentena/devolvido
     video_path    TEXT,
