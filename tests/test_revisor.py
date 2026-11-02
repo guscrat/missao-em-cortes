@@ -124,7 +124,7 @@ def video(projeto, monkeypatch):
     monkeypatch.setattr(rv, "frames_b64", lambda v: ["f"] * 6)
     monkeypatch.setattr(rv, "ler_imagem_b64", lambda p: "thumb")
     monkeypatch.setattr(rv._editor, "refazer_artes", lambda pasta, bid, thumb: [])
-    monkeypatch.setattr(rv, "proximo_frame", lambda pasta, bid: False)   # sem frame novo
+    monkeypatch.setattr(rv, "proximo_frame", lambda pasta, bid, fonte=None: False)   # sem frame novo
     cli = FakeClient([_resp(), _resp({**OK, "thumb_ok": False, "thumb_problema": "sem rosto"})])
     fake_anthropic = types.SimpleNamespace(Anthropic=lambda: cli, APIError=RuntimeError)
     monkeypatch.setitem(sys.modules, "anthropic", fake_anthropic)
@@ -142,7 +142,7 @@ def test_main_aprova_e_poe_em_quarentena(video):
     assert rv.main([str(pasta)]) == 0
     blocos = {b["bloco_id"]: b for b in banco("SELECT bloco_id, status, motivo FROM blocos")}
     assert blocos[1]["status"] == "aprovado" and blocos[1]["motivo"] is None
-    assert blocos[2]["status"] == "descartado" and "sem rosto" in blocos[2]["motivo"]
+    assert blocos[2]["status"] == "quarentena" and "sem rosto" in blocos[2]["motivo"]
     # bloco 1 com thumb; bloco 2 sem → aviso no prompt
     texto_1 = cli.chamadas[0]["messages"][0]["content"][-1]["text"]
     texto_2 = cli.chamadas[1]["messages"][0]["content"][-1]["text"]
@@ -150,7 +150,7 @@ def test_main_aprova_e_poe_em_quarentena(video):
     assert "dentro" in texto_1 and "fora" not in texto_1             # só o trecho do bloco
     assert "TÍTULO DO YOUTUBE: Título 1" in texto_1                    # fallback: blocos.json
     rev = json.loads((pasta / "revisao.json").read_text(encoding="utf-8"))
-    assert rev["02"]["status"] == "descartado" and rev["01"]["thumb"] == "thumb_01_a.png"
+    assert rev["02"]["status"] == "quarentena" and rev["01"]["thumb"] == "thumb_01_a.png"
     ev = banco("SELECT agente, custo_usd FROM eventos WHERE etapa='11_revisor' AND status='llm'")
     assert len(ev) == 2 and {e["agente"] for e in ev} == {"revisor"}
     assert ev[0]["custo_usd"] == pytest.approx(5000 / 1e6 * 4 + 1000 / 1e6 * 20)
@@ -325,7 +325,7 @@ def _thumb(ok, problema=""):
 def so_bloco_1(video, monkeypatch):
     pasta, cli, banco = video
     trocas = []
-    monkeypatch.setattr(rv, "proximo_frame", lambda pasta, bid: trocas.append(bid) or True)
+    monkeypatch.setattr(rv, "proximo_frame", lambda pasta, bid, fonte=None: trocas.append(bid) or True)
     return pasta, cli, banco, trocas
 
 
@@ -346,13 +346,15 @@ def test_thumb_reprovada_troca_frame_e_aprova(so_bloco_1):
     assert len(ev) == 3
 
 
-def test_thumb_nenhum_frame_serve_descarta(so_bloco_1):
+def test_thumb_nenhum_frame_serve_quarentena(so_bloco_1):
     pasta, cli, banco, trocas = so_bloco_1
-    cli.respostas = [_resp(THUMB_RUIM)] + [_thumb(False, "escuro")] * rv.MAX_TROCAS_THUMB
+    n = rv.MAX_TROCAS_THUMB * len(rv.FONTES_THUMB)
+    cli.respostas = [_resp(THUMB_RUIM)] + [_thumb(False, "escuro")] * n
     rv.main([str(pasta), "--bloco=1"])
-    assert len(trocas) == rv.MAX_TROCAS_THUMB
+    assert len(trocas) == n
     b = banco("SELECT status, motivo FROM blocos WHERE bloco_id=1")[0]
-    assert b["status"] == "descartado" and "nenhum frame" in b["motivo"]
+    assert b["status"] == "quarentena" and b["motivo"].startswith("thumb precisa de você")
+    assert "nenhum frame" in b["motivo"]
 
 
 def test_thumb_manual_reprovada_fica_em_quarentena(so_bloco_1):
@@ -395,22 +397,23 @@ def test_thumb_recusa_na_reavaliacao_vira_quarentena(so_bloco_1):
     assert b["status"] == "quarentena" and "recusou" in b["motivo"]
 
 
-def test_thumb_sem_proximo_frame_na_primeira_descarta(video):
+def test_thumb_sem_proximo_frame_na_primeira_quarentena(video):
     pasta, cli, banco = video     # fixture: proximo_frame sempre False
     cli.respostas = [_resp(THUMB_RUIM)]
     rv.main([str(pasta), "--bloco=1"])
     b = banco("SELECT status, motivo FROM blocos WHERE bloco_id=1")[0]
-    assert b["status"] == "descartado" and "nenhum frame" in b["motivo"]
+    assert b["status"] == "quarentena" and b["motivo"].startswith("thumb precisa de você")
     assert len(cli.chamadas) == 1
 
 
 def test_07_quebrado_vira_quarentena_nao_descarte(video, monkeypatch):
     pasta, cli, banco = video
-    monkeypatch.setattr(rv, "proximo_frame", lambda pasta, bid: None)
+    monkeypatch.setattr(rv, "proximo_frame", lambda pasta, bid, fonte=None: None)
     cli.respostas = [_resp(THUMB_RUIM)]
     rv.main([str(pasta), "--bloco=1"])
     b = banco("SELECT status, motivo FROM blocos WHERE bloco_id=1")[0]
-    assert b["status"] == "quarentena" and "à mão" in b["motivo"]
+    assert b["status"] == "quarentena" and "thumb precisa de você" in b["motivo"]
+    assert "07_thumb" in b["motivo"]
 
 
 @pytest.mark.parametrize("rc,esperado", [(0, True), (2, False), (1, None)])
@@ -425,3 +428,34 @@ def test_proximo_frame_monta_comando(monkeypatch, tmp_path, rc, esperado):
     assert rv.proximo_frame(pasta, 3) is esperado
     assert visto["cmd"][1].endswith("07_thumb.py")
     assert visto["cmd"][2:] == ["2026-01-01_v", "--bloco=3", "--proximo"]
+
+
+# ── thumb: fontes de reserva e texto incoerente ────────────────────────────
+
+def test_thumb_tenta_fontes_na_ordem_e_aprova_com_banco(so_bloco_1, monkeypatch):
+    pasta, cli, banco, _ = so_bloco_1
+    fontes = []
+    monkeypatch.setattr(rv, "proximo_frame",
+                        lambda pasta, bid, fonte=None: fontes.append(fonte) or True)
+    n = rv.MAX_TROCAS_THUMB
+    cli.respostas = [_resp(THUMB_RUIM)] + [_thumb(False, "escuro")] * (2 * n) + [_thumb(True)]
+    rv.main([str(pasta), "--bloco=1"])
+    assert fontes == [None] * n + ["live"] * n + ["banco"]
+    assert banco("SELECT status FROM blocos WHERE bloco_id=1")[0]["status"] == "aprovado"
+
+
+def test_thumb_texto_incoerente_refaz_texto_uma_vez(so_bloco_1, monkeypatch):
+    pasta, cli, banco, trocas = so_bloco_1
+    refeitos = []
+    monkeypatch.setattr(rv, "refazer_texto_thumb",
+                        lambda *a: refeitos.append(a) or ("TEXTO NOVO", 0.01))
+    monkeypatch.setattr(rv, "texto_da_thumb", lambda pasta, bid, novo: novo)
+    cli.respostas = [_resp({**THUMB_RUIM, "thumb_texto_incoerente": True}), _thumb(True)]
+    rv.main([str(pasta), "--bloco=1"])
+    assert len(refeitos) == 1 and trocas == []
+    assert banco("SELECT status FROM blocos WHERE bloco_id=1")[0]["status"] == "aprovado"
+
+
+def test_schemas_tem_thumb_texto_incoerente():
+    assert "thumb_texto_incoerente" in rv.SCHEMA["properties"]
+    assert "thumb_texto_incoerente" in rv.SCHEMA_THUMB["properties"]

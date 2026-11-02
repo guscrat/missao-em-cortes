@@ -42,8 +42,9 @@ SCHEMA = {
 }
 
 SISTEMA = f"""Você é o editor do canal "Missão em Cortes", que publica cortes de lives e \
-entrevistas do Partido Missão. O revisor reprovou o título deste corte (infiel à fala, ou \
-destacando palavrão/termo ofensivo). Reescreva o título do YouTube e o texto da thumb.
+entrevistas do Partido Missão. O revisor reprovou o título deste corte (infiel à fala, \
+destacando palavrão/termo ofensivo ou especulando sobre morte, violência, crime ou saúde). \
+Reescreva o título do YouTube e o texto da thumb.
 
 Regras:
 - Só afirme o que a transcrição sustenta. Nada de atribuir ao speaker frase, alvo ou \
@@ -54,6 +55,11 @@ deste trecho: nada de frase dita em outro momento da live.
 - Título e texto da thumb NUNCA destacam palavrão nem termo que possa soar como ofensa a um \
 grupo (raça, etnia, gênero, orientação sexual, religião, origem, deficiência etc.), MESMO que \
 esteja na fala. Descreva o tom ("desabafo sem filtro", "detona") em vez de citar o termo.
+- Título e texto da thumb NUNCA especulam \
+sobre morte, violência, crime ou saúde de pessoa real (ex.: "vai ser \
+assassinado?", "vai morrer?", "está doente?", "mandou matar?"), MESMO que a fala especule. Fato \
+público dito no trecho (está preso, foi condenado, é investigado) pode, sem especular além dele \
+(ex.: "Vorcaro vai ser solto?" passa; "Vorcaro vai ser solto ou assassinado?" não).
 - titulo: no máximo {MAX_TITULO} caracteres, pensado pra busca do YouTube (cauda longa): \
 nome COMPLETO da pessoa (ex.: "Flávio Bolsonaro", não "Flávio") + o tema concreto (o caso, a \
 lei, o escândalo: "Lava Jato", "Banco Master"). Prefira a forma de pergunta quando o trecho \
@@ -140,6 +146,11 @@ Só use [nome] se a descrição dessa cena diz que é essa pessoa; se não diz q
 sem nome em vermelho. Nunca ponha o nome de uma pessoa ao lado da foto de outra.
 - NUNCA destaque palavrão nem termo que possa soar como ofensa a um grupo (raça, etnia, \
 gênero, orientação sexual, religião, origem, deficiência etc.), MESMO que esteja na fala.
+- O texto NUNCA especula \
+sobre morte, violência, crime ou saúde de pessoa real (ex.: "vai ser \
+assassinado?", "vai morrer?", "está doente?", "mandou matar?"), MESMO que a fala especule. Fato \
+público dito no trecho (está preso, foi condenado, é investigado) pode, sem especular além dele \
+(ex.: "Vorcaro vai ser solto?" passa; "Vorcaro vai ser solto ou assassinado?" não).
 - Diferente do título do YouTube (não repita a frase)."""
 
 
@@ -212,6 +223,11 @@ ou promessa que ele não disse. Números, datas, fatos e nomes batem EXATAMENTE 
 nome de pessoa sempre na grafia oficial da lista.
 - NUNCA destaque palavrão nem termo que possa soar como ofensa a um grupo (raça, etnia, \
 gênero, orientação sexual, religião, origem, deficiência etc.), MESMO que esteja na fala.
+- O texto NUNCA especula \
+sobre morte, violência, crime ou saúde de pessoa real (ex.: "vai ser \
+assassinado?", "vai morrer?", "está doente?", "mandou matar?"), MESMO que a fala especule. Fato \
+público dito no trecho (está preso, foi condenado, é investigado) pode, sem especular além dele \
+(ex.: "Vorcaro vai ser solto?" passa; "Vorcaro vai ser solto ou assassinado?" não).
 - Diferente do título do YouTube (não repita a frase)."""
 
 
@@ -251,6 +267,56 @@ def textos_thumb_ab(client, pedido: str, atual: str) -> tuple[list[str] | None, 
             vistos.add(o)
             validas.append(o)
     return validas[:2], resp
+
+
+SCHEMA_TEXTO_TITULO = {
+    "type": "object",
+    "properties": {"texto_thumb": {"type": "string"}},
+    "required": ["texto_thumb"],
+    "additionalProperties": False,
+}
+
+# Mesmas regras do texto do teste A/B; muda só a tarefa (um texto, a partir do título final)
+SISTEMA_TEXTO_TITULO = """Você é o editor do canal "Missão em Cortes", que publica cortes de \
+lives e entrevistas do Partido Missão. O revisor disse que o texto da thumb não bate com o \
+título do YouTube. Escreva UM texto novo a partir do TÍTULO FINAL: o mesmo gancho, destilado \
+pra miniatura.
+
+Regras:""" + SISTEMA_THUMB_AB.split("Regras:", 1)[1]
+
+
+def montar_pedido_texto_titulo(titulo: str, texto_thumb: str, bloco: dict) -> str:
+    return "\n".join([f"TÍTULO FINAL DO YOUTUBE: {titulo}",
+                      f"TEXTO DA THUMB REPROVADO: {texto_thumb}",
+                      f"RESUMO DO TRECHO: {bloco.get('resumo', '')}",
+                      "GANCHOS (frases ditas no trecho):",
+                      *[f"- {g}" for g in bloco.get("ganchos") or []],
+                      "", GRAFIAS_PEDIDO, _grafias.para_prompt()])
+
+
+def texto_do_titulo(client, pedido: str, atual: str) -> tuple[str | None, object]:
+    """Texto da thumb refeito a partir do título final (~US$ 0.01, effort low). (texto ou
+    None se recusou / veio inválido ou igual ao reprovado, resposta)."""
+    resp = client.beta.messages.create(
+        model=MODELO,
+        max_tokens=4000,
+        system=SISTEMA_TEXTO_TITULO,
+        messages=[{"role": "user", "content": pedido}],
+        output_config={"effort": "low",
+                       "format": {"type": "json_schema", "schema": SCHEMA_TEXTO_TITULO}},
+        betas=["server-side-fallback-2026-07-01"],
+        extra_body={"fallbacks": "default"},
+    )
+    if resp.stop_reason == "refusal":
+        return None, resp
+    texto = next((b.text for b in resp.content if b.type == "text"), None)
+    try:
+        novo = _grafias.corrigir(json.loads(texto)["texto_thumb"].strip().upper())
+    except (TypeError, ValueError, KeyError, AttributeError):
+        return None, resp
+    if not novo or len(novo) > MAX_TEXTO_THUMB or novo == atual.strip().upper():
+        return None, resp
+    return novo, resp
 
 
 def custo(resp) -> tuple[int, int, float]:

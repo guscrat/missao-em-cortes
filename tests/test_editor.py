@@ -137,3 +137,30 @@ def test_07_variante_invalida_sai_com_erro(flags):
     r = subprocess.run([sys.executable, str(ROOT / "scripts" / "07_thumb.py"), "x", *flags],
                        capture_output=True, text=True, timeout=60)
     assert r.returncode != 0 and "--variante" in r.stderr
+
+
+# ── texto_do_titulo ────────────────────────────────────────────────────────
+
+def _resp_texto(texto, stop="end_turn"):
+    import json as _j
+    import types as _t
+    return _t.SimpleNamespace(stop_reason=stop, model="m", usage=None, content=[
+        _t.SimpleNamespace(type="text", text=_j.dumps({"texto_thumb": texto}))])
+
+
+def _cli_texto(resp):
+    import types as _t
+    return _t.SimpleNamespace(beta=_t.SimpleNamespace(
+        messages=_t.SimpleNamespace(create=lambda **kw: resp)))
+
+
+@pytest.mark.parametrize("resp,esperado", [
+    (_resp_texto("novo texto"), "NOVO TEXTO"),                 # sobe pra maiúsculas
+    (_resp_texto("igual"), None),                              # igual ao atual
+    (_resp_texto("X" * 60), None),                             # passa do limite
+    (_resp_texto("", stop="refusal"), None),                   # recusa
+])
+def test_texto_do_titulo(resp, esperado):
+    import _editor as ed
+    novo, _ = ed.texto_do_titulo(_cli_texto(resp), "pedido", "IGUAL")
+    assert novo == esperado
