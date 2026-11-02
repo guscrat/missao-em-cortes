@@ -31,9 +31,17 @@ O espaço do canal está no que os canais de corte grandes do ecossistema **não
 - **Checagem no código** ($0, `cortes_publicados` + `marcar_cortados`): `config/canais.json` → `canais_corte` (`[{nome, url}]`, os canais de corte grandes) e `cortes_por_canal` (padrão 30). A cada rodada, depois da avaliação, o Curador lista os `cortes_por_canal` vídeos mais recentes de cada um **com o yt-dlp** (aba videos, flat) e lê a descrição de cada corte novo (1 vez só, cache em `state/cortes_terceiros.json`) atrás de links de vídeo do YouTube. Live da fila citada na descrição de um corte = já cortada.
   - **Nunca pela API do YouTube**: os projetos Google (publisher e analytics) declaram que não acessam dados de outros canais (skill `youtube-compliance`). Só yt-dlp, como a leitura dos canais monitorados.
   - Já cortada → `cortado_por` = "Canal X (2), Canal Y (1)" (no `curadoria.json`, na sugestão do banco e no painel: "já cortado por …"; conferido e ninguém cortou = "ninguém cortou ainda") e a prioridade cai `PENALIDADE_CORTADO` (3, mín. 1) a partir da do Claude (`prioridade_llm`). Refeito pra **fila inteira** a cada rodada (o corte costuma sair 1-2 dias depois da live); se o corte some da listagem, a prioridade volta.
-  - Limite: só pega corte que credita a live com link na descrição. Corte sem link passa como "ninguém cortou".
+  - **Corte sem link** (01/11/2026: Cortes do Mamãe Falei, Cortes do MBL, Cortes do Renan Santos e Kim Cuts não põem o link): o cache guarda título e data de cada corte, e o Curador compara com a live da fila (`talvez_cortado`). Conta quando há pelo menos `MIN_PALAVRAS_TALVEZ` (2) palavras-chave em comum (4+ letras, sem nomes do grupo nem palavras de formato como "plantão", "análises", "debate": `PALAVRAS_GENERICAS`) e o corte saiu de 0 a `DIAS_TALVEZ` (10) dias depois da live. Resultado: `talvez_cortado_por`, que aparece como "possivelmente já cortado (pelo título) por X" e tira só `PENALIDADE_TALVEZ` (1). Se há link, vale o link (3). É heurística: pode errar pros dois lados, por isso a penalidade é menor.
   - `canais_corte` vazio = não confere (o painel não mostra nada). Falha na checagem vira aviso no resumo; a fila segue com a prioridade de antes.
 - **Entrevistas em outros canais** só entram se o canal estiver em `canais` (as fontes monitoradas). Fonte nova = acrescentar lá (com `prefixo` e `zoom`).
+
+## 2c. Fontes de terceiros (01/11/2026, decisão do Gu)
+
+`canais` com `"terceiros": true`: hoje **Flow Podcast** (`UC4ncvgh5hFr5O83MH7-jRJg`) e **Inteligência Ltda** (`UCWZoPPW7u2I4gZfhJBZ6NqQ`), sem zoom calibrado.
+
+- **Só episódio com alguém do grupo**: filtro grátis no título antes do Claude (`tem_grupo`: Renan Santos, Arthur do Val/Mamãe Falei, Kim Kataguiri, Guto Zacarias, Amanda Vettorazzo, MBL, Movimento Brasil Livre, Partido Missão; palavra inteira, sem acento). "Missão" sozinho não conta, porque pegaria "Missão Impossível". O Claude recebe o canal marcado "(terceiros)" e recusa se a pessoa do grupo não participa de verdade.
+- **Marcado com risco**: a sugestão sai com `risco` = "fonte de terceiros: risco de reivindicação de direitos" (painel e resumo, com ⚠). **O Gu decide caso a caso.**
+- **Nunca é processado sozinho**: `proximo_da_fila` pula `terceiros`, então ficam de fora a rede de segurança, o modo automático, o modo evento e o `--forcar`. Só entra pelo botão Processar.
 
 ## 3. Estoque
 

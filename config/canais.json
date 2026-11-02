@@ -5,7 +5,7 @@
   "duracao_min": 20,
   "duracao_max": 240,
   "por_canal": 8,
-  "_comment_canais_corte": "Canais de corte grandes do ecossistema. O Curador lê os cortes_por_canal vídeos mais recentes de cada um (yt-dlp, nunca a API do YouTube) e procura o link da live na descrição: live já cortada perde prioridade e o painel mostra 'já cortado por X'. Lista vazia = não confere. Formato: {\"nome\": \"...\", \"url\": \"https://www.youtube.com/@handle\"}.",
+  "_comment_canais_corte": "Canais de corte grandes do ecossistema. O Curador lê os cortes_por_canal vídeos mais recentes de cada um (yt-dlp, nunca a API do YouTube) e procura o link da live na descrição: live já cortada perde prioridade e o painel mostra 'já cortado por X'. Lista vazia = não confere. Canal SEM link na descrição é conferido pelo título ('possivelmente já cortado', penalidade menor). Em canais, \"terceiros\": true = fonte de terceiros (Flow, Inteligência): só episódio com alguém do grupo no título, sugestão marcada com risco de reivindicação de direitos e nunca processada sozinha. Formato: {\"nome\": \"...\", \"url\": \"https://www.youtube.com/@handle\"}.",
   "canais_corte": [
     {"nome": "Cortes do Mamãe Falei", "url": "https://www.youtube.com/@cortesdomamaefalei"},
     {"nome": "Inevitável Cortes", "url": "https://www.youtube.com/@inevitavelcortes"},
@@ -51,6 +51,20 @@
       "url": "https://www.youtube.com/@TVdoMBL",
       "prefixo": "mbl",
       "zoom": "1476:830:200:100"
+    },
+    {
+      "nome": "Flow Podcast",
+      "url": "https://www.youtube.com/channel/UC4ncvgh5hFr5O83MH7-jRJg",
+      "prefixo": "flow",
+      "zoom": null,
+      "terceiros": true
+    },
+    {
+      "nome": "Inteligência Ltda",
+      "url": "https://www.youtube.com/channel/UCWZoPPW7u2I4gZfhJBZ6NqQ",
+      "prefixo": "inteligencia",
+      "zoom": null,
+      "terceiros": true
     }
   ]
 }
