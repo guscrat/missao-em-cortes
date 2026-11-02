@@ -10,7 +10,8 @@ dela e o bloco é refeito; sem ela fica < 5 min → "quarentena". Depois, a de F
 começa no começo de frase e termina em fim de frase com pausa depois (últimas palavras do
 words.json)? Reprovou → reajusta sozinho: leva a ponta pro fim de frase mais perto (até 30s),
 grava no blocos.json e refaz o bloco (pipeline.py --bloco=N, ~US$ 0.03 do 04b). Sem ponto
-natural perto ou falhou ao refazer → "quarentena" (ajuste à mão).
+natural perto → tenta o próximo antes/depois (até 5 min); nunca pede ajuste à mão. Só
+falha ao refazer o bloco (pipeline) vira "quarentena".
 
 Pra cada bloco montado, UMA chamada ao Claude (com visão) recebe:
   - o título que vai pro YouTube (descricoes.txt; edição manual vale) e o texto da thumb
@@ -34,10 +35,14 @@ Quem decide é o código, não o modelo (regra de produto da quarentena):
   - título reprovado → o EDITOR (_editor.py) reescreve título + texto da thumb, refaz a
     thumb/Short e o revisor reavalia; no máx. 2 reescritas. Reprovou nas 2 → "quarentena"
     e vira decisão do Gu (faixa amarela na tarefa do MISSAO_TAREFA, se houver)
-  - só a thumb reprovada → troca o frame sozinho: 07_thumb.py --proximo (próximo frame com
-    rosto da fila, por nota de tamanho/luz/nitidez) e reavalia só a thumb, até
-    MAX_TROCAS_THUMB vezes. Nenhum serviu → "descartado". Thumb manual reprovada →
-    "quarentena" (foi escolhida à mão: refazer com 07_thumb.py --t=)
+  - só a thumb reprovada → a thumb NUNCA derruba o corte (02/11/2026). Texto que não bate
+    com o título → o editor refaz o texto a partir do título final. Rosto ruim → troca o
+    frame sozinho (07_thumb.py --proximo) e reavalia só a thumb, até MAX_TROCAS_THUMB frames
+    de cada fonte, em ordem: o corte, a live inteira (--fonte=live) e o banco de rostos do
+    apresentador (--fonte=banco, _thumb_banco). Nenhum serviu, ou thumb manual reprovada →
+    "quarentena" com "thumb precisa de você". Bloco aprovado guarda o frame no banco ($0)
+  - título/thumb que especulam sobre morte, violência, crime ou saúde de pessoa real →
+    título reprovado (vai pro editor), mesmo que a fala especule
   - tudo ok → "aprovado"
   - modo ab (config/thumb.json → modo: "ab", a/b/c = 3 versões da clássica): aprovado →
     confere também a arte de b/c (~US$ 0.01 cada); reprovou → a variante vira
@@ -69,6 +74,7 @@ import _custo
 import _editor
 import _fronteira
 import _grafias
+import _thumb_banco
 from _descricoes import (ler_descricoes, momentos as momentos_da_descricao, remover_capitulos,
                          remover_momentos, trocar_capitulos)
 from _eventos import atualizar_tarefa, evento, ler_bloco, termos_semana, upsert_bloco
@@ -81,7 +87,7 @@ CUSTO_REFAZER_BLOCO = 0.03             # 04b (LLM) ao refazer um bloco com a fro
 N_FRAMES = 6
 LARGURA_IMG = 512                      # imagem pequena = menos token; dá pra ler a tela
 NAO_MEXER = {"agendado", "publicado", "arquivado"}  # decisão já tomada: revisor não mexe
-MAX_TROCAS_THUMB = 3                   # frames novos tentados antes de descartar o bloco
+MAX_TROCAS_THUMB = 3                   # frames tentados por fonte (corte, live inteira, banco)
 SCRIPTS = Path(__file__).parent
 
 SCHEMA = {
@@ -91,6 +97,7 @@ SCHEMA = {
         "titulo_problema": {"type": "string"},
         "thumb_ok": {"type": "boolean"},
         "thumb_problema": {"type": "string"},
+        "thumb_texto_incoerente": {"type": "boolean"},
         "tela_compartilhada": {"type": "boolean"},
         "tela_problema": {"type": "string"},
         "corte_sem_sentido": {"type": "boolean"},
@@ -99,15 +106,16 @@ SCHEMA = {
         "capitulos_errados": {"type": "array", "items": {"type": "string"}},
     },
     "required": ["titulo_fiel", "titulo_problema", "thumb_ok", "thumb_problema",
-                 "tela_compartilhada", "tela_problema", "corte_sem_sentido", "sentido_problema",
+                 "thumb_texto_incoerente", "tela_compartilhada", "tela_problema", "corte_sem_sentido", "sentido_problema",
                  "momentos_fora", "capitulos_errados"],
     "additionalProperties": False,
 }
 
 SCHEMA_THUMB = {
     "type": "object",
-    "properties": {"thumb_ok": {"type": "boolean"}, "thumb_problema": {"type": "string"}},
-    "required": ["thumb_ok", "thumb_problema"],
+    "properties": {"thumb_ok": {"type": "boolean"}, "thumb_problema": {"type": "string"},
+                   "thumb_texto_incoerente": {"type": "boolean"}},
+    "required": ["thumb_ok", "thumb_problema", "thumb_texto_incoerente"],
     "additionalProperties": False,
 }
 
@@ -118,7 +126,7 @@ no meio de palavra, e coerente com o título? Reprove se o fundo é tela compart
 documento, se não há rosto, se o rosto está escuro, cortado ou coberto, ou se o texto está \
 truncado ou sem sentido. EXCEÇÃO, thumb colagem (apresentador recortado com contorno branco na \
 frente + 2 cenas do assunto ao fundo, círculo ou seta vermelha): as cenas ao fundo podem ser \
-tela, vídeo ou foto; o que vale é o rosto do APRESENTADOR inteiro e o texto legível. SETA OU CÍRCULO destacando uma pessoa: só passa se der pra ter CERTEZA, sem reconhecer rosto, de que a pessoa destacada é a citada no texto da thumb ou no título: ela é o apresentador (quem fala, em primeiro plano) ou o nome dela está ESCRITO na cena destacada (legenda, tarja, crachá, @ do post). Reprove se a cena destacada traz o nome de OUTRA pessoa (ex.: seta numa cena com a tarja "KIM KATAGUIRI" numa thumb sobre o Marçal) ou se nada escrito confirma quem é: na dúvida, reprove e diga isso em thumb_problema."""
+tela, vídeo ou foto; o que vale é o rosto do APRESENTADOR inteiro e o texto legível. SETA OU CÍRCULO destacando uma pessoa: só passa se der pra ter CERTEZA, sem reconhecer rosto, de que a pessoa destacada é a citada no texto da thumb ou no título: ela é o apresentador (quem fala, em primeiro plano) ou o nome dela está ESCRITO na cena destacada (legenda, tarja, crachá, @ do post). Reprove se a cena destacada traz o nome de OUTRA pessoa (ex.: seta numa cena com a tarja "KIM KATAGUIRI" numa thumb sobre o Marçal) ou se nada escrito confirma quem é: na dúvida, reprove e diga isso em thumb_problema. thumb_texto_incoerente: true SÓ se um dos problemas da thumb é o texto dela não bater com o título (o rosto/arte pode estar ok ou não); false em qualquer outro caso."""
 
 SISTEMA = """Você é o revisor de conteúdo do canal "Missão em Cortes", que publica cortes de \
 lives e entrevistas do Partido Missão. Linha editorial: simpática ao partido, com independência \
@@ -138,6 +146,11 @@ vierem várias variantes de texto da thumb separadas por " | " (teste A/B do "Te
 falhou. Reprove TAMBÉM se o título ou o texto da thumb destacam palavrão ou \
 termo que possa soar como ofensa a um grupo (raça, etnia, gênero, orientação sexual, \
 religião, origem, deficiência etc.), MESMO que esteja na fala: diga isso em titulo_problema.
+Reprove TAMBÉM se o título ou o texto da thumb especulam \
+sobre morte, violência, crime ou saúde de pessoa real (ex.: "vai ser \
+assassinado?", "vai morrer?", "está doente?", "mandou matar?"), MESMO que a fala especule. Fato \
+público dito no trecho (está preso, foi condenado, é investigado) pode, sem especular além dele \
+(ex.: "Vorcaro vai ser solto?" passa; "Vorcaro vai ser solto ou assassinado?" não): diga isso em titulo_problema.
 2. thumb_ok: """ + CRITERIO_THUMB + """
 3. tela_compartilhada: nos frames do corte (imagens seguintes), a MAIOR parte mostra tela \
 compartilhada (navegador, matéria, gráfico, documento) em vez de pessoas falando? Isso é \
@@ -366,14 +379,17 @@ def checar_thumb(client, thumb: Path, titulo: str, texto_thumb: str) -> tuple[di
     return chamar_claude(client, conteudo, SISTEMA_THUMB, SCHEMA_THUMB, effort="low")
 
 
-def proximo_frame(pasta: Path, bid: int) -> bool | None:
-    """07_thumb --proximo: troca o frame da thumb_NN_a pelo seguinte da fila.
+def proximo_frame(pasta: Path, bid: int, fonte: str | None = None) -> bool | None:
+    """07_thumb --proximo: troca o frame da thumb_NN_a pelo seguinte da fila. fonte='live' ou
+    'banco' pula pros frames de reserva (live inteira / banco de rostos do apresentador).
     True = trocou; False = acabou a fila (o 07 sai com 2); None = o 07 quebrou."""
+    cmd = [sys.executable, str(SCRIPTS / "07_thumb.py"), pasta.name, f"--bloco={bid}", "--proximo"]
+    if fonte:
+        cmd.append(f"--fonte={fonte}")
     try:
-        r = subprocess.run([sys.executable, str(SCRIPTS / "07_thumb.py"), pasta.name,
-                            f"--bloco={bid}", "--proximo"], capture_output=True, timeout=300)
+        r = subprocess.run(cmd, capture_output=True, timeout=600)   # live inteira: ~1-3 min
     except subprocess.TimeoutExpired:
-        print(f"  [!] {bid:02d}: 07_thumb --proximo passou de 5 min")
+        print(f"  [!] {bid:02d}: 07_thumb --proximo passou de 10 min")
         return None
     if r.returncode not in (0, 2):
         erro = (r.stderr or b"").decode("utf-8", "replace").strip().splitlines()[-1:]
@@ -382,44 +398,124 @@ def proximo_frame(pasta: Path, bid: int) -> bool | None:
     return r.returncode == 0
 
 
-def trocar_thumb(client, anthropic, stem, pasta, bid, nn, titulo, texto_thumb,
-                 problema) -> tuple[str, str | None, list[str], float]:
-    """Thumb reprovada (e o resto ok): tenta os próximos frames com rosto até
-    MAX_TROCAS_THUMB. (status, motivo, problemas de cada troca, custo)."""
+# Reserva da thumb, em ordem (02/11/2026: a thumb nunca derruba um corte): frames do corte,
+# frames da live inteira (rosto bem enquadrado e expressão: quem julga é o revisor) e o banco
+# de rostos do apresentador (_thumb_banco). Nada serviu → quarentena "thumb precisa de você".
+FONTES_THUMB = (None, "live", "banco")
+MOTIVO_THUMB_GU = "thumb precisa de você"
+
+
+def texto_thumb_do_bloco(pasta: Path, bid: int) -> str | None:
+    blocos = json.loads((pasta / "blocos.json").read_text(encoding="utf-8"))["blocos"]
+    return next((x.get("texto_thumb") for x in blocos if x["id"] == bid), None)
+
+
+def refazer_texto_thumb(client, anthropic, stem, pasta, bid, nn, titulo,
+                        texto_thumb) -> tuple[str | None, float]:
+    """O revisor disse que o texto da thumb não bate com o título: o editor escreve outro a
+    partir do título FINAL e as artes (a/b/c, Short) são refeitas. (texto novo ou None, custo)."""
+    blocos = json.loads((pasta / "blocos.json").read_text(encoding="utf-8"))["blocos"]
+    b = next((x for x in blocos if x["id"] == bid), {})
+    t0 = time.time()
+    try:
+        _custo.checar_orcamento(stem, "11_editor")
+        novo, resp = _editor.texto_do_titulo(
+            client, _editor.montar_pedido_texto_titulo(titulo, texto_thumb, b),
+            b.get("texto_thumb") or texto_thumb)
+    except (anthropic.APIError, json.JSONDecodeError) as e:
+        evento(stem, "11_editor", "falha", agente="editor", bloco_id=bid,
+               mensagem=f"texto da thumb: {_custo.descrever_erro(e)}"[:300])
+        return None, 0.0
+    tin, tout, usd = _editor.custo(resp)
+    evento(stem, "11_editor", "llm", agente="editor", bloco_id=bid, tokens_in=tin,
+           tokens_out=tout, custo_usd=usd, mensagem=f"{resp.model} (texto da thumb pelo título)",
+           duracao_s=time.time() - t0, **_custo.cache(resp))
+    if not novo:
+        return None, usd
+    _editor.gravar_texto(pasta, bid, titulo, novo)
+    for aviso in _editor.refazer_artes(pasta, bid, escolher_thumb(pasta / "thumbs", nn)):
+        print(f"  [aviso] {nn}: {aviso}")
+    print(f"  {nn}: texto da thumb refeito pelo título (US$ {usd:.3f}) → '{novo}'")
+    return novo, usd
+
+
+def trocar_thumb(client, anthropic, stem, pasta, bid, nn, titulo, texto_thumb, problema,
+                 texto_incoerente=False) -> tuple[str, str | None, list[str], float, str]:
+    """Thumb reprovada (e o resto ok). Nunca descarta o bloco: texto que não bate com o título
+    → refeito pelo título (1x, reavalia o mesmo frame); rosto ruim → até MAX_TROCAS_THUMB
+    frames de cada fonte de FONTES_THUMB. Nada serviu → quarentena "thumb precisa de você".
+    (status, motivo, problemas de cada troca, custo, texto_thumb final)."""
     thumb = escolher_thumb(pasta / "thumbs", nn)
     if thumb and thumb.stem.endswith("_manual"):
-        return ("quarentena", f"thumb manual reprovada: {problema} — refaça com "
-                f"07_thumb.py --bloco={bid} --t=MM:SS", [], 0.0)
-    problemas, usd_total = [problema], 0.0
-    for _ in range(MAX_TROCAS_THUMB):
-        trocou = proximo_frame(pasta, bid)
-        if trocou is None:
-            return ("quarentena", "thumb: falhou ao gerar frame novo (07_thumb) — revisar à mão",
-                    problemas, usd_total)
-        if not trocou:
-            break
+        return ("quarentena", f"{MOTIVO_THUMB_GU}: thumb manual reprovada ({problema}) — refaça "
+                f"com 07_thumb.py --bloco={bid} --t=MM:SS", [], 0.0, texto_thumb)
+    problemas, usd_total, texto_refeito, trocas = [problema], 0.0, False, []
+
+    def checar_atual():
+        """Reavalia a thumb a atual: dict, None (recusou) ou "falha"."""
+        nonlocal usd_total
         t0 = time.time()
         try:
             r, resp = checar_thumb(client, escolher_thumb(pasta / "thumbs", nn), titulo, texto_thumb)
         except (anthropic.APIError, json.JSONDecodeError) as e:
             evento(stem, "11_revisor", "falha", agente="revisor", bloco_id=bid,
                    mensagem=f"thumb: {type(e).__name__}")
-            return ("quarentena", f"thumb: falhou ao reavaliar o frame novo ({type(e).__name__})"
-                    " — revisar à mão", problemas, usd_total)
+            return "falha"
         tin, tout, usd = custo(resp)
         usd_total += usd
         evento(stem, "11_revisor", "llm", agente="revisor", bloco_id=bid, tokens_in=tin,
                tokens_out=tout, custo_usd=usd, mensagem=f"{resp.model} (thumb)",
                duracao_s=time.time() - t0, **_custo.cache(resp))
-        if r is None:
-            return "quarentena", "thumb: revisor recusou analisar — revisar à mão", problemas, usd_total
-        print(f"  {nn}: frame novo da thumb → {'ok' if r['thumb_ok'] else r['thumb_problema']}"
-              f" (US$ {usd:.3f})")
-        if r["thumb_ok"]:
-            return "aprovado", None, problemas, usd_total
-        problemas.append(r["thumb_problema"])
-    return ("descartado", f"thumb: nenhum frame com rosto serviu ({len(problemas) - 1} troca(s); "
-            f"último problema: {problemas[-1]})", problemas, usd_total)
+        if r is not None:
+            print(f"  {nn}: thumb → {'ok' if r['thumb_ok'] else r['thumb_problema']}"
+                  f" (US$ {usd:.3f})")
+        return r
+
+    def fim(status, motivo):
+        return status, motivo, problemas, usd_total, texto_thumb
+
+    for fonte in FONTES_THUMB:
+        for k in range(MAX_TROCAS_THUMB + 1):
+            if texto_incoerente and not texto_refeito:
+                # o problema é (também) o texto: refaz pelo título e reavalia o MESMO frame
+                texto_refeito = True
+                novo, usd = refazer_texto_thumb(client, anthropic, stem, pasta, bid, nn, titulo,
+                                                texto_thumb)
+                usd_total += usd
+                if novo:
+                    texto_thumb = texto_da_thumb(pasta, bid, novo)
+                    r = checar_atual()
+                    if r == "falha":
+                        return fim("quarentena", f"{MOTIVO_THUMB_GU}: falhou ao reavaliar a thumb")
+                    if r is None:
+                        return fim("quarentena", f"{MOTIVO_THUMB_GU}: revisor recusou analisar")
+                    if r["thumb_ok"]:
+                        return fim("aprovado", None)
+                    problemas.append(r["thumb_problema"])
+            if k == MAX_TROCAS_THUMB:
+                break
+            trocou = proximo_frame(pasta, bid, fonte) if fonte else proximo_frame(pasta, bid)
+            if trocou is None:
+                return fim("quarentena", f"{MOTIVO_THUMB_GU}: falhou ao gerar frame novo (07_thumb)")
+            if not trocou:
+                break
+            trocas.append(fonte or "corte")
+            r = checar_atual()
+            if r == "falha":
+                return fim("quarentena", f"{MOTIVO_THUMB_GU}: falhou ao reavaliar o frame novo")
+            if r is None:
+                return fim("quarentena", f"{MOTIVO_THUMB_GU}: revisor recusou analisar")
+            if r["thumb_ok"]:
+                if fonte:
+                    evento(stem, "11_revisor", "aviso", agente="revisor", bloco_id=bid,
+                           mensagem=f"thumb aprovada com frame de reserva ({fonte})")
+                return fim("aprovado", None)
+            problemas.append(r["thumb_problema"])
+            texto_incoerente = texto_incoerente or bool(r.get("thumb_texto_incoerente"))
+    resumo = ", ".join(f"{trocas.count(f)} {f}" for f in ("corte", "live", "banco")
+                       if trocas.count(f)) or "nenhuma"
+    return fim("quarentena", f"{MOTIVO_THUMB_GU}: nenhum frame serviu (trocas: {resumo}; "
+               f"último problema: {problemas[-1]}) — refaça com 07_thumb.py --bloco={bid} --t=MM:SS")
 
 
 def conferir_colagem_ab(client, anthropic, stem, pasta, bid, titulo) -> float:
@@ -677,19 +773,23 @@ def conferir_fronteira(stem: str, pasta: Path, b: dict, todas: list[dict],
     if not reajustar:
         return registro, f"corte {pontas} no meio de frase"
     dur = fim - ini
-    e = _fronteira.encaixar(
-        todas, ini, fim, _fronteira.JANELA_BLOCO_S,
+    # Nunca pede ajuste à mão (02/11/2026): se o ponto natural mais perto não serve, o
+    # reencaixar tenta o próximo antes/depois (até REENCAIXE_MAX_S), sempre em 5-30 min.
+    e = _fronteira.reencaixar(
+        todas, ini, fim,
         _fronteira.LONGO_MIN * 60 if dur >= _fronteira.LONGO_MIN * 60 else None,
         _fronteira.LONGO_MAX * 60 if dur <= _fronteira.LONGO_MAX * 60 else None)
-    if (not chk["inicio_ok"] and not e["inicio_ok"]) or (not chk["fim_ok"] and not e["fim_ok"]):
-        return registro, (f"corte {pontas} no meio de frase e não há ponto natural a até "
-                          f"{_fronteira.JANELA_BLOCO_S:.0f}s — ajuste os tempos à mão no blocos.json")
-    novo_ini = e["inicio"] if not chk["inicio_ok"] else ini
-    novo_fim = e["fim"] if not chk["fim_ok"] else fim
+    if not (e["inicio_ok"] and e["fim_ok"]):
+        # sem nenhuma frase fechando a até 5 min (whisper sem pontuação nem pausa): segue
+        # com o tempo atual pra revisão de conteúdo, só com aviso — não chama o Gu
+        registro["sem_ponto_natural"] = True
+        print(f"  [aviso] {nn}: nenhum ponto natural a até {_fronteira.REENCAIXE_MAX_S:.0f}s — "
+              f"segue com o tempo atual")
+        evento(stem, "11_revisor", "aviso", agente="revisor", bloco_id=bid,
+               mensagem=f"fronteira: nenhum ponto natural a até {_fronteira.REENCAIXE_MAX_S:.0f}s")
+    novo_ini, novo_fim = e["inicio"], e["fim"]
     if abs(novo_ini - ini) < 0.01 and abs(novo_fim - fim) < 0.01:
-        # o ponto natural é o próprio tempo e a checagem reprova: refazer daria o mesmo vídeo
-        return registro, (f"corte {pontas} no meio de frase, mas o ponto natural mais perto é "
-                          f"o tempo atual — revisar à mão")
+        return registro, None   # nada mudou: refazer daria o mesmo vídeo
     gravar_tempos(stem, pasta, b, novo_ini, novo_fim)
     registro["reajuste_s"] = [round(novo_ini - ini, 2), round(novo_fim - fim, 2)]
     print(f"  {nn}: reajustado ({registro['reajuste_s'][0]:+.1f}s no início, "
@@ -702,8 +802,9 @@ def conferir_fronteira(stem: str, pasta: Path, b: dict, todas: list[dict],
     chk = _fronteira.checar(todas, novo_ini, novo_fim)
     registro.update(inicio_ok=chk["inicio_ok"], fim_ok=chk["fim_ok"], ultimas=chk["ultimas"],
                     pausa_depois_s=chk["pausa_depois_s"])
-    if not (chk["inicio_ok"] and chk["fim_ok"]):
-        return registro, "fronteira continua no meio de frase depois do reajuste — revisar à mão"
+    if not (chk["inicio_ok"] and chk["fim_ok"]) and not registro.get("sem_ponto_natural"):
+        evento(stem, "11_revisor", "aviso", agente="revisor", bloco_id=bid,
+               mensagem="fronteira continua reprovada depois do reajuste (segue pra revisão)")
     return registro, None
 
 
@@ -854,9 +955,10 @@ def main(argv: list[str]) -> int:
         trocas_thumb = []
         if status == "quarentena" and checagens and checagens["titulo_fiel"] \
                 and not checagens["thumb_ok"]:
-            status, motivo, trocas_thumb, usd_t = trocar_thumb(
+            status, motivo, trocas_thumb, usd_t, texto_thumb = trocar_thumb(
                 client, anthropic, stem, pasta, bid, nn, titulo, texto_thumb,
-                checagens["thumb_problema"])
+                checagens["thumb_problema"], bool(checagens.get("thumb_texto_incoerente")))
+            texto_base = texto_thumb_do_bloco(pasta, bid) or texto_base   # refeito pelo título?
             total += usd_t
             custo_bloco += usd_t
             if status == "aprovado":
@@ -867,6 +969,9 @@ def main(argv: list[str]) -> int:
             total += usd_ab
             custo_bloco += usd_ab
             texto_thumb = texto_da_thumb(pasta, bid, texto_base)
+            # banco de rostos: o frame aprovado vira reserva pras próximas lives ($0)
+            if _thumb_banco.guardar(pasta, b):
+                print(f"  {nn}: frame da thumb guardado no banco de rostos")
 
         # falas de "Principais momentos" fora do trecho: saem da descrição sozinhas ($0)
         removidos = limpar_momentos(pasta, bid, (checagens or {}).get("momentos_fora") or [],

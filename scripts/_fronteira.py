@@ -102,7 +102,9 @@ def janela(palavras: list[dict], ini: float, fim: float,
     starts = [w["start"] for w in palavras]
     i = bisect.bisect_left(starts, ini - 0.01)       # primeira palavra do trecho
     if i > 0 and palavras[i - 1]["end"] <= ini + 0.01:
-        a = max(a, palavras[i - 1]["end"] + FOLGA_S)
+        # a folga nunca passa do início pedido: palavra colada na anterior (end == start do
+        # whisper) ficava de fora e o corte abria no meio da frase (bloco 01 do Renan boicote)
+        a = max(a, min(palavras[i - 1]["end"] + FOLGA_S, ini))
     j = bisect.bisect_left(starts, fim - 0.01)       # primeira que começa depois do fim
     while j < len(palavras) and palavras[j]["end"] <= fim + 0.01:
         j += 1   # palavra de duração zero (o whisper às vezes dá start == end) acabando no fim: é do trecho
@@ -159,6 +161,40 @@ def encaixar(palavras: list[dict], ini: float, fim: float, janela_s: float,
                            None if dur_max is None else base + dur_max)
     return {"inicio": base, "fim": fim if novo_fim is None else novo_fim,
             "inicio_ok": novo_ini is not None, "fim_ok": novo_fim is not None}
+
+
+REENCAIXE_MAX_S = 300.0  # o revisor procura o próximo ponto natural até 5 min de cada ponta
+
+
+def reencaixar(palavras: list[dict], ini: float, fim: float,
+               dur_min: float | None = None, dur_max: float | None = None,
+               janela_s: float = REENCAIXE_MAX_S) -> dict:
+    """Revisor (11): ponta reprovada vai pro ponto natural mais perto em que o vídeo PASSA
+    na checagem (o que se ouve, com o padding do 04). Se o mais perto não serve (é o tempo
+    atual, a janela pega a palavra vizinha, sai de [dur_min, dur_max]), tenta o próximo antes
+    ou depois, até janela_s. Nunca devolve "ajuste à mão": sem candidato, *_ok=False."""
+    chk = checar(palavras, ini, fim)
+    novo_ini, novo_fim = ini, fim
+    ini_ok, fim_ok = chk["inicio_ok"], chk["fim_ok"]
+    dur_ok = lambda a, z: ((dur_min is None or z - a >= dur_min)            # noqa: E731
+                           and (dur_max is None or z - a <= dur_max))
+    if not ini_ok:
+        cands = sorted({w["start"] for k, w in enumerate(palavras)
+                        if abs(w["start"] - ini) <= janela_s and eh_inicio(palavras, k)},
+                       key=lambda s: (abs(s - ini), s))
+        for s in cands:
+            if dur_ok(s, fim) and checar(palavras, s, fim)["inicio_ok"]:
+                novo_ini, ini_ok = s, True
+                break
+    if not fim_ok:
+        cands = sorted({w["end"] for k, w in enumerate(palavras)
+                        if abs(w["end"] - fim) <= janela_s and eh_fim(palavras, k)},
+                       key=lambda e: (e - fim) if e >= fim else 2 * (fim - e))
+        for e in cands:
+            if dur_ok(novo_ini, e) and checar(palavras, novo_ini, e)["fim_ok"]:
+                novo_fim, fim_ok = e, True
+                break
+    return {"inicio": novo_ini, "fim": novo_fim, "inicio_ok": ini_ok, "fim_ok": fim_ok}
 
 
 ANCORA_JANELA_S = 12 * 60   # em janelas de 60 min o LLM erra poucos minutos (numa chamada

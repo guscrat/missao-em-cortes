@@ -16,13 +16,17 @@ Uso: uv run py scripts/07_thumb.py <stem>
      uv run py scripts/07_thumb.py <stem> --bloco=N --titulo="TEXTO CURTO"  # texto da thumb na mao
      uv run py scripts/07_thumb.py <stem> --bloco=N --variante=b  # so a variante b (usado pelo editor)
      uv run py scripts/07_thumb.py <stem> --bloco=N --proximo     # proximo frame da fila em thumb_NN_a (usado pelo revisor)
+     uv run py scripts/07_thumb.py <stem> --bloco=N --proximo --fonte=live   # reserva: frames da live inteira
+     uv run py scripts/07_thumb.py <stem> --bloco=N --proximo --fonte=banco  # reserva: banco de rostos (_thumb_banco)
      uv run py scripts/07_thumb.py <stem> --sem-llm                # modo ab sem o editor ($0): b/c com o texto_thumb
 
 Frames pelo rosto (_thumb_rosto.py, OpenCV, gratis): amostra o cold open e o corte, da nota
 pelo rosto (tamanho, luz, nitidez) e as variantes a/b/c sao os 3 melhores. O recorte poe o
 rosto inteiro no terco direito e foge dos overlays. A fila de frames fica em
 thumbs/candidatos_NN.json: o --proximo pega o seguinte (sai com codigo 2 quando nao sobra
-frame com rosto).
+frame com rosto). Reserva (02/11/2026, a thumb nunca derruba o corte): --fonte=live poe na
+fila os frames da LIVE INTEIRA (inputs/<stem>.mp4, com o zoom do config/zoom.json) e
+--fonte=banco os frames ja aprovados do mesmo apresentador em outras lives (state/rostos/).
 
 Texto da thumb: usa o campo curto texto_thumb do blocos.json (2-5 palavras, gerado
 pelo LLM); na falta dele, cai pro tema. NUNCA usa o titulo_sugerido (titulo de
@@ -50,6 +54,7 @@ from _paths import achar_pasta, modo_thumb, stem_de
 import _custo
 import _grafias
 from _eventos import ler_bloco
+import _thumb_banco
 import _thumb_rosto as tr
 
 ROOT = Path(__file__).parent.parent
@@ -400,8 +405,11 @@ def gerar_textos_ab(b, client):
 
 def thumb_do_candidato(b, letra, cand, overlays, fila):
     tmp = OUT_DIR / f"_frame_{b['id']:02d}_{letra}.png"
-    extrair_frame(CORTES_DIR / cand["video"], cand["t"], tmp)
+    _thumb_banco.extrair_frame(_thumb_banco.video_do_candidato(PASTA, cand), cand["t"], tmp,
+                               cand.get("crop"))
     texto = texto_da_variante(b, letra)
+    if cand.get("fonte") == "banco":   # outra live: os overlays do corte daqui não valem
+        overlays = [list(tr.LOGO_CANAL)] if LOGO_04.exists() else []
     gerar_thumb(b, OUT_DIR / f"thumb_{b['id']:02d}_{letra}.png", tmp, cand.get("rosto"), overlays,
                 texto)
     tmp.unlink(missing_ok=True)
@@ -427,10 +435,42 @@ blocos_iter = [x for x in data["blocos"] if x["id"] == bloco_manual] if bloco_ma
 if bloco_manual is not None and not blocos_iter:
     sys.exit(f"[!] bloco {bloco_manual} nao existe no blocos.json")
 
+def candidatos_reserva(b, fonte):
+    """Frames de reserva pra fila: 'live' = live inteira (com o zoom do 04); 'banco' = frames
+    aprovados do mesmo apresentador em outras lives."""
+    if fonte == "banco":
+        return _thumb_banco.candidatos(_thumb_banco.apresentador(b), excluir=PASTA.name)
+    live = ROOT / "inputs" / f"{stem}.mp4"
+    if not live.exists():
+        print(f"  [aviso] {live.name} não está em inputs/: sem frames da live inteira")
+        return []
+    zoom = ROOT / "config" / "zoom.json"
+    crop = json.loads(zoom.read_text(encoding="utf-8")).get(stem) if zoom.exists() else None
+    print(f"  analisando {tr.AMOSTRAS_LIVE} frames da live inteira ({live.name})...")
+    return tr.ranquear_live(live, crop)
+
+
 # ── --proximo: troca o frame da thumb escolhida (a) pelo seguinte da fila ────
 if proximo:
     b = blocos_iter[0]
     fila = ler_fila(b["id"]) or {**nova_fila(b["id"]), "proximo": 0}
+    if fonte_manual in ("live", "banco"):
+        # reserva: põe os frames no fim da fila (1x por fonte) e pula pra eles
+        reservas = fila.setdefault("reservas", {})
+        if fonte_manual not in reservas:
+            novos = candidatos_reserva(b, fonte_manual)
+            reservas[fonte_manual] = {"inicio": len(fila["candidatos"]), "n": len(novos)}
+            fila["candidatos"] += novos
+            fila["proximo"] = reservas[fonte_manual]["inicio"]
+            gravar_fila(b["id"], fila)
+        if not reservas[fonte_manual]["n"]:
+            print(f"[!] bloco {b['id']}: sem frame de reserva ({fonte_manual})")
+            sys.exit(2)
+        fila["proximo"] = max(fila["proximo"], reservas[fonte_manual]["inicio"])
+        r = reservas[fonte_manual]
+        if fila["proximo"] >= r["inicio"] + r["n"]:
+            print(f"[!] bloco {b['id']}: acabaram os frames de reserva ({fonte_manual})")
+            sys.exit(2)
     i = fila["proximo"]
     if i >= len(fila["candidatos"]) or fila["candidatos"][i]["nota"] <= 0:
         print(f"[!] bloco {b['id']}: nao sobrou frame com rosto na fila ({i} usado(s))")

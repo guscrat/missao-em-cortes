@@ -395,3 +395,30 @@ def ranquear(cold: Path | None, corte: Path | None) -> list[dict]:
                 continue
             candidatos.append({"fonte": fonte, "video": video.name, "t": t, **analisar(frame)})
     return ordenar(candidatos)
+
+
+AMOSTRAS_LIVE = 60         # reserva da thumb (02/11/2026): frames espalhados pela live inteira
+
+
+def recortar(frame, crop: str | None):
+    """Aplica o zoom anti-overlay do 04 (crop=w:h:x:y da fonte + scale 1280x720) num frame BGR."""
+    if not crop or frame is None:
+        return frame
+    import cv2
+    w, h, x, y = (int(v) for v in crop.split(":"))
+    return cv2.resize(frame[y:y + h, x:x + w], (LARGURA, ALTURA))
+
+
+def ranquear_live(video: Path, crop: str | None = None, n: int = AMOSTRAS_LIVE) -> list[dict]:
+    """Candidatos da live INTEIRA (não só do trecho do corte), com o mesmo zoom do 04: o
+    apresentador sozinho na câmera costuma aparecer em algum momento, mesmo quando o corte é
+    um react com outra pessoa na tela. Mesmo formato do ranquear(), fonte='live' e `video`
+    com o caminho completo (o frame é extraído da live, não de cortes/)."""
+    candidatos = []
+    for t in tempos(duracao(video), n):
+        frame = recortar(ler_frame(video, t), crop)
+        if frame is None:
+            continue
+        candidatos.append({"fonte": "live", "video": str(video), "t": t,
+                           **({"crop": crop} if crop else {}), **analisar(frame)})
+    return [c for c in ordenar(candidatos) if c["nota"] > 0]
