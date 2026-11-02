@@ -114,7 +114,10 @@ PALAVRAS_GENERICAS = {
     "debate", "podcast", "cortes", "corte", "news", "flow", "inteligencia", "ltda", "parte",
     "sobre", "para", "pela", "pelo", "como", "quem", "qual", "quando", "porque", "isso", "esta",
     "esse", "essa", "mais", "muito", "agora", "ainda", "depois", "contra", "todos", "tudo", "nada",
-    "detona", "urgente", "explica", "fala", "diz", "responde", "brasil", "video"}
+    "detona", "urgente", "explica", "fala", "diz", "responde", "brasil", "video",
+    # nomes e temas que aparecem em quase todo título político (dariam match em tudo)
+    "flavio", "bolsonaro", "lula", "eleicao", "eleicoes", "turno", "segundo", "presidente",
+    "governo", "direita", "esquerda", "petista", "bolsonarista", "trump", "vitoria"}
 PRIORIDADE_EVENTO = 6        # modo evento: abaixo disso não fura o estoque (previsão velha)
 MAX_TEMAS_ALTA = 5           # temas dos vídeos antigos em alta (17_analytics) no pedido ao Claude
 MAX_TEMA_ALTA = 80
