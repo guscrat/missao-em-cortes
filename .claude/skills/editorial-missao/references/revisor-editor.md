@@ -15,15 +15,18 @@
 
 ## Checagem 0a — abertura sem propaganda (código, $0, antes da fronteira)
 
-`conferir_abertura` → `_fronteira.pular_propaganda` com os termos de `config/propaganda.json` (`termos` abrem uma propaganda se aparecem nos primeiros 30s; `continua` só emendam uma já aberta, a até 40s uma da outra; desiste se passar de 2,5 min). Achou → o início vai pra 1ª frase depois da propaganda, grava no `blocos.json`/banco (`gravar_tempos`) e refaz o bloco (`pipeline.py --bloco=N`). Sem a propaganda o corte fica < 5 min ou falhou ao refazer → `quarentena`. Resultado em `revisao.json` → `abertura` (`pulado_s`, `trecho`). O `--dry-run` só mostra.
+`conferir_abertura` → `_fronteira.pular_propaganda` com os termos de `config/propaganda.json` (`termos` abrem uma propaganda se aparecem nos primeiros 30s; `continua` só emendam uma já aberta, a até 40s uma da outra; desiste se passar de 2,5 min). Achou → o início vai pra 1ª frase depois da propaganda, grava no `blocos.json`/banco (`gravar_tempos`) e refaz o bloco (`pipeline.py --bloco=N`). Sem a propaganda o corte fica < 3 min ou falhou ao refazer → `quarentena`. Resultado em `revisao.json` → `abertura` (`pulado_s`, `trecho`). O `--dry-run` só mostra.
 
 ## Checagem 0 — fronteira (código, $0, antes da chamada paga)
 
-`_fronteira.checar`: no que se ouve no vídeo (janela do 04), a 1ª palavra abre frase e a última fecha frase com pausa depois (≥ 0,5s; ou sem pontuação e ≥ 1,2s)? Reprovou → `_fronteira.encaixar` leva a ponta reprovada pro ponto natural mais perto (até 30s, sem sair de 5-30 min), grava no `blocos.json` (tempos, `duracao_minutos`, `faixa_duracao`) e no banco, e refaz o bloco com `pipeline.py <pasta> --bloco=N` (04 → 04b → 04c → 06, com as mesmas flags com que ele foi feito; o 04b com LLM custa ~US$ 0,03). Sem ponto natural perto, falha ao refazer ou continua reprovado → `quarentena` com o motivo (sem gastar a chamada do revisor). O `--dry-run` mostra a checagem sem reajustar. Resultado em `revisao.json` → `fronteira` (`ultimas`, `pausa_depois_s`, `reajuste_s`).
+**Nunca pede revisão manual de ponto de corte** (02/11/2026): `_fronteira.reencaixar` tenta o ponto natural mais perto em que o vídeo passa na checagem; se ele não serve (é o tempo atual, a janela pega a palavra vizinha, sai de 3-30 min), tenta o próximo antes ou depois, até 5 min. Sem nenhum (whisper sem pontuação nem pausa): segue pra revisão com aviso. Só falha ao refazer o bloco (pipeline) vira quarentena. O `_fronteira.janela` não deixa mais a folga passar do início pedido (palavra colada na anterior saía do corte: bloco 01 do Renan boicote).
+
+
+`_fronteira.checar`: no que se ouve no vídeo (janela do 04), a 1ª palavra abre frase e a última fecha frase com pausa depois (≥ 0,5s; ou sem pontuação e ≥ 1,2s)? Reprovou → `_fronteira.encaixar` leva a ponta reprovada pro ponto natural mais perto (até 30s, sem sair de 3-30 min), grava no `blocos.json` (tempos, `duracao_minutos`, `faixa_duracao`) e no banco, e refaz o bloco com `pipeline.py <pasta> --bloco=N` (04 → 04b → 04c → 06, com as mesmas flags com que ele foi feito; o 04b com LLM custa ~US$ 0,03). Sem ponto natural perto, falha ao refazer ou continua reprovado → `quarentena` com o motivo (sem gastar a chamada do revisor). O `--dry-run` mostra a checagem sem reajustar. Resultado em `revisao.json` → `fronteira` (`ultimas`, `pausa_depois_s`, `reajuste_s`).
 
 ## Checagens (JSON estruturado)
 
-1. **Título fiel à fala** — gancho ousado ok, distorção não; e **nunca destacar palavrão nem termo que soe como ofensa a um grupo**, mesmo que esteja na fala. Grafia fora da oficial reprova.
+1. **Título fiel à fala** — gancho ousado ok, distorção não; e **nunca destacar palavrão nem termo que soe como ofensa a um grupo**, mesmo que esteja na fala. **Nunca especular sobre morte, violência, crime ou saúde de pessoa real**, mesmo que a fala especule (fato público dito no trecho pode). Grafia fora da oficial reprova.
 2. **Thumb ok** — a thumb **final**: rosto inteiro, visível e iluminado, sem sombra/degradê em cima, texto legível e coerente, sem tela compartilhada.
 3. **Tela compartilhada** — maior parte do corte mostra tela em vez de gente.
 4. **Corte sem sentido** — o trecho não se sustenta sozinho.
@@ -34,7 +37,11 @@
 
 - **Conteúdo ruim** (tela compartilhada ou corte sem sentido) → `descartado` com o motivo. Não sobe, não passa pelo editor, não chama o Gu.
 - **Título reprovado** → o **agente editor** (`_editor.py`, `agente="editor"`, ~US$ 0,01/reescrita, só texto) reescreve título + `texto_thumb` a partir do problema apontado e da transcrição. Grava no `descricoes.txt` (só o título daquele bloco, via `_descricoes.trocar_titulo`) e no `blocos.json` (originais em `titulo_original`/`texto_thumb_original`). Refaz a thumb escolhida (mesma variante, via `07_thumb.py --variante=`) e o Short do bloco, se existir. O revisor reavalia. **No máximo 2 reescritas**: se o título reprovar nas 2, fica em `quarentena` com "decisão do Gu" (faixa amarela na tarefa do `MISSAO_TAREFA`). **Só aí o Gu é chamado.** Thumb manual não é refeita sozinha (o script avisa). O pedido do editor leva os **termos de pesquisa da semana** (`_eventos.termos_semana()`, coletados pelo `17_analytics`): ele prefere usar um no título, só se o trecho for sobre aquilo.
-- **Só a thumb reprovada** → `07_thumb.py --bloco=N --proximo` põe na `thumb_NN_a` o próximo frame com rosto da fila (`thumbs/candidatos_NN.json`) e o revisor reavalia **só a thumb** (~US$ 0,01 por troca, effort low). No máximo 3 trocas (`MAX_TROCAS_THUMB`); nenhum frame serviu → `descartado`. Thumb **manual** reprovada fica em `quarentena` (refazer com `07_thumb.py --t=`).
+- **Só a thumb reprovada** → **a thumb nunca derruba um corte** (02/11/2026), `trocar_thumb`:
+  1. O revisor marca `thumb_texto_incoerente` quando o texto da thumb não bate com o título → `_editor.texto_do_titulo` (opus effort low, ~US$ 0,01, só resumo + ganchos) escreve um texto novo **a partir do título final**, grava no `blocos.json`, refaz a/b/c e o Short (`refazer_artes`) e reavalia o mesmo frame. 1x por revisão.
+  2. Rosto ruim → `07_thumb.py --bloco=N --proximo` põe na `thumb_NN_a` o próximo frame da fila (`thumbs/candidatos_NN.json`) e o revisor reavalia **só a thumb** (~US$ 0,01 por troca, effort low). Até `MAX_TROCAS_THUMB` (3) por fonte, em ordem (`FONTES_THUMB`): **o corte**; **a live inteira** (`--fonte=live`: 60 frames de `inputs/<stem>.mp4` com o zoom do `config/zoom.json`, pelo rosto; ~1-3 min de OpenCV); **o banco de rostos** do apresentador (`--fonte=banco`, `_thumb_banco`).
+  3. Nada serviu → `quarentena` com **"thumb precisa de você"** (refazer com `07_thumb.py --t=`). Thumb **manual** reprovada também. **Nunca `descartado` por causa da thumb.**
+- **Banco de rostos** (`scripts/_thumb_banco.py`, `state/rostos/<pessoa>/`, gitignored): cada bloco aprovado guarda o frame da thumb a (pessoa = 1º de `speakers_principais`), até 12 por pessoa, os de maior nota. Backfill: `uv run py scripts/_thumb_banco.py popular`; `lista` mostra quantos frames há.
 - Tudo ok → `aprovado`. Recusa do modelo vira quarentena ("revisar à mão").
 
 ## Seta/círculo na thumb (desde 26/10/2026)
@@ -70,3 +77,7 @@ O revisor reconhece a colagem aplicada (cópia idêntica em `thumbs/colagem/`, `
 ## Editor também escreve os textos da colagem
 
 `_editor.texto_colagem` (opus, ~US$ 0,03): 3 opções, de preferência em pergunta, com as mesmas regras de título (fiel à fala, sem palavrão/ofensa); só põe `[Nome]` se a cena destacada é dessa pessoa. Ver skill `thumb-colagem`.
+
+## Frame de reserva com outra pessoa (02/11/2026)
+
+Quando o frame da thumb a vem de **reserva** (`fonte` `live` ou `banco` na fila, `fonte_da_thumb`), a revisão completa e o `checar_thumb` levam o `CRITERIO_RESERVA` na mensagem: reprova se aparece **qualquer pessoa além do apresentador**, a não ser que seja a citada no título/texto da thumb **com o nome escrito na tela** ao lado dela. Caso real: frame da live inteira com uma mulher do trailer do Leve Possos ao lado do Renan, numa thumb sobre a Titi Mila. Frame do próprio trecho (corte/cold) segue o critério de sempre.

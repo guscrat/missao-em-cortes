@@ -148,7 +148,7 @@ SCHEMA = {
     "additionalProperties": False,
 }
 
-SISTEMA = """Você é o curador do canal "Missão em Cortes", que publica cortes de 5-30 min \
+SISTEMA = """Você é o curador do canal "Missão em Cortes", que publica cortes de 3-30 min \
 de lives, entrevistas e debates do Partido Missão (legenda 14, direita liberal, ligado ao \
 MBL): Renan Santos, Kim Kataguiri, Arthur do Val, Guto Zacarias e Amanda Vettorazzo.
 
@@ -158,7 +158,7 @@ Vale (prioridade alta) quando:
 - uma dessas figuras fala bastante: análise política, eleição, escândalo, debate, \
 entrevista, podcast com convidado relevante
 - o tema é quente agora (rende cliques nos próximos dias)
-- tem cara de render blocos de 5-30 min, cada um com um assunto que se sustenta sozinho
+- tem cara de render blocos de 3-30 min, cada um com um assunto que se sustenta sozinho
 - é entrevista, podcast, participação em outro canal ou traz convidado menos conhecido: os \
 canais de corte grandes costumam cortar só as lives principais, e é no que eles não cortam \
 que o nosso canal tem espaço (prioridade maior que a live principal do mesmo dia)

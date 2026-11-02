@@ -6,6 +6,8 @@
 
 `scripts/_thumb_rosto.py`, OpenCV Haar, grátis, ~5s por bloco: amostra 10 frames do cold open e 16 do corte, dá nota a cada um (tamanho do rosto x iluminação x nitidez, rosto cortado na borda perde) e as variantes a/b/c são os 3 melhores, sem frames quase iguais. A fila inteira fica em `thumbs/candidatos_NN.json`, de onde o revisor tira o próximo frame (`--proximo`) e o editor refaz a mesma variante (`--variante=`).
 
+**Reserva (02/11/2026, a thumb nunca derruba um corte):** `--proximo --fonte=live` põe no fim da fila 60 frames da **live inteira** (`inputs/<stem>.mp4`, recortados com o zoom do `config/zoom.json`, `_thumb_rosto.ranquear_live`) e `--proximo --fonte=banco` os frames aprovados do mesmo apresentador em outras lives (`state/rostos/`, `_thumb_banco.py`; os overlays do corte daqui não valem pra eles). Cada fonte entra 1x (`reservas` na fila); acabou → sai com 2. Quem chama é o revisor (skill `editorial-missao`, `references/revisor-editor.md`).
+
 ## Layout
 
 - O frame **preenche a thumb inteira** (cover 1280x720, sem faixa preta), com o rosto **inteiro** e grande (~40% da altura, zoom de até 1.6x) no **terço direito** (centro em ~78% da largura).

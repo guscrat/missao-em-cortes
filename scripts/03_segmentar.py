@@ -476,7 +476,7 @@ for v in validos:
                           f"{'score maior' if sa != sb else 'o mesmo score e veio antes'}")
         vivos[-1] = fica
 
-# Mínimo de LONGO_MIN (5 min; sem alvo fixo, o tamanho é o do assunto): com os tempos reais
+# Mínimo de LONGO_MIN (3 min; sem alvo fixo, o tamanho é o do assunto): com os tempos reais
 # (âncora pelo texto), bloco curto sai. O LLM não sente duração; a regra é do código.
 for b in list(data["blocos"]):
     if b in [v[3] for v in vivos] and (b.get("duracao_minutos") or 0) < fr.LONGO_MIN:
