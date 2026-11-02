@@ -471,6 +471,10 @@ if proximo:
         if fila["proximo"] >= r["inicio"] + r["n"]:
             print(f"[!] bloco {b['id']}: acabaram os frames de reserva ({fonte_manual})")
             sys.exit(2)
+    elif fila.get("reservas") and fila["proximo"] >= min(r["inicio"] for r in fila["reservas"].values()):
+        # sem --fonte = só frames do corte: não entra nas reservas já anexadas
+        print(f"[!] bloco {b['id']}: acabaram os frames do corte")
+        sys.exit(2)
     i = fila["proximo"]
     if i >= len(fila["candidatos"]) or fila["candidatos"][i]["nota"] <= 0:
         print(f"[!] bloco {b['id']}: nao sobrou frame com rosto na fila ({i} usado(s))")

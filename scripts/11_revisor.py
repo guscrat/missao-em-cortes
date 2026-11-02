@@ -454,6 +454,7 @@ def trocar_thumb(client, anthropic, stem, pasta, bid, nn, titulo, texto_thumb, p
     def checar_atual():
         """Reavalia a thumb a atual: dict, None (recusou) ou "falha"."""
         nonlocal usd_total
+        _custo.checar_orcamento(stem, "11_revisor")
         t0 = time.time()
         try:
             r, resp = checar_thumb(client, escolher_thumb(pasta / "thumbs", nn), titulo, texto_thumb)
