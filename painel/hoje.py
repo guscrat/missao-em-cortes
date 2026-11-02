@@ -540,10 +540,14 @@ def secao_sugestoes(sug: pd.DataFrame, curador_ocupado: bool) -> list[str]:
                 extra = "<span class='pill nova'>nova</span>" + extra
             erro = (f"<small>{html.escape(s.mensagem)}</small>"
                     if s.status == "falhou" and isinstance(s.mensagem, str) else "")
-            cortado = getattr(s, "cortado_por", None)
+            cortado, talvez = getattr(s, "cortado_por", None), getattr(s, "talvez_cortado_por", None)
             if isinstance(cortado, str):    # None = o Curador não conferiu (sem canais_corte)
-                erro += (f"<small>já cortado por {html.escape(cortado)}</small>" if cortado
-                         else "<small>ninguém cortou ainda</small>")
+                erro += (f"<small>já cortado por {html.escape(cortado)}</small>" if cortado else
+                         f"<small>possivelmente já cortado (pelo título) por {html.escape(talvez)}</small>"
+                         if isinstance(talvez, str) and talvez else "<small>ninguém cortou ainda</small>")
+            risco = getattr(s, "risco", None)
+            if isinstance(risco, str) and risco:
+                erro += f"<small><b>⚠ {html.escape(risco)}</b></small>"
             with c1:
                 st.markdown(
                     f"<div class='hj-dec'><b>[{int(s.prioridade or 0)}]</b> "

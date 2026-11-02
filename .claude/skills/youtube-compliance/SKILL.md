@@ -38,7 +38,11 @@ Vídeo enviado por projeto de API **não auditado** fica **bloqueado como privad
 
 ## Outros canais: só yt-dlp, nunca a API (31/10/2026)
 
-Os dois projetos Google declaram (auditoria e políticas de privacidade) que **só acessam dados do nosso canal**. Qualquer leitura de canal de terceiros — os canais monitorados pelo Curador (`canais`) e os canais de corte grandes (`canais_corte`, pra saber se uma live já foi cortada) — é feita com o **yt-dlp** (`uv run yt-dlp` / `yt_dlp` no Python), nunca com a Data API, a Analytics nem a Reporting API. Nada de `search.list`, `videos.list` ou `channels.list` com id de outro canal, nem com o token do publisher nem com o do analytics.
+Os dois projetos Google declaram (auditoria e políticas de privacidade) que **só acessam dados do nosso canal**. Qualquer leitura de canal de terceiros — os canais monitorados pelo Curador (`canais`) e os canais de corte grandes (`canais_corte`, pra saber se uma live já foi cortada, pelo link na descrição ou pelo título) — é feita com o **yt-dlp** (`uv run yt-dlp` / `yt_dlp` no Python), nunca com a Data API, a Analytics nem a Reporting API. Nada de `search.list`, `videos.list` ou `channels.list` com id de outro canal, nem com o token do publisher nem com o do analytics.
+
+## Fontes de terceiros: risco de reivindicação (01/11/2026)
+
+Flow Podcast e Inteligência Ltda são fontes do Curador (`"terceiros": true` em `config/canais.json`), mas o conteúdo não é do ecossistema MBL/Missão e o dono pode reivindicar (Content ID / strike). Por isso: só episódio com alguém do grupo, a sugestão aparece com ⚠ "fonte de terceiros: risco de reivindicação de direitos", **o Gu decide caso a caso** (botão Processar) e nada disso é processado sozinho (rede de segurança, automático, evento). Crédito da fonte continua obrigatório (URL do episódio na descrição). Detalhe em `editorial-missao/references/curador.md` (2c).
 
 ## Métricas que guiam a estratégia (31/10/2026)
 

@@ -31,7 +31,7 @@ CARD_S = 3.0           # = duração do card do 05_cards
 OUTRO_S = 5.0
 MIN_CAPITULOS, MAX_CAPITULOS = 3, 8
 MIN_CAPITULO_S = 10.0  # regra do YouTube
-MIN_CORTE_MIN = 8.0    # só corte de 8 min ou mais ganha capítulos
+MIN_CORTE_MIN = 5.0    # só corte de 5 min ou mais ganha capítulos (o mínimo dos longos, 31/10/2026)
 JANELA_S = fr.JANELA_TRECHO_S   # encaixe do início do capítulo no começo de frase
 TITULO_MAX = 50        # chars: capítulo é rótulo curto
 
@@ -160,7 +160,7 @@ def mmss(t: float) -> str:
 
 def linhas(capitulos: list[dict], tempo: LinhaDoTempo, corrigir=lambda s: s) -> list[str]:
     """"MM:SS Título" no tempo do vídeo final, com as regras do YouTube: 1º em 00:00, cada um com
-    ≥ 10 s (o que ficaria curto sai), ≥ 3 no total. Corte < 8 min ou < 3 capítulos: []."""
+    ≥ 10 s (o que ficaria curto sai), ≥ 3 no total. Corte < 5 min ou < 3 capítulos: []."""
     if tempo.corte_s < MIN_CORTE_MIN * 60 or len(capitulos or []) < MIN_CAPITULOS:
         return []
     pontos = []
