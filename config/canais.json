@@ -6,7 +6,17 @@
   "duracao_max": 240,
   "por_canal": 8,
   "_comment_canais_corte": "Canais de corte grandes do ecossistema. O Curador lê os cortes_por_canal vídeos mais recentes de cada um (yt-dlp, nunca a API do YouTube) e procura o link da live na descrição: live já cortada perde prioridade e o painel mostra 'já cortado por X'. Lista vazia = não confere. Formato: {\"nome\": \"...\", \"url\": \"https://www.youtube.com/@handle\"}.",
-  "canais_corte": [],
+  "canais_corte": [
+    {"nome": "Cortes do Mamãe Falei", "url": "https://www.youtube.com/@cortesdomamaefalei"},
+    {"nome": "Inevitável Cortes", "url": "https://www.youtube.com/@inevitavelcortes"},
+    {"nome": "Cortes do MBL", "url": "https://www.youtube.com/@CortesdoMBL"},
+    {"nome": "MBL Cortes", "url": "https://www.youtube.com/@oscortesdoMBL"},
+    {"nome": "Onça Armada | Cortes MBL", "url": "https://www.youtube.com/@oncaarmadambl"},
+    {"nome": "Cortes do Renan Santos", "url": "https://www.youtube.com/@renansantosreserva"},
+    {"nome": "Kim Cuts", "url": "https://www.youtube.com/@CutsdoKim"},
+    {"nome": "Cortes do Flow", "url": "https://www.youtube.com/@cortesdoflow"},
+    {"nome": "Cortes do Inteligência", "url": "https://www.youtube.com/@cortesdointeligencia"}
+  ],
   "cortes_por_canal": 30,
   "modo_evento": false,
   "modo_evento_desde": "2026-10-25",
