@@ -114,3 +114,10 @@ def cartoes():
         return {html.unescape(r): (v, html.unescape(c)) for r, v, c in padrao.findall(texto)}
 
     return ler
+
+
+@pytest.fixture(autouse=True)
+def _sem_banco_rostos_real(tmp_path, monkeypatch):
+    """O state/rostos/ real nunca é tocado (o revisor guarda frame ao aprovar)."""
+    import _thumb_banco
+    monkeypatch.setattr(_thumb_banco, "BANCO", tmp_path / "state_rostos")

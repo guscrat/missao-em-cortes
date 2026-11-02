@@ -69,24 +69,23 @@ def test_fronteira_reajusta_grava_blocos_json_e_refaz(cenario):
     assert banco("SELECT faixa_duracao FROM blocos WHERE bloco_id=1")[0]["faixa_duracao"] == "fora"
 
 
-def test_fronteira_sem_ponto_natural_vai_pra_quarentena_sem_mexer(cenario):
+def test_fronteira_sem_ponto_natural_segue_com_aviso_sem_mexer(cenario):
     pasta, b, refeitos, _ = cenario
     reg, motivo = rv.conferir_fronteira("v", pasta, b, SEM_PONTO)
-    assert motivo and "não há ponto natural" in motivo
+    assert motivo is None and reg["sem_ponto_natural"] is True
     assert refeitos == [] and _ts(pasta)[:2] == ("00:00:10", "00:00:20")
 
 
-def test_fronteira_reajuste_sem_mudanca_vai_pra_quarentena_sem_refazer(cenario, monkeypatch):
-    # a checagem reprova, mas o ponto natural mais perto é o próprio tempo: refazer daria o
-    # mesmo vídeo (live do Renan, bloco 07, antes do fix da palavra de duração zero)
+def test_fronteira_reajuste_sem_mudanca_segue_sem_refazer(cenario, monkeypatch):
+    # checagem reprova mas o reencaixe acha o mesmo tempo: refazer daria o mesmo vídeo
     pasta, b, refeitos, _ = cenario
     monkeypatch.setattr(rv._fronteira, "checar", lambda *a, **k: {
         "inicio_ok": True, "fim_ok": False, "primeiras": "c1", "ultimas": "c3",
         "pausa_depois_s": 0.7})
-    monkeypatch.setattr(rv._fronteira, "encaixar", lambda p, ini, fim, *a: {
+    monkeypatch.setattr(rv._fronteira, "reencaixar", lambda p, ini, fim, *a, **k: {
         "inicio": ini, "fim": fim, "inicio_ok": True, "fim_ok": True})
     _, motivo = rv.conferir_fronteira("v", pasta, b, NATURAL)
-    assert motivo and "tempo atual" in motivo
+    assert motivo is None
     assert refeitos == [] and _ts(pasta)[:2] == ("00:00:10", "00:00:20")
 
 
@@ -137,13 +136,26 @@ def _preparar_main(cenario, monkeypatch, palavras):
     return pasta, refeitos, banco
 
 
-def test_main_quarentena_por_fronteira_sem_chamar_llm(cenario, monkeypatch):
-    pasta, refeitos, banco = _preparar_main(cenario, monkeypatch, SEM_PONTO)
-    assert rv.main([str(pasta)]) == 0
-    rev = json.loads((pasta / "revisao.json").read_text(encoding="utf-8"))
-    assert rev["01"]["status"] == "quarentena" and rev["01"]["custo_usd"] == 0.0
-    assert rev["01"]["fronteira"]["fim_ok"] is False
-    assert banco("SELECT status FROM blocos WHERE bloco_id=1")[0]["status"] == "quarentena"
+def test_main_sem_ponto_natural_segue_pro_llm(cenario, monkeypatch, capsys):
+    pasta, refeitos, _ = _preparar_main(cenario, monkeypatch, SEM_PONTO)
+    # o fluxo passa da fronteira e tenta os frames (ffprobe real falha no mp4 vazio: ok aqui)
+    monkeypatch.setattr(rv, "frames_b64", lambda v: ["f"])
+    monkeypatch.setattr(rv, "ler_imagem_b64", lambda p: "t")
+    chamou = []
+
+    class _Falha:
+        def __init__(self):
+            self.beta = types.SimpleNamespace(messages=types.SimpleNamespace(create=self._c))
+
+        def _c(self, **k):
+            chamou.append(1)
+            raise RuntimeError("api fora (mock)")
+    monkeypatch.setitem(sys.modules, "anthropic", types.SimpleNamespace(
+        Anthropic=_Falha, APIError=RuntimeError))
+    rv.main([str(pasta)])
+    assert chamou
+    out = capsys.readouterr().out
+    assert "segue com o tempo atual" in out and "QUARENTENA" not in out and "à mão" not in out
     assert refeitos == []
 
 
@@ -186,3 +198,28 @@ def test_refazer_bloco_monta_comando_do_pipeline(tmp_path, monkeypatch):
     cmd = vistos[0]
     assert cmd[1].endswith("pipeline.py") and "2026-10-26_v" in cmd and "--bloco=3" in cmd
     assert "--sem-legendas" in cmd
+
+
+# ── _fronteira.janela / reencaixar ─────────────────────────────────────────
+
+def test_janela_palavra_colada_na_anterior_entra():
+    import _fronteira as fr
+    p = W(("pessoal.", 5.0, 9.0), ("Boa", 9.0, 9.4), ("noite", 9.5, 10.0), ("fim.", 10.1, 20.0))
+    j = fr.janela(p, 9.0, 20.0)
+    assert j[0] <= 9.0
+
+
+def test_reencaixar_leva_ponta_pro_ponto_natural_e_respeita_duracao():
+    import _fronteira as fr
+    e = fr.reencaixar(MEIO, 10.0, 20.0, None, 700)
+    assert e["fim_ok"] and e["fim"] == pytest.approx(20.5)
+    e = fr.reencaixar(SEM_PONTO, 10.0, 20.0, None, None)
+    assert e["fim_ok"] is False and e["fim"] == 20.0
+
+
+def test_prompts_tem_regra_de_nao_especular_morte_violencia():
+    import _editor
+    for t in (rv.SISTEMA, _editor.SISTEMA, _editor.SISTEMA_COLAGEM, _editor.SISTEMA_THUMB_AB):
+        assert "assassinado" in t and "saúde" in t
+    prompt = (Path(__file__).parent.parent / "prompts" / "segmentacao.md").read_text(encoding="utf-8")
+    assert "saúde" in prompt and ("morte" in prompt or "assassin" in prompt)
