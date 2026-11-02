@@ -46,7 +46,7 @@ Flow Podcast e Inteligência Ltda são fontes do Curador (`"terceiros": true` em
 
 ## Métricas que guiam a estratégia (31/10/2026)
 
-O resumo semanal (`17_analytics semanal`, sextas) abre com a **métrica principal: minutos assistidos por view**, com a retenção ao lado, **por faixa de duração** do corte (curto 5-10, médio 10-20, longo 20-30, abaixo de 5, acima de 30). Junto: as **views de cada vídeo novo nos 7 primeiros dias** (média das últimas 4 semanas x as 4 anteriores) e a **% de views que não vem da busca** (últimos 7 dias x semana anterior, com a fatia de recomendação: início/feed, sugeridos e Shorts) — o sinal de que o algoritmo começou a recomendar. Detalhe em `references/metricas.md`.
+O resumo semanal (`17_analytics semanal`, sextas) abre com a **métrica principal: minutos assistidos por view**, com a retenção ao lado, **por faixa de duração** do corte (curto 3-10, médio 10-20, longo 20-30, abaixo de 5, acima de 30). Junto: as **views de cada vídeo novo nos 7 primeiros dias** (média das últimas 4 semanas x as 4 anteriores) e a **% de views que não vem da busca** (últimos 7 dias x semana anterior, com a fatia de recomendação: início/feed, sugeridos e Shorts) — o sinal de que o algoritmo começou a recomendar. Detalhe em `references/metricas.md`.
 
 ## Sempre perguntar antes de
 

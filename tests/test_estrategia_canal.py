@@ -343,7 +343,7 @@ def test_minutos_por_faixa_vazio():
 
 def test_minutos_por_faixa_faixas_de_borda():
     r = {x["faixa"] for x in an.minutos_por_faixa([_m(4, 10, 100), _m(31, 10, 100)])}
-    assert r == {"abaixo_5", "acima_30", "todos"}
+    assert r == {"abaixo_3", "acima_30", "todos"}
 
 
 def test_media_7d_janela_e_deslocamento():
@@ -366,7 +366,7 @@ def test_resumo_semanal_secoes_novas_no_topo():
     txt = an.resumo_semanal([{"termo": "renan", "views": 9}], metricas, {"YT_SEARCH": 5},
                             "2026-10-28", None,
                             {"YT_SEARCH": 30, "SUBSCRIBER": 70}, {"YT_SEARCH": 80, "SUBSCRIBER": 20}, v7)
-    assert "Minutos assistidos por view" in txt and "curto 5-10 min" in txt and "| 4.0 |" in txt
+    assert "Minutos assistidos por view" in txt and "curto 3-10 min" in txt and "| 4.0 |" in txt
     assert "**70%**" in txt and "Semana anterior: 20%" in txt
     assert "**120.0**" in txt and "Live A" in txt
     assert txt.index("Minutos assistidos") < txt.index("Views que não vêm da busca") \

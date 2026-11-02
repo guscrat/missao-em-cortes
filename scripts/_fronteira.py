@@ -36,14 +36,14 @@ JANELA_TRECHO_S = 10.0   # cold open e Short
 # Duração dos longos (minutos): sem alvo fixo, o tamanho é o do assunto, de LONGO_MIN a
 # LONGO_MAX (31/10/2026: o mínimo era 8 por causa do anúncio no meio, que só vale depois do
 # YPP). As faixas só servem pra comparar minutos assistidos por view e retenção (Analista).
-LONGO_MIN, LONGO_MAX = 5.0, 30.0
+LONGO_MIN, LONGO_MAX = 3.0, 30.0   # 02/11/2026: mínimo 5 → 3 (cortes curtos retêm melhor no canal)
 SHORT_MAX_S = 175.0      # limite do YouTube é 3 min; folga pro padding e fade
-FAIXAS = (("curto", 5.0, 10.0), ("medio", 10.0, 20.0), ("longo", 20.0, 30.0))
+FAIXAS = (("curto", 3.0, 10.0), ("medio", 10.0, 20.0), ("longo", 20.0, 30.0))
 MONTAGEM_S = 33          # cold open (~22s) + intro 3s + card 3s + outro 5s em volta do corte (06)
 
 
 def faixa(minutos: float | None) -> str | None:
-    """'curto' (5-10), 'medio' (10-20), 'longo' (20-30), 'fora' (fora de 5-30) ou None."""
+    """'curto' (3-10), 'medio' (10-20), 'longo' (20-30), 'fora' (fora de 3-30) ou None."""
     if minutos is None:
         return None
     for nome, ini, fim in FAIXAS:
@@ -54,11 +54,11 @@ def faixa(minutos: float | None) -> str | None:
 
 def faixa_do_video(duracao_s: float) -> str:
     """Faixa de um vídeo do canal pela duração do CORTE: desconta cold open + intro + card +
-    outro. Fora de 5-30: 'abaixo_5' ou 'acima_30'."""
+    outro. Fora de 3-30: 'abaixo_3' ou 'acima_30'."""
     corte_min = max(0.0, duracao_s - MONTAGEM_S) / 60
     nome = faixa(corte_min)
     if nome == "fora":
-        return "abaixo_5" if corte_min < LONGO_MIN else "acima_30"
+        return "abaixo_3" if corte_min < LONGO_MIN else "acima_30"
     return nome
 
 

@@ -20,9 +20,9 @@ Identifique os blocos temáticos CONTÍNUOS da live (não compilação de trecho
 
 ## CRITÉRIOS DE CADA BLOCO
 
-1. **Duração: a do assunto, de 5 a 30 minutos. Não existe alvo.**
+1. **Duração: a do assunto, de 3 a 30 minutos. Não existe alvo.**
    - O bloco começa onde o assunto começa e termina quando o raciocínio fecha: um assunto de 6 min vira um corte de 6 min, um de 25 vira um de 25. Não estique nem encurte pra chegar a um tamanho.
-   - Mínimo de 5 minutos. Assunto que não rende 5 min: junte ao assunto vizinho se for o mesmo fio, ou descarte.
+   - Mínimo de 3 minutos. Assunto que não rende 3 min: junte ao assunto vizinho se for o mesmo fio, ou descarte.
    - Máximo de 30 minutos. Assunto que passa de 30 min vira **Parte 1 e Parte 2** (campo `parte`), divididas num ponto natural (troca de subtópico, fim de um exemplo) — NUNCA no meio de uma fala, e cada parte precisa se sustentar sozinha.
 2. **Coesão temática**: UM assunto principal do início ao fim. Subtemas que servem o assunto central são OK (num bloco longo é natural tê-los); troca de assunto vira OUTRO bloco.
 3. **Início natural**: começa no começo de uma frase completa — pergunta, afirmação forte ou abertura de tópico. NUNCA no meio de uma frase ou raciocínio. O `timestamp_inicio` é o da linha da transcrição onde a frase de abertura começa.

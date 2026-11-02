@@ -65,8 +65,8 @@ FATOR_ALTA = 3.0         # views da semana >= isso x a média semanal de antes
 DIAS_7D_PRONTO = 9       # idade em que os 7 primeiros dias já estão no Analytics (atrasa ~2)
 SEMANAS_7D = 4           # resumo: média das views em 7 dias dos publicados nas últimas N semanas
 RECOMENDACAO = ("SUBSCRIBER", "RELATED_VIDEO", "SHORTS")   # início/feed + sugeridos + Shorts
-ROTULO_FAIXA = {"curto": "curto 5-10 min", "medio": "médio 10-20 min", "longo": "longo 20-30 min",
-                "abaixo_5": "abaixo de 5 min", "acima_30": "acima de 30 min"}
+ROTULO_FAIXA = {"curto": "curto 3-10 min", "medio": "médio 10-20 min", "longo": "longo 20-30 min",
+                "abaixo_3": "abaixo de 3 min", "acima_30": "acima de 30 min"}
 
 
 def _query(analytics, **kw) -> list[list]:
@@ -316,7 +316,7 @@ def minutos_por_faixa(metricas: list[dict]) -> list[dict]:
     do corte (só as que têm vídeo) + 'todos' no fim. Médias ponderadas pelas views."""
     longos = [m for m in metricas if (m.get("duracao_s") or 0) > MAX_SHORT_S and m.get("views")
               and m.get("assistido_s") is not None]
-    grupos = {nome: [] for nome in ("abaixo_5", *(f[0] for f in FAIXAS), "acima_30")}
+    grupos = {nome: [] for nome in ("abaixo_3", *(f[0] for f in FAIXAS), "acima_30")}
     for m in longos:
         grupos[faixa_do_video(m["duracao_s"])].append(m)
 

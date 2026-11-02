@@ -15,7 +15,7 @@
 
 ## Checagem 0a — abertura sem propaganda (código, $0, antes da fronteira)
 
-`conferir_abertura` → `_fronteira.pular_propaganda` com os termos de `config/propaganda.json` (`termos` abrem uma propaganda se aparecem nos primeiros 30s; `continua` só emendam uma já aberta, a até 40s uma da outra; desiste se passar de 2,5 min). Achou → o início vai pra 1ª frase depois da propaganda, grava no `blocos.json`/banco (`gravar_tempos`) e refaz o bloco (`pipeline.py --bloco=N`). Sem a propaganda o corte fica < 5 min ou falhou ao refazer → `quarentena`. Resultado em `revisao.json` → `abertura` (`pulado_s`, `trecho`). O `--dry-run` só mostra.
+`conferir_abertura` → `_fronteira.pular_propaganda` com os termos de `config/propaganda.json` (`termos` abrem uma propaganda se aparecem nos primeiros 30s; `continua` só emendam uma já aberta, a até 40s uma da outra; desiste se passar de 2,5 min). Achou → o início vai pra 1ª frase depois da propaganda, grava no `blocos.json`/banco (`gravar_tempos`) e refaz o bloco (`pipeline.py --bloco=N`). Sem a propaganda o corte fica < 3 min ou falhou ao refazer → `quarentena`. Resultado em `revisao.json` → `abertura` (`pulado_s`, `trecho`). O `--dry-run` só mostra.
 
 ## Checagem 0 — fronteira (código, $0, antes da chamada paga)
 
@@ -77,3 +77,7 @@ O revisor reconhece a colagem aplicada (cópia idêntica em `thumbs/colagem/`, `
 ## Editor também escreve os textos da colagem
 
 `_editor.texto_colagem` (opus, ~US$ 0,03): 3 opções, de preferência em pergunta, com as mesmas regras de título (fiel à fala, sem palavrão/ofensa); só põe `[Nome]` se a cena destacada é dessa pessoa. Ver skill `thumb-colagem`.
+
+## Frame de reserva com outra pessoa (02/11/2026)
+
+Quando o frame da thumb a vem de **reserva** (`fonte` `live` ou `banco` na fila, `fonte_da_thumb`), a revisão completa e o `checar_thumb` levam o `CRITERIO_RESERVA` na mensagem: reprova se aparece **qualquer pessoa além do apresentador**, a não ser que seja a citada no título/texto da thumb **com o nome escrito na tela** ao lado dela. Caso real: frame da live inteira com uma mulher do trailer do Leve Possos ao lado do Renan, numa thumb sobre a Titi Mila. Frame do próprio trecho (corte/cold) segue o critério de sempre.
