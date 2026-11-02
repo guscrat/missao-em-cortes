@@ -82,6 +82,8 @@ class FakeAnalytics:
         if d == "video":
             return _Exec({"rows": [["a", 300, 410.55, 37.44]]})
         if d == "insightTrafficSourceType":
+            if m == "views":       # origens do canal inteiro: só views
+                return _Exec({"rows": [["YT_SEARCH", 100], ["SUBSCRIBER", 200]]})
             return _Exec({"rows": [["YT_SEARCH", 100, 50.0], ["SUBSCRIBER", 200, 80.5]]})
         return _Exec({"rows": [["renan santos", 40], ["missão", 10]]})
 
@@ -163,7 +165,8 @@ def test_ultima_coleta_pega_o_dia_mais_recente(banco):
 
 def test_sem_coleta_devolve_vazio(banco):
     assert _eventos.termos_semana() == []
-    assert _eventos.ultima_coleta() == {"data": None, "metricas": [], "trafego": {}}
+    assert _eventos.ultima_coleta() == {"data": None, "metricas": [], "trafego": {},
+                                        "trafego_semana": {}, "trafego_semana_antes": {}}
 
 
 # --- resumo semanal ------------------------------------------------------------------
@@ -631,7 +634,8 @@ VIDS_ANTIGOS = [("a", "Live A", "public", "2026-10-10", "PT20M"),
 
 
 def _basicas_chamadas(an_):
-    return [c for c in an_.chamadas if c["dimensions"] == "video"]
+    # só as consultas até hoje (base e semana); as de 7 primeiros dias terminam em pub+6
+    return [c for c in an_.chamadas if c["dimensions"] == "video" and c["endDate"] == "2026-10-28"]
 
 
 def test_coletar_dados_consulta_semana_so_de_videos_antigos_com_views():
@@ -707,7 +711,7 @@ def test_coletar_completa_tema_e_grava_em_alta(banco, monkeypatch):
     _mock_google(monkeypatch)
     monkeypatch.setattr(an, "coletar_dados", lambda *a, **k: {
         "data": "2026-10-28", "metricas": [{"youtube_id": "o", "views": 1}], "trafego": [],
-        "termos": [], "termos_canal": [], "avisos": [],
+        "termos": [], "termos_canal": [], "avisos": [], "trafego_canal": [], "views_7d": [],
         "em_alta": [{k: v for k, v in _alta("o").items() if k != "tema"}]})
     _eventos.upsert_bloco("s1", 1, tema="Tema do banco", youtube_id="o")
     d = an.coletar(interativo=False)

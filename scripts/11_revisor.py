@@ -6,7 +6,7 @@ Uso:
 
 Antes de qualquer chamada paga, a checagem de ABERTURA (código, $0): o corte abre com
 propaganda/patrocínio da live (config/propaganda.json)? → o início vai pra 1ª frase depois
-dela e o bloco é refeito; sem ela fica < 8 min → "quarentena". Depois, a de FRONTEIRA: o corte
+dela e o bloco é refeito; sem ela fica < 5 min → "quarentena". Depois, a de FRONTEIRA: o corte
 começa no começo de frase e termina em fim de frase com pausa depois (últimas palavras do
 words.json)? Reprovou → reajusta sozinho: leva a ponta pro fim de frase mais perto (até 30s),
 grava no blocos.json e refaz o bloco (pipeline.py --bloco=N, ~US$ 0.03 do 04b). Sem ponto
@@ -130,7 +130,8 @@ uma frase curta e concreta (vazio "" quando não há problema).
 1. titulo_fiel: o título e o texto da thumb são sustentados pela transcrição? Reprove se \
 atribuem ao speaker algo que ele não disse, invertem o sentido, exageram um fato a ponto de \
 ficar falso, ou prometem um assunto que o trecho não entrega. Gancho forte, paráfrase e \
-simplificação são OK. Números, datas, fatos e nomes têm que bater EXATAMENTE com a \
+simplificação são OK. Título em forma de pergunta é OK quando o trecho responde a \
+ela; reprove se a pergunta insinua algo que a fala não sustenta. Números, datas, fatos e nomes têm que bater EXATAMENTE com a \
 transcrição (ex.: "3 INQUÉRITOS" quando a fala diz 2 reprova). Nome de pessoa fora da \
 grafia oficial (lista GRAFIAS OFICIAIS no fim destas instruções) também reprova. Se \
 vierem várias variantes de texto da thumb separadas por " | " (teste A/B do "Testar e comparar"), TODAS precisam passar: aponte qual \
@@ -599,7 +600,7 @@ def conferir_abertura(stem: str, pasta: Path, b: dict, todas: list[dict],
     """Regra editorial: nenhum corte abre com propaganda/patrocínio da live original
     (config/propaganda.json). Código, $0. Abre com propaganda → o início vai pra 1ª frase
     depois dela, grava no blocos.json e refaz o bloco sozinho. Sem ela o corte fica com menos
-    de 8 min → quarentena. (registro pro revisao.json ou None, motivo de quarentena ou None)."""
+    de 5 min (LONGO_MIN) → quarentena. (registro pro revisao.json ou None, motivo de quarentena ou None)."""
     bid, nn = b["id"], f"{b['id']:02d}"
     ini, fim = hhmmss_para_segundos(b["timestamp_inicio"]), hhmmss_para_segundos(b["timestamp_fim"])
     pp = _fronteira.pular_propaganda(todas, ini, *_fronteira.termos_propaganda())

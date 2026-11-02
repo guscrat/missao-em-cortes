@@ -54,7 +54,11 @@ deste trecho: nada de frase dita em outro momento da live.
 - Título e texto da thumb NUNCA destacam palavrão nem termo que possa soar como ofensa a um \
 grupo (raça, etnia, gênero, orientação sexual, religião, origem, deficiência etc.), MESMO que \
 esteja na fala. Descreva o tom ("desabafo sem filtro", "detona") em vez de citar o termo.
-- titulo: no máximo {MAX_TITULO} caracteres, no formato do canal ("Nome: 'gancho'" funciona bem).
+- titulo: no máximo {MAX_TITULO} caracteres, pensado pra busca do YouTube (cauda longa): \
+nome COMPLETO da pessoa (ex.: "Flávio Bolsonaro", não "Flávio") + o tema concreto (o caso, a \
+lei, o escândalo: "Lava Jato", "Banco Master"). Prefira a forma de pergunta quando o trecho \
+responde a ela (ex.: "Flávio Bolsonaro acabou com a Lava Jato?"), mas a pergunta não pode \
+insinuar o que a fala não sustenta.
 - texto_thumb: 2 a 5 palavras de impacto, no máximo 28 caracteres, diferente do título.
 - Números, datas, fatos e nomes batem EXATAMENTE com a transcrição; nome de pessoa sempre na \
 grafia oficial da lista do pedido.

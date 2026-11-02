@@ -73,7 +73,7 @@ EFFORT = "low"   # tarefa simples; o Sonnet 5.5 pensa por padrão (adaptive)
 
 PROMPT_SISTEMA = """Você é um editor de vídeo do canal Missão em Cortes.
 
-Recebe a transcrição word-level (cada linha: [start-end] palavra) de um corte de 8 a 30
+Recebe a transcrição word-level (cada linha: [start-end] palavra) de um corte de 5 a 30
 minutos, que já começa e termina em ponto natural (fim de frase/raciocínio).
 Sua tarefa: identificar TRECHOS pra REMOVER que melhorem o fluxo SEM perder contexto.
 A regra do canal é coerência acima da duração: o objetivo NÃO é encurtar o corte, é tirar

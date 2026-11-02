@@ -162,9 +162,9 @@ def test_encaixar_duracao_inalcancavel_nao_ok():
 
 def test_faixa_bordas():
     assert fr.faixa(None) is None
-    assert fr.faixa(7.99) == "fora" and fr.faixa(5) == "fora"
-    assert fr.faixa(8) == "curto" and fr.faixa(11.99) == "curto"
-    assert fr.faixa(12) == "medio" and fr.faixa(19.99) == "medio"
+    assert fr.faixa(4.99) == "fora" and fr.faixa(0) == "fora"
+    assert fr.faixa(5) == "curto" and fr.faixa(9.99) == "curto"
+    assert fr.faixa(10) == "medio" and fr.faixa(19.99) == "medio"
     assert fr.faixa(20) == "longo" and fr.faixa(30) == "longo"
     assert fr.faixa(30.01) == "fora"
 

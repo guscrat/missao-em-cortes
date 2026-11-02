@@ -198,9 +198,9 @@ def test_abertura_com_propaganda_grava_e_refaz(cenario):
     assert salvo["timestamp_fim"].startswith("00:11:40") and salvo["duracao_minutos"] <= 10.0
 
 
-def test_abertura_sobra_menos_de_8min_quarentena_sem_gravar(cenario):
+def test_abertura_sobra_menos_de_5min_quarentena_sem_gravar(cenario):
     pasta, b, refeitos, _ = cenario
-    b["timestamp_fim"] = "00:09:30"
+    b["timestamp_fim"] = "00:06:00"
     reg, motivo = rv.conferir_abertura("v", pasta, b, _com_prop())
     assert motivo and "revisar à mão" in motivo
     assert refeitos == [] and _blocos_json(pasta)["timestamp_inicio"] == "00:01:40"
@@ -324,7 +324,7 @@ def test_main_momentos_fora_removidos_vao_pro_revisao_json(cenario, monkeypatch)
 def test_main_abertura_em_quarentena_nao_chama_llm(cenario, monkeypatch):
     pasta0 = cenario[0]
     blocos = json.loads((pasta0 / "blocos.json").read_text(encoding="utf-8"))
-    blocos["blocos"][0]["timestamp_fim"] = "00:09:30"
+    blocos["blocos"][0]["timestamp_fim"] = "00:06:00"
     (pasta0 / "blocos.json").write_text(json.dumps(blocos), encoding="utf-8")
     pasta, refeitos, banco = _main_pronto(cenario, monkeypatch, _com_prop(), _NaoChamar())
     assert rv.main([str(pasta)]) == 0

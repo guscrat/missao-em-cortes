@@ -85,7 +85,7 @@ def css() -> None:
     .pill {{ display:inline-block; font-size:.7rem; padding:1px 8px; border-radius:99px;
              margin-top:.3rem; background:var(--trilho); color:var(--tx2); }}
     .pill.quarentena {{ background:var(--erro-bg); color:var(--erro-tx); }}
-    .pill.agendado, .pill.aprovado {{ background:var(--acento-bg); color:var(--acento-tx); }}
+    .pill.agendado, .pill.aprovado, .pill.nova {{ background:var(--acento-bg); color:var(--acento-tx); }}
     .pill.publicado {{ color:var(--ok-tx); }}
     .motivo {{ color:var(--erro-tx); font-size:.75rem; margin-top:.25rem; }}
 

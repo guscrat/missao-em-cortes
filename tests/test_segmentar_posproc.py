@@ -96,7 +96,7 @@ def test_ancora_corrige_tempo_errado_do_llm(pasta):
 
 
 def test_bloco_curto_descartado_e_nao_derruba_com_erro_de_cold_open(pasta):
-    curto = bloco(1, 5, 11, cold_open={"timestamp_inicio": "bobagem",
+    curto = bloco(1, 5, 8, cold_open={"timestamp_inicio": "bobagem",
                                        "timestamp_fim": "x", "frase": "a b c"})
     bom = bloco(2, 20, 30)
     r, d = rodar(pasta, [curto, bom])

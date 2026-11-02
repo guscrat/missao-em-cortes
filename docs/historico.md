@@ -28,6 +28,7 @@
 - ✅ **Zoom por fonte + thumb manual (13/06/2026)**: `renan_2turn_x_lula` (`Lab_UcxeEDs`) reaproveitando zoom `1476:830:200:100`; `07_thumb.py --bloco=N --t=MM:SS`.
 - ✅ **Texto da thumb curto (13/06/2026)**: `texto_thumb` no prompt de segmentação; 07 nunca usa `titulo_sugerido`; override `--titulo=`.
 - ✅ **Out/2026**: painel + camada de estado (SQLite), upload via API (travado até a auditoria), revisor + editor, legenda karaokê padrão (21/10), Shorts, métricas de retenção, Curador por estoque às 17h, 14_canal (detecta publicados), thumbs pelo rosto (22/10), thumb colagem (modo teste) + grafias oficiais.
+- ✅ **Estratégia de crescimento (31/10/2026)**: longos de **5-30 min sem alvo** (mínimo de 8 só depois do YPP); títulos de busca de cauda longa (nome completo + tema concreto, pergunta quando cabe); Curador marca a live já cortada pelos canais de corte grandes (yt-dlp, `canais_corte`) e prioriza o que eles não cortam; resumo semanal abre com minutos por view por faixa, % fora da busca e views nos 7 primeiros dias.
 - ✅ **Coerência acima da duração (26/10/2026)**: longos de 5-7 → **8-30 min guiados pelo assunto** (curto 8-12, médio 12-20, longo 20-30; >30 vira Parte 1/2), Shorts até 3 min fechando uma ideia, início/fim encaixados em fim de frase + pausa (`_fronteira.py`), revisor reprova e reajusta fronteira sozinho, `faixa_duracao` no banco e retenção/horas por faixa no 12. Hipótese: 8+ min habilita anúncio no meio e o assunto inteiro segura mais horas assistidas.
 
 ## Roadmap pós-MVP

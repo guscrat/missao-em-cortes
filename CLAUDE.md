@@ -4,7 +4,7 @@
 
 ## O projeto
 
-Canal de YouTube de cortes de lives, entrevistas, debates e eventos do **Partido Missão (legenda 14)**, partido brasileiro de direita liberal fundado em 2025, ligado ao MBL (Renan Santos, Kim Kataguiri, Arthur do Val, Guto Zacarias, Amanda Vettorazzo). Cada vídeo longo vira **vários cortes de 8-30 min** (o tamanho é o do assunto: **coerência acima da duração**, nunca cortar no meio da fala) + um Short por bloco (até 3 min), otimizados pro YouTube Partner Program.
+Canal de YouTube de cortes de lives, entrevistas, debates e eventos do **Partido Missão (legenda 14)**, partido brasileiro de direita liberal fundado em 2025, ligado ao MBL (Renan Santos, Kim Kataguiri, Arthur do Val, Guto Zacarias, Amanda Vettorazzo). Cada vídeo longo vira **vários cortes de 5-30 min** (sem duração-alvo: o tamanho é o do assunto, **coerência acima da duração**, nunca cortar no meio da fala) + um Short por bloco (até 3 min), otimizados pro YouTube Partner Program.
 
 **Canal:** https://www.youtube.com/channel/UCRJDgbBEndOdbNaiwzFju2g (handle `@missaoemcortes-14`; o `@missaoemcortes` NÃO é nosso).
 
@@ -62,7 +62,7 @@ Scripts (`scripts/`):
 
 **Orquestrador:** `uv run py scripts/pipeline.py <stem> [--polir] [--sem-llm] [--sem-legendas] [--desde=N] [--bloco=N] [--refazer]` roda 2→8, para na primeira falha e mostra o `--desde` pra retomar (pula o 2 se a transcrição existe; `--desde=4c` retoma do 04c; `--bloco=N` refaz só 4→4b→4c→6 de um bloco). O download fica de fora. Steps 3-8 recebem só o **stem**.
 
-Vídeo final: `[Cold open 15-30s] → [Intro 3s] → [Card 3s] → [Corte 8-30min] → [Outro 5s]`.
+Vídeo final: `[Cold open 15-30s] → [Intro 3s] → [Card 3s] → [Corte 5-30min] → [Outro 5s]`.
 
 Overlays da live saem por **zoom por fonte** (`config/zoom.json`); stem sem entrada roda sem zoom e avisa. Calibrar: `calibrar_zoom.py <video> --salvar=<stem>`, depois `pipeline.py <stem> --desde=4`. Detalhes em `docs/pipeline.md`.
 
