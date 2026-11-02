@@ -182,7 +182,11 @@ compartilhada (navegador, matéria, gráfico, documento) em vez de pessoas falan
 true. Algum frame de tela no meio é normal: aí é false.
 4. corte_sem_sentido: pela transcrição, o trecho NÃO se sustenta sozinho? Ex.: começa ou \
 termina no meio de um raciocínio a ponto de não dar pra entender do que se fala, ou pula \
-de assunto sem fio condutor. Começo abrupto mas compreensível é false.
+de assunto sem fio condutor. TAMBÉM é true quando o assunto do trecho é \
+venda, propaganda, patrocínio ou divulgação de produto ou curso (do apresentador ou de \
+terceiros: curso, livro, documentário, show, loja, cupom), em qualquer duração, mesmo com \
+gancho político: diga isso em sentido_problema. Propaganda curta no meio de um assunto que \
+continua não conta. Começo abrupto mas compreensível é false.
 5. momentos_fora: cada item dos PRINCIPAIS MOMENTOS DA DESCRIÇÃO tem que estar DENTRO da \
 transcrição do trecho (fala citada ou fato dito nele; paráfrase fiel de algo dito no trecho é \
 ok). Liste, copiando o item EXATAMENTE como veio, cada um que não está: fala de outro momento \
