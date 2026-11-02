@@ -390,3 +390,12 @@ def test_painel_sugestao_sem_as_colunas_novas_nao_quebra(tmp_path):
 
 def test_min_corte_capitulos_e_5_min():
     assert cap.MIN_CORTE_MIN == 5.0
+
+
+def test_registro_da_sugestao_repoe_terceiros():
+    cfg = {"canais": [{"nome": "Flow Podcast", "prefixo": "flow", "zoom": None, "terceiros": True},
+                      {"nome": "Renan Santos", "prefixo": "renan", "zoom": None}]}
+    base = {"titulo": "T", "url": "u", "data": "2026-11-01", "prioridade": 5}
+    assert cu._registro_da_sugestao(cfg, {**base, "canal": "Flow Podcast"})["terceiros"] is True
+    assert cu._registro_da_sugestao(cfg, {**base, "canal": "Sumiu", "risco": cu.RISCO_TERCEIROS})["terceiros"]
+    assert "terceiros" not in cu._registro_da_sugestao(cfg, {**base, "canal": "Renan Santos"})

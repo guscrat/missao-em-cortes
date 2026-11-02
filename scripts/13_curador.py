@@ -1006,7 +1006,9 @@ def _registro_da_sugestao(cfg: dict, s: dict) -> dict:
     return {"titulo": s["titulo"], "canal": s["canal"], "url": s["url"], "data": s["data"],
             "duracao_min": s.get("duracao_min"), "prefixo": canal.get("prefixo", "video"),
             "zoom": canal.get("zoom"), "prioridade": s.get("prioridade") or 0,
-            "motivo": s.get("motivo") or "", "tentativas": 0, "decisao": "fila"}
+            "motivo": s.get("motivo") or "", "tentativas": 0, "decisao": "fila",
+            # sem a marca, uma falha antes de baixar devolveria à fila sem proteção da rede
+            **({"terceiros": True} if canal.get("terceiros") or s.get("risco") else {})}
 
 
 def processar_pedidos(cfg: dict, estado: dict, rodada: dict) -> None:
