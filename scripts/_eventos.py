@@ -211,6 +211,8 @@ CREATE TABLE IF NOT EXISTS sugestoes (
     url           TEXT,
     data          TEXT,               -- data do vídeo na fonte (AAAA-MM-DD)
     cortado_por   TEXT,               -- canais de corte grandes que já cortaram ("X (2)"); "" = ninguém
+    talvez_cortado_por TEXT,          -- corte sem link que parece da live pelo título ("possivelmente")
+    risco         TEXT,               -- ex.: fonte de terceiros (reivindicação de direitos); NULL = nenhum
     status        TEXT NOT NULL DEFAULT 'sugerida',
     stem          TEXT,
     mensagem      TEXT,               -- erro da falha / "processado por link direto"
@@ -238,6 +240,7 @@ def conectar(db_path: Path | None = None) -> sqlite3.Connection:
     # migração: bancos criados antes das colunas tarefa_id, titulo_youtube, cache_* e faixa_duracao
     for tabela, coluna in (("eventos", "tarefa_id INTEGER"), ("blocos", "titulo_youtube TEXT"),
                            ("blocos", "faixa_duracao TEXT"), ("sugestoes", "cortado_por TEXT"),
+                           ("sugestoes", "talvez_cortado_por TEXT"), ("sugestoes", "risco TEXT"),
                            ("eventos", "cache_escrita INTEGER DEFAULT 0"),
                            ("eventos", "cache_leitura INTEGER DEFAULT 0")):
         if coluna.split()[0] not in {r["name"] for r in con.execute(f"PRAGMA table_info({tabela})")}:
@@ -521,7 +524,7 @@ def gravar_sugestao(video_id: str, *, status: str | None = None, **campos) -> No
     """Cria/atualiza a sugestão. Sem `status`, uma já existente mantém o dela (o Gu pode ter
     pedido): só os campos passados mudam."""
     permitidos = {"titulo", "canal", "duracao_min", "prioridade", "motivo", "url", "data",
-                  "stem", "mensagem", "cortado_por"}
+                  "stem", "mensagem", "cortado_por", "talvez_cortado_por", "risco"}
     invalidos = set(campos) - permitidos
     if invalidos:
         raise ValueError(f"campos inválidos pra sugestão: {invalidos}")

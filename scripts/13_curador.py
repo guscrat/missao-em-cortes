@@ -53,6 +53,14 @@ Fluxo:
      o que ninguém cortou ainda passa na frente. Refeito a cada rodada pra fila inteira (corte
      sai dias depois da live). A descrição de cada corte é lida 1 vez só (cache em
      state/cortes_terceiros.json). Sem canais_corte: não confere (cortado_por fica vazio).
+     Corte SEM link na descrição (alguns canais não creditam com link): compara o título dele
+     com o da live (palavras-chave em comum, publicado até DIAS_TALVEZ dias depois) →
+     `talvez_cortado_por` ("possivelmente já cortado", pelo título), que perde só
+     PENALIDADE_TALVEZ. Com link vale o link.
+  Fontes de terceiros (canais com "terceiros": true, ex.: Flow, Inteligência Ltda): só entra
+     episódio com alguém do grupo no título (NOMES_GRUPO, filtro grátis antes do Claude); a
+     sugestão sai com `risco` = RISCO_TERCEIROS (painel e resumo) e NUNCA é processada sozinha
+     (rede de segurança, modo automático, modo evento, --forcar): só pelo Processar do Gu.
   4. Resumo em state/curador_resumo.md (cortes prontos pra publicar, recusados com motivo,
      avisos) e decisões em state/curadoria.json. Tudo também vira evento no painel.
 
@@ -92,6 +100,21 @@ ESPERA_OCUPADO_MIN = 30      # outro processamento rodando: espera até isso, de
 CHECA_OCUPADO_S = 60
 CORTES_CACHE = ROOT / "state" / "cortes_terceiros.json"   # {id do corte: {canal, fontes}}
 PENALIDADE_CORTADO = 3       # live que um canal de corte grande já cortou: perde isso de prioridade
+PENALIDADE_TALVEZ = 1        # "possivelmente já cortado" (pelo título, corte sem link): perde menos
+DIAS_TALVEZ = 10             # corte pelo título só conta se saiu até isso depois da live
+MIN_PALAVRAS_TALVEZ = 2      # palavras-chave em comum entre o título do corte e o da live
+RISCO_TERCEIROS = "fonte de terceiros: risco de reivindicação de direitos"
+# fonte de terceiros só vale com alguém do grupo no título (normalizado, sem acento)
+NOMES_GRUPO = ("renan santos", "arthur do val", "mamae falei", "mamaefalei", "kim kataguiri",
+               "guto zacarias", "amanda vettorazzo", "mbl", "movimento brasil livre", "partido missao")
+# palavras que não dizem o ASSUNTO (nomes do grupo, formato de live/corte) ficam fora da comparação
+PALAVRAS_GENERICAS = {
+    "renan", "santos", "arthur", "kataguiri", "guto", "zacarias", "amanda", "vettorazzo",
+    "mamae", "falei", "mamaefalei", "missao", "plantao", "analises", "renais", "live", "ao", "vivo",
+    "debate", "podcast", "cortes", "corte", "news", "flow", "inteligencia", "ltda", "parte",
+    "sobre", "para", "pela", "pelo", "como", "quem", "qual", "quando", "porque", "isso", "esta",
+    "esse", "essa", "mais", "muito", "agora", "ainda", "depois", "contra", "todos", "tudo", "nada",
+    "detona", "urgente", "explica", "fala", "diz", "responde", "brasil", "video"}
 PRIORIDADE_EVENTO = 6        # modo evento: abaixo disso não fura o estoque (previsão velha)
 MAX_TEMAS_ALTA = 5           # temas dos vídeos antigos em alta (17_analytics) no pedido ao Claude
 MAX_TEMA_ALTA = 80
@@ -136,6 +159,10 @@ entrevista, podcast com convidado relevante
 - é entrevista, podcast, participação em outro canal ou traz convidado menos conhecido: os \
 canais de corte grandes costumam cortar só as lives principais, e é no que eles não cortam \
 que o nosso canal tem espaço (prioridade maior que a live principal do mesmo dia)
+
+Fonte de terceiros (canal marcado "terceiros", ex.: Flow, Inteligência Ltda): só vale se \
+alguém do grupo (Renan Santos, Arthur do Val, Kim Kataguiri, Guto Zacarias, Amanda Vettorazzo, \
+MBL/Missão) é convidado ou participa de verdade do episódio; senão, vale = false.
 
 Não vale quando:
 - jingle, paródia, trailer, aviso, corte já editado, compilação ou reprise
@@ -326,6 +353,7 @@ def listar_canal(canal: dict, n: int) -> list[dict]:
                 "data": date.fromtimestamp(ts).isoformat() if ts else None,
                 "live_status": e.get("live_status"), "canal": canal["nome"],
                 "prefixo": canal["prefixo"], "zoom": canal.get("zoom"),
+                **({"terceiros": True} if canal.get("terceiros") else {}),
             })
     return itens
 
@@ -359,7 +387,20 @@ def motivo_filtro(item: dict, cfg: dict, hoje: date, vistos: set[str]) -> str | 
         return f"longo demais ({minutos:.0f} min)"
     if item.get("data") and (hoje - date.fromisoformat(item["data"])).days > cfg["dias"]:
         return f"antigo ({item['data']})"
+    if item.get("terceiros") and not tem_grupo(item.get("titulo") or ""):
+        return "fonte de terceiros sem ninguém do grupo no título"
     return None
+
+
+def _normal(texto: str) -> str:
+    t = unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode().lower()
+    return re.sub(r"[^a-z0-9]+", " ", t).strip()
+
+
+def tem_grupo(titulo: str) -> bool:
+    """Alguém do grupo (NOMES_GRUPO) aparece no título? Palavra inteira, sem acento."""
+    t = f" {_normal(titulo)} "
+    return any(f" {nome} " in t for nome in NOMES_GRUPO)
 
 
 # --- já cortado pelos canais de corte grandes (yt-dlp) -----------------------------------
@@ -371,10 +412,15 @@ def listar_cortes(canal: dict, n: int) -> list[str]:
     return [e["id"] for e in info.get("entries") or [] if e and e.get("id")]
 
 
-def fontes_do_corte(vid: str) -> list[str]:
-    """Ids de vídeo do YouTube citados na descrição de um corte (o crédito da live)."""
-    info = _ydl({}).extract_info(f"https://www.youtube.com/watch?v={vid}", download=False)
-    return sorted({m.group(1) for m in ID_RE.finditer(info.get("description") or "")} - {vid})
+def fontes_do_corte(vid: str) -> dict:
+    """{fontes: ids de vídeo citados na descrição de um corte (o crédito da live), titulo,
+    data (AAAA-MM-DD)}: título e data servem pros cortes sem link (comparação pelo título)."""
+    info = _ydl({"extractor_args": {"youtube": {"lang": ["pt"]}}}).extract_info(
+        f"https://www.youtube.com/watch?v={vid}", download=False)
+    up = info.get("upload_date")
+    return {"fontes": sorted({m.group(1) for m in ID_RE.finditer(info.get("description") or "")}
+                             - {vid}),
+            "titulo": info.get("title") or "", "data": f"{up[:4]}-{up[4:6]}-{up[6:]}" if up else None}
 
 
 def cortes_publicados(canais: list[dict], n: int, listar=listar_cortes,
@@ -396,9 +442,12 @@ def cortes_publicados(canais: list[dict], n: int, listar=listar_cortes,
             falhas.append(canal["nome"])
             ids = [vid for vid, c in cache.items() if c.get("canal") == canal["nome"]]
         for vid in ids:
-            if vid not in cache:
+            # corte sem link lido antes de guardar o título (cache de 31/10): lê de novo 1 vez
+            sem_titulo = vid in cache and not cache[vid]["fontes"] and "titulo" not in cache[vid]
+            if vid not in cache or sem_titulo:
                 try:
-                    cache[vid] = {"canal": canal["nome"], "fontes": fontes(vid)}
+                    r = fontes(vid)
+                    cache[vid] = {"canal": canal["nome"], **(r if isinstance(r, dict) else {"fontes": r})}
                 except Exception as e:  # noqa: BLE001 — tenta de novo na próxima rodada
                     print(f"   [aviso] não li a descrição do corte {vid}: {e}")
                     continue
@@ -413,18 +462,57 @@ def cortes_publicados(canais: list[dict], n: int, listar=listar_cortes,
     return achados
 
 
-def marcar_cortados(estado: dict, achados: dict[str, dict[str, int]]) -> list[str]:
-    """Marca `cortado_por` em cada vídeo da fila e ajusta a prioridade: já cortado perde
-    PENALIDADE_CORTADO (mín. 1) da prioridade do Claude (guardada em prioridade_llm); quem
-    deixou de aparecer volta pra ela. Devolve os ids que estão cortados."""
+def cortes_sem_link() -> list[dict]:
+    """[{canal, titulo, data}] dos cortes do cache que não citam a live com link."""
+    try:
+        cache = json.loads(CORTES_CACHE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return [c for c in cache.values() if not c.get("fontes") and c.get("titulo")]
+
+
+def palavras_chave(titulo: str) -> set[str]:
+    """Palavras do título que dizem o assunto: 4+ letras, sem as genéricas."""
+    return {p for p in _normal(titulo).split() if len(p) >= 4 and p not in PALAVRAS_GENERICAS}
+
+
+def talvez_cortado(live: dict, cortes: list[dict]) -> dict[str, int]:
+    """{canal: quantos} dos cortes sem link que PARECEM da live: MIN_PALAVRAS_TALVEZ
+    palavras-chave em comum e publicados de 0 a DIAS_TALVEZ dias depois dela (sem data = não conta)."""
+    chave, saida = palavras_chave(live.get("titulo") or ""), {}
+    if not chave or not live.get("data"):
+        return saida
+    dia = date.fromisoformat(live["data"])
+    for c in cortes:
+        if not c.get("data") or not 0 <= (date.fromisoformat(c["data"]) - dia).days <= DIAS_TALVEZ:
+            continue
+        if len(chave & palavras_chave(c["titulo"])) >= MIN_PALAVRAS_TALVEZ:
+            saida[c["canal"]] = saida.get(c["canal"], 0) + 1
+    return saida
+
+
+def _lista(por_canal: dict[str, int]) -> str:
+    return ", ".join(f"{c} ({k})" for c, k in sorted(por_canal.items()))
+
+
+def marcar_cortados(estado: dict, achados: dict[str, dict[str, int]],
+                    sem_link: list[dict] = ()) -> list[str]:
+    """Marca cada vídeo da fila e ajusta a prioridade a partir da do Claude (guardada em
+    prioridade_llm; quem deixou de aparecer volta pra ela, mín. 1):
+      - `cortado_por` (corte com link da live): perde PENALIDADE_CORTADO;
+      - senão, `talvez_cortado_por` (corte sem link que parece da live pelo título): perde
+        PENALIDADE_TALVEZ.
+    Devolve os ids cortados (com link)."""
     cortados = []
     for vid, v in estado.items():
         if v.get("decisao") != "fila":
             continue
         base = v.setdefault("prioridade_llm", v.get("prioridade", 0))
         por_canal = achados.get(vid) or {}
-        v["cortado_por"] = ", ".join(f"{c} ({k})" for c, k in sorted(por_canal.items()))
-        v["prioridade"] = max(1, base - PENALIDADE_CORTADO) if por_canal else base
+        talvez = {} if por_canal else talvez_cortado(v, list(sem_link))
+        v["cortado_por"], v["talvez_cortado_por"] = _lista(por_canal), _lista(talvez)
+        penalidade = PENALIDADE_CORTADO if por_canal else PENALIDADE_TALVEZ if talvez else 0
+        v["prioridade"] = max(1, base - penalidade) if penalidade else base
         if por_canal:
             cortados.append(vid)
     return cortados
@@ -445,7 +533,9 @@ def montar_pedido(itens: list[dict], evento: dict | None = None,
                       "falando bastante, ganha +2 de prioridade (máx. 10) e o motivo cita o tema.")
     linhas.append("Vídeos novos:")
     for x in itens:
-        linhas.append(f"- id={x['id']} | canal: {x['canal']} | {x['data'] or '?'} | "
+        linhas.append(f"- id={x['id']} | canal: {x['canal']}"
+                      + (" (terceiros)" if x.get("terceiros") else "")
+                      + f" | {x['data'] or '?'} | "
                       f"{x['duracao_s'] // 60} min | título: {x['titulo']}"
                       + (f" | descrição: {x['descricao']!r}" if x.get("descricao") else ""))
     return "\n".join(linhas)
@@ -775,6 +865,9 @@ def escrever_resumo(rodada: dict) -> str:
         linhas += [f"- **[{s['prioridade']}]** {s['canal']}: {s['titulo']} "
                    f"({_minutos(s.get('duracao_min'))}) — {s['motivo']} — {s['url']}"
                    + (f" · já cortado por {s['cortado_por']}" if s.get("cortado_por") else "")
+                   + (f" · possivelmente já cortado (pelo título) por {s['talvez_cortado_por']}"
+                      if s.get("talvez_cortado_por") else "")
+                   + (f" · ⚠ {s['risco']}" if s.get("risco") else "")
                    + (" *(nova)*" if s["url"] in novas else "")
                    + (f" · **{s['status']}**" if s["status"] != "sugerida" else "")
                    for s in rodada.get("sugestoes") or []]
@@ -861,8 +954,10 @@ def _canal_de(cfg: dict, nome: str) -> dict:
 
 def proximo_da_fila(estado: dict, desde: date | None = None, minimo: int = 0) -> str | None:
     """Id da fila com maior prioridade; empate = o mais recente. desde/minimo (modo evento):
-    só vídeos daquele dia em diante e com prioridade >= minimo."""
+    só vídeos daquele dia em diante e com prioridade >= minimo. Fonte de terceiros nunca sai
+    daqui (rede de segurança, automático, evento, --forcar): só pelo Processar do Gu."""
     fila = [(k, v) for k, v in estado.items() if v.get("decisao") == "fila"
+            and not v.get("terceiros")
             and (desde is None or (v.get("data") or "") >= desde.isoformat())
             and v.get("prioridade", 0) >= minimo]
     if not fila:
@@ -996,7 +1091,9 @@ def espelhar_fila(estado: dict) -> None:
             gravar_sugestao(k, titulo=v.get("titulo"), canal=v.get("canal"),
                             duracao_min=v.get("duracao_min"), prioridade=v.get("prioridade"),
                             motivo=v.get("motivo"), url=v.get("url"), data=v.get("data"),
-                            cortado_por=v.get("cortado_por"))
+                            cortado_por=v.get("cortado_por"),
+                            talvez_cortado_por=v.get("talvez_cortado_por"),
+                            risco=RISCO_TERCEIROS if v.get("terceiros") else None)
 
 
 def expirar_fila(estado: dict, hoje: date) -> list[str]:
@@ -1169,6 +1266,7 @@ def _rodada(cfg: dict, dry_run: bool, sem_pipeline: bool, forcar: bool) -> int:
                         "duracao_min": round((c.get("duracao_s") or 0) / 60) or None,
                         "prioridade": a["prioridade"], "motivo": a["motivo"],
                         "avaliado_em": agora, "tentativas": 0,
+                        **({"terceiros": True} if c.get("terceiros") else {}),
                         "decisao": "fila" if a["vale"] else "recusado"}
             estado[c["id"]] = registro
             if a["vale"]:
@@ -1182,7 +1280,8 @@ def _rodada(cfg: dict, dry_run: bool, sem_pipeline: bool, forcar: bool) -> int:
     if cfg["canais_corte"]:
         marcar_etapa("procurando cortes já publicados pelos canais de corte")
         try:
-            marcar_cortados(estado, cortes_publicados(cfg["canais_corte"], cfg["cortes_por_canal"]))
+            achados = cortes_publicados(cfg["canais_corte"], cfg["cortes_por_canal"])
+            marcar_cortados(estado, achados, cortes_sem_link())
         except Exception as e:  # noqa: BLE001 — sem a checagem, a fila segue com a prioridade de antes
             rodada["aviso_cortes"] = f"não conferi os cortes já publicados ({str(e)[:150]})"
             evento(None, "curadoria", "aviso", agente="curador", mensagem=rodada["aviso_cortes"])

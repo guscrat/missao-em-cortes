@@ -411,8 +411,8 @@ def test_linhas_formato_com_hora():
 
 
 def test_linhas_corte_menor_que_8min_nao_tem():
-    assert cap.linhas(caps_em(0, 100, 200), tempo_fake(corte_s=479)) == []
-    assert cap.linhas(caps_em(0, 100, 200), tempo_fake(corte_s=480)) != []
+    assert cap.linhas(caps_em(0, 100, 200), tempo_fake(corte_s=299)) == []
+    assert cap.linhas(caps_em(0, 100, 200), tempo_fake(corte_s=300)) != []
 
 
 def test_linhas_menos_de_3_nao_tem():
