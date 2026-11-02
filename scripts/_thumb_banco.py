@@ -36,7 +36,11 @@ def slug(nome: str) -> str:
 def apresentador(bloco: dict) -> str | None:
     """Quem fala no bloco (o 1º de speakers_principais): é o rosto que a thumb mostra."""
     falantes = bloco.get("speakers_principais") or []
-    return falantes[0] if falantes else None
+    if not falantes:
+        return None
+    nome = falantes[0].strip()
+    m = re.fullmatch(r"speaker\s*\((.+)\)", nome, flags=re.IGNORECASE)   # "Speaker (Arthur do Val)"
+    return m.group(1).strip() if m else nome
 
 
 def extrair_frame(video: Path, t: float, saida: Path, crop: str | None = None) -> None:

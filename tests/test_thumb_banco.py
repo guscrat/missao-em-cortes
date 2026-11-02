@@ -92,3 +92,8 @@ def test_podar_fica_com_as_melhores(banco_tmp, monkeypatch):
     tb.podar("kim")
     assert sorted(x["nota"] for x in tb.candidatos("kim")) == [8, 9]
     assert len(list((banco / "kim").glob("*.json"))) == 2
+
+
+def test_apresentador_tira_rotulo_speaker():
+    assert tb.apresentador({"speakers_principais": ["Speaker (Arthur do Val)"]}) == "Arthur do Val"
+    assert tb.apresentador({"speakers_principais": ["Renan Santos"]}) == "Renan Santos"
