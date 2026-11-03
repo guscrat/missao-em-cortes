@@ -20,6 +20,7 @@ param(
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $env:PYTHONIOENCODING = "utf-8"
+$env:PYTHONWARNINGS = "ignore::FutureWarning"   # aviso do google.api_core polui a gravacao
 Set-Location (Split-Path $PSScriptRoot -Parent)
 
 $Canal = "Miss$([char]0x00E3)o em Cortes"
