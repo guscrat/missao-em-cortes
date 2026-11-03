@@ -39,3 +39,7 @@ Quando a auditoria for aprovada, mude a flag pra `true` e o 09 passa a subir pri
 ## Simulação (`--como-aprovada`)
 
 Só com `--dry-run`: mostra o plano como se a flag já fosse `true` (é o que o `dia_d.py checar` usa). Sem `--dry-run`, recusa.
+
+## Screencast da auditoria (`--demo`)
+
+`09_upload.py --demo=<etapa> [--lang=en]` (código em `scripts/_demo_auditoria.py`), encadeado com pausas e narração em inglês por `scripts/demo_auditoria.ps1` (`-Preparar` antes de gravar: só corta o clipe, local). Etapas: preparar · plano · login (revoga o token do publisher pra tela de consentimento aparecer) · upload (privado, `[TEST]`, `--agendar` manda `publishAt`) · thumb · update · status. Não toca no banco de blocos nem nos `youtube*.json`; registro em `state/demo_auditoria/demo.json`. O escopo `youtube.upload` cobre `videos.insert` e `thumbnails.set`, **não** `videos.update` nem `videos.list`: a etapa update se pula sozinha e explica. Roteiro: `docs/auditoria/screencast_script.md`.

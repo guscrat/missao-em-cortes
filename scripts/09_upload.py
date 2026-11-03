@@ -6,6 +6,7 @@ Uso:
     uv run py scripts/09_upload.py <stem> --bloco=N --teste   # upload de TESTE (único liberado sem auditoria)
     uv run py scripts/09_upload.py <stem>|todos --shorts [--bloco=N] [--max=N]   # Shorts (shorts/)
     ... --dry-run --como-aprovada   # simula o plano como se a auditoria já estivesse aprovada
+    uv run py scripts/09_upload.py --demo=<etapa> [--lang=en]  # screencast da auditoria (_demo_auditoria.py)
 
 O que lê (da pasta do vídeo):
   - blocos.json        → quais blocos existem
@@ -306,6 +307,11 @@ def subir_video(youtube, video: Path, meta: dict, publish_at: datetime | None, c
     }
     if publish_at:
         body["status"]["publishAt"] = publish_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return inserir_video(youtube, video, body)["id"]
+
+
+def inserir_video(youtube, video: Path, body: dict) -> dict:
+    """videos.insert resumable com retentativa em 5xx; devolve a resposta inteira da API."""
     media = MediaFileUpload(str(video), mimetype="video/mp4", chunksize=8 * 1024 * 1024,
                             resumable=True)
     req = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
@@ -322,10 +328,10 @@ def subir_video(youtube, video: Path, meta: dict, publish_at: datetime | None, c
             tentativas += 1
             print(f"   [aviso] erro {e.resp.status} no upload, tentativa {tentativas}/5")
             time.sleep(2 ** tentativas)
-    return resp["id"]
+    return resp
 
 
-def subir_thumb(youtube, thumb: Path, video_id: str) -> None:
+def subir_thumb(youtube, thumb: Path, video_id: str) -> dict:
     with tempfile.TemporaryDirectory() as tmp:
         if thumb.stat().st_size > LIMITE_THUMB_BYTES:
             from PIL import Image
@@ -333,8 +339,8 @@ def subir_thumb(youtube, thumb: Path, video_id: str) -> None:
             Image.open(thumb).convert("RGB").save(jpg, "JPEG", quality=90)
             thumb = jpg
         mime = "image/jpeg" if thumb.suffix.lower() in (".jpg", ".jpeg") else "image/png"
-        youtube.thumbnails().set(videoId=video_id,
-                                 media_body=MediaFileUpload(str(thumb), mimetype=mime)).execute()
+        return youtube.thumbnails().set(videoId=video_id,
+                                        media_body=MediaFileUpload(str(thumb), mimetype=mime)).execute()
 
 
 # ── orquestração ───────────────────────────────────────────────────────────
@@ -349,6 +355,9 @@ def _args(argv: list[str]) -> tuple[str, dict]:
 
 
 def main(argv: list[str]) -> int:
+    if any(a.startswith("--demo") for a in argv):   # screencast da auditoria, à parte
+        import _demo_auditoria
+        return _demo_auditoria.main(argv)
     alvo, flags = _args(argv)
     dry = bool(flags.get("dry-run"))
     so_bloco = int(flags["bloco"]) if "bloco" in flags else None
