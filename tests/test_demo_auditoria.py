@@ -282,3 +282,14 @@ def test_subir_video_continua_devolvendo_id(tmp_path, monkeypatch):
     monkeypatch.setattr(up, "inserir_video", lambda y, v, b: RESP)
     meta = {"titulo": "t", "descricao": "d", "tags": []}
     assert up.subir_video(None, tmp_path / "v", meta, None, up.carregar_config(tmp_path / "n")) == "VID123"
+
+
+def test_agendar_recusado_com_auditoria_aprovada(amb, monkeypatch, capsys):
+    """Com a auditoria aprovada, publishAt publicaria o vídeo [TEST] de verdade."""
+    _prepara_registro(amb)
+    (amb.root / "upload.json").write_text('{"auditoria_aprovada": true}', encoding="utf-8")
+    ins = MagicMock(return_value=RESP)
+    monkeypatch.setattr(up, "inserir_video", ins)
+    assert d.main(["--demo=upload", "--agendar"]) == 1
+    ins.assert_not_called()
+    assert "--agendar" in capsys.readouterr().out

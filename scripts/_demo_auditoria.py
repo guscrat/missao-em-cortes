@@ -48,6 +48,8 @@ MSG = {
         "fonte_nossa": "[!] inputs/{stem}.url aponta pro nosso canal, não pra fonte — escolha outro vídeo.",
         "sem_video": "[!] Nenhum vídeo finalizado com thumb encontrado{onde}.",
         "segundos": "[!] --segundos tem que ficar entre 10 e 20.",
+        "agendar_aprovada": ("[!] --agendar recusado: a auditoria já está aprovada, então o vídeo [TEST] "
+                             "seria publicado de verdade no horário. Rode sem --agendar."),
         "preparado": "Clipe de demo pronto: {clip} ({seg} s, de {origem})\nThumb: {thumb}\nFonte: {fonte}",
         "plano_titulo": "PLANO DO UPLOAD (nada foi enviado)",
         "arquivo": "Arquivo", "titulo": "Título", "descricao": "Descrição", "tags": "Tags",
@@ -90,6 +92,8 @@ MSG = {
         "fonte_nossa": "[!] inputs/{stem}.url points to our own channel, not the source - pick another video.",
         "sem_video": "[!] No finished video with a thumbnail found{onde}.",
         "segundos": "[!] --segundos must be between 10 and 20.",
+        "agendar_aprovada": ("[!] --agendar refused: the audit is already approved, so the [TEST] video "
+                             "would really go public at that time. Run without --agendar."),
         "preparado": "Demo clip ready: {clip} ({seg} s, from {origem})\nThumbnail: {thumb}\nSource: {fonte}",
         "plano_titulo": "UPLOAD PLAN (nothing has been sent)",
         "arquivo": "File", "titulo": "Title", "descricao": "Description", "tags": "Tags",
@@ -416,6 +420,9 @@ def main(argv: list[str]) -> int:
         return 1
     cfg = _up().carregar_config()
     agendar = bool(flags.get("agendar"))
+    if agendar and cfg["auditoria_aprovada"]:   # com a auditoria ok, o publishAt publicaria o [TEST]
+        print(m["agendar_aprovada"])
+        return 1
     if etapa == "plano":
         return plano(reg, cfg, agendar, m)
     if etapa == "upload":
