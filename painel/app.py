@@ -302,8 +302,8 @@ def corpo() -> None:
     with aba_h:
         custo = hoje.custo_mes(carregar_custo_mes(agora.strftime("%Y-%m-01")),
                                cfg["orcamento_mensal_usd"], agora)
-        for vid in hoje.aba_hoje(blocos, tarefas, est, custo, agora, carregar_sugestoes()):
-            erro = hoje.disparar_processamento(vid)
+        for pedido in hoje.aba_hoje(blocos, tarefas, est, custo, agora, carregar_sugestoes()):
+            erro = hoje.disparar_processamento(**pedido)
             if erro:
                 st.error(f"Não consegui disparar o processamento: {erro}")
             else:

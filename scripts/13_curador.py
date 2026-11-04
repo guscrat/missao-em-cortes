@@ -3,6 +3,7 @@ virar corte e dispara o pipeline neles (agente="curador", off-pipeline, roda 1x/
 
 Uso: uv run py scripts/13_curador.py [--dry-run] [--sem-pipeline] [--forcar]
      uv run py scripts/13_curador.py --processar=<video_id>
+     uv run py scripts/13_curador.py --link=<URL do YouTube>
 
   --dry-run       só lista, filtra e mostra o estoque (sem LLM, sem baixar)
   --sem-pipeline  avalia e põe na fila, mas não baixa nem processa
@@ -10,6 +11,10 @@ Uso: uv run py scripts/13_curador.py [--dry-run] [--sem-pipeline] [--forcar]
   --processar=ID  o Gu escolheu a sugestão no painel (botão Processar): marca como pedida e
                   processa (uma de cada vez). Com outra rodada no meio, sai (75) e ela
                   processa o pedido antes de terminar.
+  --link=URL      o Gu colou um link no painel ("Processar link"): lê o vídeo (yt-dlp, $0),
+                  cria a sugestão com origem "manual" e entra na MESMA fila do --processar
+                  (mesma trava, mesmo orçamento por live). O vídeo fica com origem "manual"
+                  no banco, pro Analista comparar com os escolhidos pelo Curador.
 
 Modo (config/canais.json → curador_modo):
   "sugerir" (padrão desde 29/10/2026, decisão do Gu): a rodada lê, avalia e prioriza, mas NÃO
@@ -696,7 +701,8 @@ def processar(item: dict) -> dict:
     if not cadastrar_zoom(stem, item.get("zoom")):
         res["avisos"].append(f"{stem}: canal sem zoom calibrado — confira os overlays "
                              f"(calibrar_zoom.py, depois pipeline.py {stem} --desde=4)")
-    upsert_video(stem, fonte_url=item["url"], status="curadoria")
+    upsert_video(stem, fonte_url=item["url"], status="curadoria",
+                 origem=item.get("origem") or "curador")
     colagem = modo_colagem()
     etapas = [("01_baixar.py", item["url"], stem),
               ("pipeline.py", stem, "--polir"),
@@ -924,7 +930,10 @@ def main(argv: list[str]) -> int:
     forcar = "--forcar" in argv
     cfg = carregar_config()
     pedido = next((a.split("=", 1)[1] for a in argv if a.startswith("--processar=")), None)
+    link = next((a.split("=", 1)[1] for a in argv if a.startswith("--link=")), None)
 
+    if link:
+        return pedir_link(cfg, link)
     if pedido:
         return pedir(cfg, pedido)
     if dry_run:
@@ -975,7 +984,7 @@ def processar_escolhido(cfg: dict, estado: dict, vid: str, rodada: dict, porque:
     canal = _canal_de(cfg, e["canal"])
     item = {"id": vid, "url": e["url"], "titulo": e["titulo"], "canal": e["canal"],
             "prefixo": e.get("prefixo") or canal.get("prefixo", "video"),
-            "zoom": e.get("zoom", canal.get("zoom"))}
+            "zoom": e.get("zoom", canal.get("zoom")), "origem": e.get("origem") or "curador"}
     item["stem"] = e.get("stem") or montar_stem(item["prefixo"], item["titulo"])
     e.update(decisao="escolhido", stem=item["stem"])
     gravar_estado(estado)
@@ -1033,6 +1042,7 @@ def processar_pedidos(cfg: dict, estado: dict, rodada: dict) -> None:
             return
         if s["video_id"] not in estado:
             estado[s["video_id"]] = _registro_da_sugestao(cfg, s)
+        estado[s["video_id"]]["origem"] = s.get("origem") or "curador"   # link do painel = manual
         processar_escolhido(cfg, estado, s["video_id"], rodada, "pedido do Gu no painel")
 
 
@@ -1079,6 +1089,68 @@ def pedir(cfg: dict, video_id: str) -> int:
     finally:
         encerrar_progresso(codigo)
         soltar_trava()
+
+
+MOTIVO_MANUAL = "link colado no painel"
+
+
+def ler_link(url: str) -> dict:
+    """Metadados de UM vídeo pelo yt-dlp ($0, ~3s). Levanta se não der pra ler."""
+    return _ydl({"extractor_args": {"youtube": {"lang": ["pt"]}}}).extract_info(url, download=False)
+
+
+def canal_do_link(cfg: dict, info: dict) -> dict:
+    """Canal monitorado dono do vídeo (pelo channel_id ou pelo @handle), pra herdar prefixo,
+    zoom e a marca de terceiros. Fora das fontes = {} (prefixo "video", sem zoom)."""
+    chaves = {str(info.get(k) or "").lower().strip("/") for k in ("channel_id", "uploader_id")} - {""}
+    for c in cfg.get("canais", []):
+        url = (c.get("url") or "").lower().rstrip("/")
+        if any(url.endswith("/" + k) for k in chaves):
+            return c
+    return {}
+
+
+def pedir_link(cfg: dict, url: str) -> int:
+    """--link=URL (campo "Processar link" do painel): vira uma sugestão com origem "manual" e
+    segue o mesmo caminho do botão Processar (pedir). Erro de leitura vira evento de falha
+    (alerta no painel) e sai com 0: o curador_oculto não acusa uma segunda falha genérica."""
+    sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
+
+    def falhar(msg: str) -> int:
+        print(f"[!] {msg}")
+        evento(None, "curador_link", "falha", agente="curador", mensagem=msg[:300])
+        return 0
+
+    vid = id_do_url(url)
+    if not vid:
+        return falhar(f"link não parece de vídeo do YouTube: {url[:120]}")
+    if vid in ids_ja_processados():
+        print(f"[!] {vid} já foi processado (inputs/*.url ou banco). Nada a fazer.")
+        return 0
+    existente = next((s for s in listar_sugestoes() if s["video_id"] == vid), None)
+    if existente and existente["status"] in ("processando", "processada"):
+        print(f"[!] {vid} já está {existente['status']}. Nada a fazer.")
+        return 0
+    if not existente or existente["status"] == "expirada":
+        try:
+            info = ler_link(f"https://www.youtube.com/watch?v={vid}")
+        except Exception as e:  # noqa: BLE001 — privado, removido, sem rede
+            return falhar(f"não consegui ler o link {vid} ({type(e).__name__}: {e})")
+        if info.get("live_status") in ("is_live", "is_upcoming", "post_live"):
+            return falhar(f"\"{(info.get('title') or vid)[:60]}\" ainda está ao vivo/agendado "
+                          f"ou processando: cole o link de novo quando a live terminar")
+        canal = canal_do_link(cfg, info)
+        up = info.get("upload_date") or ""
+        dur = info.get("duration")
+        # status volta pra sugerida (expirada → de novo na mão do Gu); o pedir() logo abaixo pede
+        gravar_sugestao(vid, status="sugerida", origem="manual", titulo=info.get("title") or vid,
+                        canal=canal.get("nome") or info.get("channel") or info.get("uploader") or "?",
+                        duracao_min=round(dur / 60, 1) if dur else None, prioridade=None,
+                        motivo=MOTIVO_MANUAL, url=f"https://www.youtube.com/watch?v={vid}",
+                        data=f"{up[:4]}-{up[4:6]}-{up[6:]}" if len(up) == 8 else None,
+                        risco=RISCO_TERCEIROS if canal.get("terceiros") else None, mensagem=None)
+        print(f"Link do painel: {info.get('title')} ({canal.get('nome') or 'canal fora das fontes'})")
+    return pedir(cfg, vid)
 
 
 def sem_longo_amanha(estoque: dict, hoje: date) -> bool:
