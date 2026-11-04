@@ -223,3 +223,9 @@ def test_prompts_tem_regra_de_nao_especular_morte_violencia():
         assert "assassinado" in t and "saúde" in t
     prompt = (Path(__file__).parent.parent / "prompts" / "segmentacao.md").read_text(encoding="utf-8")
     assert "saúde" in prompt and ("morte" in prompt or "assassin" in prompt)
+
+
+def test_prompts_tem_regra_de_bloco_de_venda_nunca_vira_corte():
+    prompt = (Path(__file__).parent.parent / "prompts" / "segmentacao.md").read_text(encoding="utf-8")
+    assert "Bloco de venda nunca vira corte" in prompt
+    assert "propaganda" in rv.SISTEMA and "patrocínio" in rv.SISTEMA and "curso" in rv.SISTEMA
