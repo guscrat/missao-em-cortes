@@ -270,7 +270,7 @@ def encerrar_progresso(codigo: int | None) -> None:
 
 # --- o que já foi visto -------------------------------------------------------------------
 
-ID_RE = re.compile(r"(?:v=|youtu\.be/|/live/|/shorts/)([\w-]{11})")
+ID_RE = re.compile(r"(?:v=|youtu\.be/|/live/|/shorts/)([\w-]{11})(?![\w-])")
 
 
 def id_do_url(url: str) -> str | None:
@@ -1150,6 +1150,9 @@ def pedir_link(cfg: dict, url: str) -> int:
                         data=f"{up[:4]}-{up[4:6]}-{up[6:]}" if len(up) == 8 else None,
                         risco=RISCO_TERCEIROS if canal.get("terceiros") else None, mensagem=None)
         print(f"Link do painel: {info.get('title')} ({canal.get('nome') or 'canal fora das fontes'})")
+        # ok da mesma etapa resolve um alerta de link anterior que falhou
+        evento(None, "curador_link", "ok", agente="curador",
+               mensagem=f"link do painel: {info.get('title') or vid}"[:300])
     return pedir(cfg, vid)
 
 
