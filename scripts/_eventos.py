@@ -17,7 +17,8 @@ Tabelas:
   em_alta  — vídeos antigos (30+ dias) cujas views dispararam na última semana, com o tema
              (17_analytics); painel, resumo semanal e Curador (prioriza lives desses temas)
   sugestoes — vídeos que o Curador (13) achou que valem virar corte; no modo "sugerir" o Gu
-             escolhe no painel (botão Processar → status pedida → o 13 processa)
+             escolhe no painel (botão Processar → status pedida → o 13 processa). origem
+             'manual' = link colado pelo Gu no painel ("Processar link"), não veio do Curador
 
 Uso:
     from _eventos import evento, upsert_video, upsert_bloco
@@ -61,6 +62,7 @@ CREATE TABLE IF NOT EXISTS videos (
     pasta       TEXT,
     fonte_url   TEXT,
     status      TEXT NOT NULL DEFAULT 'curadoria',
+    origem      TEXT,                 -- quem escolheu: 'curador' | 'manual' (link do painel); NULL = à mão/antigo
     criado_em   TEXT NOT NULL,
     atualizado_em TEXT NOT NULL
 );
@@ -213,6 +215,7 @@ CREATE TABLE IF NOT EXISTS sugestoes (
     cortado_por   TEXT,               -- canais de corte grandes que já cortaram ("X (2)"); "" = ninguém
     talvez_cortado_por TEXT,          -- corte sem link que parece da live pelo título ("possivelmente")
     risco         TEXT,               -- ex.: fonte de terceiros (reivindicação de direitos); NULL = nenhum
+    origem        TEXT NOT NULL DEFAULT 'curador',   -- 'curador' | 'manual' (link colado no painel)
     status        TEXT NOT NULL DEFAULT 'sugerida',
     stem          TEXT,
     mensagem      TEXT,               -- erro da falha / "processado por link direto"
@@ -241,6 +244,8 @@ def conectar(db_path: Path | None = None) -> sqlite3.Connection:
     for tabela, coluna in (("eventos", "tarefa_id INTEGER"), ("blocos", "titulo_youtube TEXT"),
                            ("blocos", "faixa_duracao TEXT"), ("sugestoes", "cortado_por TEXT"),
                            ("sugestoes", "talvez_cortado_por TEXT"), ("sugestoes", "risco TEXT"),
+                           ("sugestoes", "origem TEXT NOT NULL DEFAULT 'curador'"),
+                           ("videos", "origem TEXT"),
                            ("eventos", "cache_escrita INTEGER DEFAULT 0"),
                            ("eventos", "cache_leitura INTEGER DEFAULT 0")):
         if coluna.split()[0] not in {r["name"] for r in con.execute(f"PRAGMA table_info({tabela})")}:
@@ -289,18 +294,21 @@ def _executar(acao: str, fn, padrao=None):
 
 
 def upsert_video(stem: str, pasta: str | None = None, fonte_url: str | None = None,
-                 status: str | None = None) -> None:
+                 status: str | None = None, origem: str | None = None) -> None:
+    """origem ('curador' | 'manual'): quem escolheu o vídeo; a primeira gravada vale (o
+    Analista compara o desempenho das duas)."""
     agora = _agora()
     with _seguro(f"gravar vídeo {stem}") as con:
         con.execute(
-            """INSERT INTO videos (stem, pasta, fonte_url, status, criado_em, atualizado_em)
-               VALUES (?, ?, ?, COALESCE(?, 'curadoria'), ?, ?)
+            """INSERT INTO videos (stem, pasta, fonte_url, status, origem, criado_em, atualizado_em)
+               VALUES (?, ?, ?, COALESCE(?, 'curadoria'), ?, ?, ?)
                ON CONFLICT(stem) DO UPDATE SET
                  pasta = COALESCE(excluded.pasta, pasta),
                  fonte_url = COALESCE(excluded.fonte_url, fonte_url),
                  status = COALESCE(?, status),
+                 origem = COALESCE(origem, excluded.origem),
                  atualizado_em = excluded.atualizado_em""",
-            (stem, pasta, fonte_url, status, agora, agora, status),
+            (stem, pasta, fonte_url, status, origem, agora, agora, status),
         )
 
 
@@ -524,7 +532,7 @@ def gravar_sugestao(video_id: str, *, status: str | None = None, **campos) -> No
     """Cria/atualiza a sugestão. Sem `status`, uma já existente mantém o dela (o Gu pode ter
     pedido): só os campos passados mudam."""
     permitidos = {"titulo", "canal", "duracao_min", "prioridade", "motivo", "url", "data",
-                  "stem", "mensagem", "cortado_por", "talvez_cortado_por", "risco"}
+                  "stem", "mensagem", "cortado_por", "talvez_cortado_por", "risco", "origem"}
     invalidos = set(campos) - permitidos
     if invalidos:
         raise ValueError(f"campos inválidos pra sugestão: {invalidos}")
