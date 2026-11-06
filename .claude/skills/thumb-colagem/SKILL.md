@@ -19,7 +19,7 @@ description: Thumbnails do Missão em Cortes — o template pelo rosto (07_thumb
 - Texto vem do `texto_thumb` (2-5 palavras) → fallback `tema`. **Nunca** o `titulo_sugerido`: frase longa estourava e era truncada no meio ("...ZEMA E É"). Se não couber em 4 linhas, **avisar**, não cortar em silêncio.
 - Rosto **inteiro**, grande, iluminado, sem sombra/degradê em cima, e nada de tela compartilhada como imagem principal do template — é exatamente o que o revisor reprova.
 - Overlays da live que sobraram no corte não podem aparecer (o recorte foge deles).
-- **Nunca** mexer em bloco `agendado`/`publicado`/`arquivado`.
+- **Nunca** mexer em bloco `agendado`/`publicado`/`arquivado`. Exceção (06/11/2026): com ok do Gu, `07_thumb.py <stem> --bloco=N --trocar-publicada --titulo="X"` refaz a thumb de um longo agendado/publicado (arquivado nunca); a troca no YouTube é à parte (`09_upload.subir_thumb`, 50 de cota). Caso real: QcDiqy4I5rY, "CARLUXO EM 2030?" → "CARLOS BOLSONARO EM 2030?".
 - Foto de terceiro só com licença aberta conferida (CC0, PD, CC BY). Crédito vai na descrição.
 - Thumb regerada de bloco **já aprovado**: o Gu revisa no olho, sem passar pelo revisor.
 - **Seta/círculo só com certeza de quem é**: o apresentador, ou cena com o nome da pessoa escrito na tela. Na dúvida, sem seta. O revisor reprova seta/círculo em pessoa que não dá pra confirmar que é a citada no texto.
