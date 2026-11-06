@@ -444,6 +444,74 @@ def test_processar_para_na_primeira_falha(raiz, monkeypatch, banco):
     assert banco("SELECT 1 FROM eventos WHERE agente='curador' AND status='falha'")
 
 
+def test_processar_tentar_de_novo_pula_download_ja_feito(raiz, monkeypatch):
+    chamadas = []
+    monkeypatch.setattr(cu, "rodar", lambda script, *a: chamadas.append(script) or True)
+    import _paths, _publicacao
+    monkeypatch.setattr(_paths, "achar_pasta", lambda stem: raiz / "outputs" / stem)
+    monkeypatch.setattr(_publicacao, "gerar", lambda pasta: (None, []))
+    cu.INPUTS.mkdir(parents=True, exist_ok=True)
+    (cu.INPUTS / "renan_x.mp4").write_bytes(b"x")
+    cu.processar({**_item("a"), "stem": "renan_x"})
+    assert chamadas[0] == "01_baixar.py"                 # sem .url = download pela metade: baixa
+    chamadas.clear()
+    (cu.INPUTS / "renan_x.url").write_text("u", encoding="utf-8")
+    cu.processar({**_item("a"), "stem": "renan_x"})
+    assert chamadas == ["pipeline.py", "11_revisor.py"]
+
+
+def test_processar_falha_traz_a_causa_do_step(raiz, monkeypatch, banco):
+    from _eventos import evento
+
+    def rodar(script, *a):
+        if script == "pipeline.py":
+            evento("renan_x", "04b_polir", "falha", agente="editor", mensagem="bloco 1: sem crédito")
+            evento("renan_x", "04b_polir", "falha",
+                   mensagem="exit 1: [!] 1 bloco(s) sem polimento (bloco 1: sem crédito na API)")
+            return False
+        return True
+    monkeypatch.setattr(cu, "rodar", rodar)
+    res = cu.processar({**_item("a"), "stem": "renan_x"})
+    assert res["erro"] == ("pipeline.py falhou: 04b_polir: 1 bloco(s) sem polimento "
+                           "(bloco 1: sem crédito na API)")
+    assert banco("SELECT 1 FROM eventos WHERE agente='curador' AND mensagem LIKE '%sem crédito%'")
+
+
+def test_causa_da_falha_ignora_falha_antiga(banco):
+    from _eventos import evento
+    evento("renan_x", "03_segmentar", "falha", mensagem="exit 1: velha")
+    assert cu.causa_da_falha("renan_x", "2999-01-01T00:00:00") == ""
+
+
+def test_causa_da_falha_banco_fora_do_ar(monkeypatch):
+    def quebra():
+        raise RuntimeError("banco fora do ar")
+    monkeypatch.setattr(cu, "conectar", quebra)
+    assert cu.causa_da_falha("renan_x", "2000-01-01T00:00:00") == ""
+
+
+def test_causa_da_falha_sem_mensagem_devolve_so_a_etapa(banco):
+    from _eventos import evento
+    evento("renan_x", "06_montar", "falha", mensagem="exit 2:")
+    assert cu.causa_da_falha("renan_x", "2000-01-01T00:00:00") == "06_montar"
+
+
+def test_alerta_do_painel_resolvido_por_ok_do_step_citado(tmp_path):
+    import pandas as pd
+    import hoje
+    agora = pd.Timestamp("2026-11-06 12:00")
+    def ev(h, ag, et, st, msg):
+        return {"ts": agora - pd.Timedelta(hours=h), "agente": ag, "etapa": et, "status": st,
+                "mensagem": msg, "stem": "renan_x"}
+    falha = ev(5, "curador", "curador_pipeline", "falha",
+               "pipeline.py falhou: 04b_polir: 1 bloco(s) sem polimento")
+    aberta = hoje.falhas_com_resolucao(pd.DataFrame([falha]), agora - pd.Timedelta(hours=48))
+    assert aberta["resolvida"].isna().all()
+    ok = ev(2, "pipeline", "04b_polir", "ok", "")
+    f = hoje.falhas_com_resolucao(pd.DataFrame([falha, ok]), agora - pd.Timedelta(hours=48))
+    assert f["resolvida"].notna().all()
+
+
 # --- lacunas: resumo, fila + novos, recusa do modelo ---------------------------------------
 
 def _rodada_vazia(**kw):

@@ -32,6 +32,7 @@ import importlib
 import json
 import os
 import re
+import sqlite3
 import subprocess
 import sys
 from datetime import date, datetime, time, timedelta
@@ -62,6 +63,9 @@ JANELA_REDE = timedelta(hours=24)            # aviso "processei X porque o canal
 JANELA_HISTORICO = timedelta(days=30)
 RE_SCRIPT = re.compile(r"\b(\d{2}[a-z]?_[a-z]+)")   # "11_revisor.py falhou" → 11_revisor
 LOG_PEDIDOS = STATE / "curador_pedidos.log"  # saída do botão Processar (o curador.log é das 17h)
+INPUTS = ROOT / "inputs"
+# mesmo padrão do 13_curador.ID_RE: watch?v=, youtu.be/, /live/, /shorts/
+RE_ID_VIDEO = re.compile(r"(?:v=|youtu\.be/|/live/|/shorts/)([\w-]{11})(?![\w-])")
 TOKENS = [("YouTube (publicar)", "youtube_token.json"), ("YouTube Analytics", "analytics_token.json")]
 RE_TOKEN = re.compile(r"invalid_grant|RefreshError|token.*(expir|venc|revog|inv[aá]lid)|"
                       r"unauthorized", re.I)
@@ -466,14 +470,15 @@ def historico_alertas(falhas: pd.DataFrame, custos: pd.DataFrame) -> None:
 
 # ── sugestões do Curador (modo sugerir) ──────────────────────────────────
 
-def disparar_processamento(video_id: str) -> str | None:
-    """Botão Processar: roda o 13 --processar=ID pelo curador_oculto (sem janela, saída no
-    state/curador_pedidos.log, falha vira alerta), solto do painel: fechar o painel não
-    mata o processamento. None = disparou; senão, o erro. Trava de um processamento por
-    vez e orçamento por live ficam com o 13."""
+def disparar_processamento(video_id: str | None = None, link: str | None = None) -> str | None:
+    """Botão Processar: roda o 13 --processar=ID (sugestão) ou --link=URL ("Processar link")
+    pelo curador_oculto (sem janela, saída no state/curador_pedidos.log, falha vira alerta),
+    solto do painel: fechar o painel não mata o processamento. None = disparou; senão, o
+    erro. Trava de um processamento por vez e orçamento por live ficam com o 13."""
     pasta = Path(sys.executable).parent
     exe = pasta / "pythonw.exe" if (pasta / "pythonw.exe").exists() else Path(sys.executable)
-    cmd = [str(exe), str(ROOT / "scripts" / "curador_oculto.py"), f"--processar={video_id}"]
+    arg = f"--link={link}" if link else f"--processar={video_id}"
+    cmd = [str(exe), str(ROOT / "scripts" / "curador_oculto.py"), arg]
     env = {**os.environ, "MISSAO_CURADOR_LOG": str(LOG_PEDIDOS)}
     kw = dict(cwd=ROOT, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
               stderr=subprocess.DEVNULL)
@@ -492,6 +497,67 @@ def disparar_processamento(video_id: str) -> str | None:
     return str(erro)
 
 
+def ids_processados(db_path: Path | None = None) -> set[str]:
+    """Ids do YouTube que já viraram stem (inputs/*.url + videos.fonte_url), só leitura."""
+    textos = []
+    for u in INPUTS.glob("*.url"):
+        try:
+            textos.append(u.read_text(encoding="utf-8"))
+        except OSError:
+            pass
+    db = db_path or Path(os.environ.get("MISSAO_DB") or STATE / "pipeline.db")
+    if db.exists():
+        try:
+            con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+            try:
+                textos += [r[0] for r in con.execute(
+                    "SELECT fonte_url FROM videos WHERE fonte_url IS NOT NULL")]
+            finally:
+                con.close()
+        except sqlite3.Error as e:
+            print(f"[aviso] não li os vídeos do banco ({e})", file=sys.stderr)
+    return {m.group(1) for t in textos if (m := RE_ID_VIDEO.search(t or ""))}
+
+
+def checar_link(url: str, sug: pd.DataFrame, processados: set[str]) -> tuple[str | None, str | None]:
+    """Link colado no "Processar link" → (URL canônica, None) ou (None, motivo pra não disparar)."""
+    url = (url or "").strip()
+    if not url:
+        return None, "Cole o link de um vídeo do YouTube."
+    m = RE_ID_VIDEO.search(url)
+    if not m or not re.search(r"(youtube\.com|youtu\.be)", url, re.I):
+        return None, "Não parece link de vídeo do YouTube (ex.: https://www.youtube.com/watch?v=...)."
+    vid = m.group(1)
+    if vid in processados:
+        return None, "Esse vídeo já foi processado (está em inputs/ ou no banco)."
+    if not sug.empty and "video_id" in sug:
+        linha = sug[sug["video_id"] == vid]
+        if not linha.empty and linha.iloc[0]["status"] in ("pedida", "processando"):
+            return None, "Esse vídeo já está na fila de processamento."
+    return f"https://www.youtube.com/watch?v={vid}", None
+
+
+def campo_link(sug: pd.DataFrame) -> str | None:
+    """Campo "Processar link": o Gu cola a URL de um vídeo fora das sugestões. Entra na mesma
+    fila do botão Processar (o 13 --link lê o vídeo, cria a sugestão com origem "manual" e
+    processa com a mesma trava e o mesmo orçamento por live). Devolve a URL a disparar."""
+    with st.form("processar_link", clear_on_submit=True, border=False):
+        c1, c2 = st.columns([5, 1], vertical_alignment="bottom")
+        with c1:
+            url = st.text_input("Processar link", placeholder="https://www.youtube.com/watch?v=...",
+                                help="Vídeo fora das sugestões do Curador: entra na mesma fila "
+                                     "(um por vez, orçamento por live), ~US$ 0,65. Fica marcado "
+                                     "como escolha manual pra comparar o desempenho depois.")
+        with c2:
+            enviar = st.form_submit_button("Processar", width="stretch")
+    if not enviar:
+        return None
+    link, erro = checar_link(url, sug, ids_processados())
+    if erro:
+        st.warning(erro)
+    return link
+
+
 ROTULO_SUGESTAO = {"sugerida": "", "pedida": "na fila", "processando": "processando",
                    "falhou": "falhou"}
 
@@ -507,6 +573,8 @@ def marcar_novas(sug: pd.DataFrame) -> pd.DataFrame:
     sug["nova"] = dia == dia.max()
     if sug["nova"].all():          # 1ª rodada (ou todas do mesmo dia): ninguém é "nova"
         sug["nova"] = False
+    if "origem" in sug:            # link colado pelo Gu não é novidade do Curador
+        sug["nova"] &= sug["origem"].fillna("curador") != "manual"
     return sug.sort_values(["nova", "prioridade", "data"], ascending=[False, False, False],
                            kind="stable")
 
@@ -536,8 +604,11 @@ def secao_sugestoes(sug: pd.DataFrame, curador_ocupado: bool) -> list[str]:
             rotulo = ROTULO_SUGESTAO.get(s.status, s.status)
             extra = (f"<span class='pill {html.escape(s.status)}'>{html.escape(rotulo)}</span>"
                      if rotulo else "")
+            manual = getattr(s, "origem", None) == "manual"
             if s.nova:
                 extra = "<span class='pill nova'>nova</span>" + extra
+            if manual:
+                extra = "<span class='pill manual'>seu link</span>" + extra
             erro = (f"<small>{html.escape(s.mensagem)}</small>"
                     if s.status == "falhou" and isinstance(s.mensagem, str) else "")
             cortado, talvez = getattr(s, "cortado_por", None), getattr(s, "talvez_cortado_por", None)
@@ -550,8 +621,9 @@ def secao_sugestoes(sug: pd.DataFrame, curador_ocupado: bool) -> list[str]:
                 erro += f"<small><b>⚠ {html.escape(risco)}</b></small>"
             with c1:
                 st.markdown(
-                    f"<div class='hj-dec'><b>[{int(s.prioridade or 0)}]</b> "
-                    f"<a href='{html.escape(str(s.url))}' target='_blank'>{html.escape(str(s.titulo))}</a> "
+                    "<div class='hj-dec'>"
+                    + ("" if manual or pd.isna(s.prioridade) else f"<b>[{int(s.prioridade)}]</b> ")
+                    + f"<a href='{html.escape(str(s.url))}' target='_blank'>{html.escape(str(s.titulo))}</a> "
                     f"{extra}<small>{html.escape(str(s.canal))} · {dur}{data} — "
                     f"{html.escape(str(s.motivo or ''))}</small>{erro}</div>", unsafe_allow_html=True)
             with c2:
@@ -677,7 +749,8 @@ def _custo(c: dict) -> None:
 
 def aba_hoje(blocos: pd.DataFrame, tarefas: pd.DataFrame, est: dict | None, custo: dict,
              agora: pd.Timestamp | None = None, sugestoes: pd.DataFrame | None = None) -> list[str]:
-    """Desenha a aba e devolve os video_id que o Gu mandou processar nesta passada."""
+    """Desenha a aba e devolve os pedidos do Gu nesta passada: {"video_id": ...} (botão
+    Processar de uma sugestão) ou {"link": ...} (campo "Processar link")."""
     agora = agora or pd.Timestamp.now()
     hoje, amanha = agora.date(), agora.date() + timedelta(days=1)
     df_hoje, df_amanha = no_ar(blocos, hoje), no_ar(blocos, amanha)
@@ -743,7 +816,9 @@ def aba_hoje(blocos: pd.DataFrame, tarefas: pd.DataFrame, est: dict | None, cust
     if sugestoes is not None:
         prog = ler_json(STATE / "curador_progresso.json")
         ocupado = bool(prog.get("rodando")) and _pid_vivo(prog.get("pid"))   # morto = libera "Disparar"
-        clicados = secao_sugestoes(sugestoes, ocupado)
+        if link := campo_link(sugestoes):
+            clicados.append({"link": link})
+        clicados += [{"video_id": v} for v in secao_sugestoes(sugestoes, ocupado)]
 
     c1, c2 = st.columns([3, 2])
     with c1:
