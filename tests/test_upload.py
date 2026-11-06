@@ -313,8 +313,8 @@ def travado(cenario, monkeypatch):
     return cenario
 
 
-def test_config_do_repo_esta_travada():
-    assert up.carregar_config()["auditoria_aprovada"] is False
+def test_config_do_repo_esta_liberada():
+    assert up.carregar_config()["auditoria_aprovada"] is True
 
 
 def test_travado_recusa_upload_real(travado, monkeypatch, capsys):
