@@ -21,8 +21,10 @@ import hashlib
 import json
 import sys
 sys.stdout.reconfigure(encoding='utf-8')
+from datetime import date
 from pathlib import Path
 from dotenv import load_dotenv
+import _atualidade
 import _capitulos
 import _custo
 import _fronteira as fr
@@ -108,6 +110,14 @@ def decidir_segmentacao(atual: dict, refazer: bool) -> tuple[str, str, bool]:
     return "reaproveitar", "mesma transcrição, prompt e modelo", False
 
 
+def linha_datas(hoje: date | None = None) -> str:
+    """Datas pro critério de atualidade do prompt (a live ≈ a data da pasta). Vai na
+    mensagem, fora do system: não muda o cache nem a assinatura da segmentação."""
+    live = _atualidade.data_da_live(PASTA)
+    return ((f"DATA DA LIVE (aprox.): {live:%d/%m/%Y} · " if live else "")
+            + f"HOJE: {hoje or date.today():%d/%m/%Y}" + chr(10) + chr(10))
+
+
 def pedir_blocos(client, prompt_sistema: str, texto: str, ini: float, fim: float,
                  ultima: bool, n_janela: int, cache_1h: bool = False) -> tuple[dict, dict]:
     """Uma chamada (uma janela). (data, uso).
@@ -135,7 +145,7 @@ def pedir_blocos(client, prompt_sistema: str, texto: str, ini: float, fim: float
             {
                 "role": "user",
                 "content": (
-                    f"{contexto}Segmente a transcrição acima.\n\n"
+                    f"{linha_datas()}{contexto}Segmente a transcrição acima.\n\n"
                     "INSTRUÇÃO CRÍTICA: Responda APENAS com o JSON conforme o schema "
                     "especificado no prompt do sistema. Não adicione markdown (```), "
                     "não adicione texto antes ou depois. Comece a resposta diretamente "

@@ -599,6 +599,55 @@ def planejar_shorts(pasta: Path, cfg: dict, so_bloco: int | None) -> list[dict]:
     return itens
 
 
+CUSTO_ATUALIDADE = 0.002   # US$ por Short, estimativa (_atualidade, Sonnet 5.5)
+
+
+def arquivar_short(pasta: Path, nn: str, motivo: str) -> None:
+    """Marca o Short como arquivado no shorts.json (o bloco, do longo publicado, fica igual)."""
+    path = pasta / "shorts" / "shorts.json"
+    shorts = json.loads(path.read_text(encoding="utf-8"))
+    shorts[nn].update(arquivado=True, motivo=motivo)
+    path.write_text(json.dumps(shorts, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def sem_datados(itens: list[dict], slots: list[datetime], cfg: dict) -> list[dict]:
+    """Checa a atualidade de cada Short na data do horário dele (_atualidade, chamada paga).
+    Datado → arquivado no shorts.json, sai do plano. Checagem que falha → o Short não sobe
+    nesta rodada (na dúvida, não publica)."""
+    import _atualidade
+    from _custo import descrever_erro
+    tz = ZoneInfo(cfg["fuso"])
+    print(f"\nAtualidade na data de publicação ({len(itens)} Short(s), "
+          f"~US$ {CUSTO_ATUALIDADE * len(itens):.3f}):")
+    ficam = []
+    for x, slot in zip(itens, slots):
+        quando = slot.astimezone(tz).date()
+        try:
+            datado, motivo = _atualidade.checar_short(x["stem"], x["pasta"], x["bid"], quando,
+                                                      x["meta"]["titulo"])
+        except Exception as e:   # noqa: BLE001 — API/orçamento/recusa: não derruba os outros
+            print(f"   [!] {x['stem']} {x['nn']}: checagem falhou ({descrever_erro(e)}) — "
+                  f"não sobe agora, rode de novo")
+            evento(x["stem"], "09_upload", "aviso", agente="publicador", bloco_id=x["bid"],
+                   mensagem=f"Short parado: checagem de atualidade falhou ({descrever_erro(e)})"[:300])
+            continue
+        if datado:
+            motivo = f"datado em {quando:%d/%m}: {motivo or 'depende de algo já resolvido'}"
+            try:
+                arquivar_short(x["pasta"], x["nn"], motivo)
+            except (OSError, ValueError, KeyError) as e:
+                print(f"   [!] {x['stem']} {x['nn']}: datado, mas não gravei o arquivado ({e}) — "
+                      f"não sobe; marque à mão: {motivo}")
+                continue
+            print(f"   [arquivado] {x['stem']} {x['nn']}: {motivo}")
+            evento(x["stem"], "09_upload", "aviso", agente="publicador", bloco_id=x["bid"],
+                   mensagem=f"Short arquivado: {motivo}"[:300])
+            continue
+        print(f"   [ok] {x['stem']} {x['nn']}")
+        ficam.append(x)
+    return ficam
+
+
 def main_shorts(pastas: list[Path], cfg: dict, so_bloco: int | None, maximo: int | None,
                 dry: bool, simulado: bool) -> int:
     itens = [x for pasta in pastas for x in planejar_shorts(pasta, cfg, so_bloco)]
@@ -608,6 +657,10 @@ def main_shorts(pastas: list[Path], cfg: dict, so_bloco: int | None, maximo: int
         itens = itens[:maximo]
     outputs = pastas[0].parent if pastas else _paths.OUTPUTS
     slots = slots_shorts([x["minimo"] for x in itens], shorts_ocupados(outputs, cfg), cfg)
+    if itens and not dry and cfg["auditoria_aprovada"]:
+        # o Short sai dias depois do longo: atualidade checada de novo na data de publicação
+        itens = sem_datados(itens, slots, cfg)
+        slots = slots_shorts([x["minimo"] for x in itens], shorts_ocupados(outputs, cfg), cfg)
     modo = ("SIMULAÇÃO como se a auditoria estivesse aprovada" if simulado
             else "agendado" if cfg["auditoria_aprovada"] else "TRAVADO, auditoria pendente")
     print(f"\nShorts ({modo}): {len(itens)} upload(s) em {len(pastas)} live(s)")
@@ -623,6 +676,9 @@ def main_shorts(pastas: list[Path], cfg: dict, so_bloco: int | None, maximo: int
                    mensagem="Shorts recusados: auditoria da API pendente")
             return 1
     if dry or not itens:
+        if dry and itens:
+            print(f"   No envio real, cada Short passa antes pela checagem de atualidade na data "
+                  f"de publicação (~US$ {CUSTO_ATUALIDADE:.3f} cada); os datados saem do plano.")
         print("\n(dry-run: nada foi enviado)" if dry else "\nNada a fazer.")
         return 0
 

@@ -26,12 +26,15 @@ e responde 4 checagens em JSON estruturado:
   4. corte sem sentido (o trecho não se sustenta sozinho)
   5. momentos_fora: itens de "Principais momentos" da descrição que não estão na transcrição
      do trecho → saem sozinhos do descricoes.txt e dos ganchos do blocos.json ($0)
-  6. capitulos_errados: capítulos da descrição ("MM:SS Título") cujo título não bate com o
+  6. datado: o valor do trecho depende de algo já resolvido (previsão de resultado conhecido,
+     debate de eleição encerrada, apuração ao vivo, pesquisa superada; _atualidade.CRITERIO)
+     → "descartado"
+  7. capitulos_errados: capítulos da descrição ("MM:SS Título") cujo título não bate com o
      trecho dele (a transcrição vai com marcas [CAPÍTULO ...]) → saem sozinhos do descricoes.txt
      e do blocos.json ($0); sem o de 00:00 ou com menos de 3, a seção inteira sai
 
 Quem decide é o código, não o modelo (regra de produto da quarentena):
-  - problema de CONTEÚDO (3 ou 4) → "descartado" com o motivo; não sobe, não chama ninguém
+  - problema de CONTEÚDO (3, 4 ou 6) → "descartado" com o motivo; não sobe, não chama ninguém
   - título reprovado → o EDITOR (_editor.py) reescreve título + texto da thumb, refaz a
     thumb/Short e o revisor reavalia; no máx. 2 reescritas. Reprovou nas 2 → "quarentena"
     e vira decisão do Gu (faixa amarela na tarefa do MISSAO_TAREFA, se houver)
@@ -66,8 +69,10 @@ import subprocess
 import sys
 sys.stdout.reconfigure(encoding='utf-8')
 import time
+from datetime import date
 from pathlib import Path
 
+import _atualidade
 import _capitulos
 import _colagem
 import _custo
@@ -102,12 +107,14 @@ SCHEMA = {
         "tela_problema": {"type": "string"},
         "corte_sem_sentido": {"type": "boolean"},
         "sentido_problema": {"type": "string"},
+        "datado": {"type": "boolean"},
+        "datado_problema": {"type": "string"},
         "momentos_fora": {"type": "array", "items": {"type": "string"}},
         "capitulos_errados": {"type": "array", "items": {"type": "string"}},
     },
     "required": ["titulo_fiel", "titulo_problema", "thumb_ok", "thumb_problema",
                  "thumb_texto_incoerente", "tela_compartilhada", "tela_problema", "corte_sem_sentido", "sentido_problema",
-                 "momentos_fora", "capitulos_errados"],
+                 "datado", "datado_problema", "momentos_fora", "capitulos_errados"],
     "additionalProperties": False,
 }
 
@@ -185,13 +192,17 @@ termina no meio de um raciocínio a ponto de não dar pra entender do que se fal
 de assunto sem fio condutor. TAMBÉM é true quando o assunto do trecho é \
 venda, propaganda, patrocínio ou divulgação de produto ou curso (do apresentador ou de \
 terceiros: curso, livro, documentário, show, loja, cupom), em qualquer duração, mesmo com \
-gancho político: diga isso em sentido_problema. Propaganda curta no meio de um assunto que \
-continua não conta. Começo abrupto mas compreensível é false.
+gancho político: diga isso em sentido_problema. TAMBÉM é true quando o trecho é leitura de \
+Pix, superchat ou doação (nome do doador, valor, agradecimento, mensagem paga) em vez de um \
+assunto. Propaganda ou leitura de Pix curta no meio de um assunto que continua não conta. \
+Começo abrupto mas compreensível é false.
 5. momentos_fora: cada item dos PRINCIPAIS MOMENTOS DA DESCRIÇÃO tem que estar DENTRO da \
 transcrição do trecho (fala citada ou fato dito nele; paráfrase fiel de algo dito no trecho é \
 ok). Liste, copiando o item EXATAMENTE como veio, cada um que não está: fala de outro momento \
 da live, inventada ou distorcida. Lista vazia [] quando todos estão (ou não há itens).
-6. capitulos_errados: se a transcrição traz marcas [CAPÍTULO MM:SS: título], cada título tem \nque descrever o que é dito no trecho dele (da marca até a próxima). Liste, copiando o título \nEXATAMENTE como veio na marca, cada um que fala de outra coisa, promete o que o trecho não \nentrega ou destaca palavrão/termo ofensivo. Rótulo genérico mas correto é ok. Lista vazia [] \nquando todos batem (ou não há marcas)."""
+6. datado: """ + _atualidade.CRITERIO + """ Use as datas da mensagem (DATA DA LIVE e HOJE; o \
+corte vai ao ar nos próximos dias). true → diga em datado_problema do que o trecho depende.
+7. capitulos_errados: se a transcrição traz marcas [CAPÍTULO MM:SS: título], cada título tem \nque descrever o que é dito no trecho dele (da marca até a próxima). Liste, copiando o título \nEXATAMENTE como veio na marca, cada um que fala de outra coisa, promete o que o trecho não \nentrega ou destaca palavrão/termo ofensivo. Rótulo genérico mas correto é ok. Lista vazia [] \nquando todos batem (ou não há marcas)."""
 
 
 def ler_imagem_b64(path: Path, largura: int = LARGURA_IMG) -> str:
@@ -228,7 +239,8 @@ def frames_b64(video: Path, n: int = N_FRAMES) -> list[str]:
 
 def montar_conteudo(titulo: str, texto_thumb: str, transcricao: str,
                     thumb_b64: str | None, frames: list[str],
-                    momentos: list[str] = (), reserva: bool = False) -> list[dict]:
+                    momentos: list[str] = (), reserva: bool = False,
+                    datas: str = "") -> list[dict]:
     img = lambda b64: {"type": "image",   # noqa: E731
                        "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}}
     conteudo = []
@@ -241,7 +253,7 @@ def montar_conteudo(titulo: str, texto_thumb: str, transcricao: str,
     sem_thumb = "" if thumb_b64 else "SEM THUMB ESCOLHIDA: marque thumb_ok=false.\n"
     lista = "\n".join(f"• {m}" for m in momentos) or "(nenhum)"
     conteudo.append({"type": "text", "text": (
-        f"TÍTULO DO YOUTUBE: {titulo}\nTEXTO DA THUMB: {texto_thumb}\n{sem_thumb}"
+        f"{datas}TÍTULO DO YOUTUBE: {titulo}\nTEXTO DA THUMB: {texto_thumb}\n{sem_thumb}"
         f"\nPRINCIPAIS MOMENTOS DA DESCRIÇÃO:\n{lista}\n"
         f"\nTRANSCRIÇÃO DO TRECHO:\n{transcricao}")})
     return conteudo
@@ -312,6 +324,8 @@ def decidir(checagens: dict | None) -> tuple[str, str | None]:
         conteudo.append(f"tela compartilhada: {checagens['tela_problema'] or 'maior parte do corte'}")
     if checagens.get("corte_sem_sentido"):
         conteudo.append(f"corte sem sentido: {checagens.get('sentido_problema') or 'não se sustenta sozinho'}")
+    if checagens.get("datado"):
+        conteudo.append(f"datado: {checagens.get('datado_problema') or 'depende de algo já resolvido'}")
     if conteudo:
         return "descartado", "; ".join(conteudo)
     problemas = []
@@ -338,6 +352,13 @@ def escolher_video(pasta: Path, nn: str) -> Path | None:
     return cortes[0] if cortes else None
 
 
+def linha_datas(pasta: Path, hoje: date | None = None) -> str:
+    """Datas pro critério `datado` (a data da live ≈ a da pasta <AAAA-MM-DD>_<stem>)."""
+    live = _atualidade.data_da_live(pasta)
+    return ((f"DATA DA LIVE (aprox.): {live:%d/%m/%Y} · " if live else "")
+            + f"HOJE: {hoje or date.today():%d/%m/%Y}\n")
+
+
 def revisar_bloco(client, anthropic, stem, pasta, b, nn, video, titulo, texto_thumb,
                   transcricao, momentos=()):
     """Uma revisão (uma chamada). (checagens, status, motivo, custo) ou None se falhou."""
@@ -349,7 +370,8 @@ def revisar_bloco(client, anthropic, stem, pasta, b, nn, video, titulo, texto_th
     try:
         conteudo = montar_conteudo(titulo, texto_thumb, transcricao,
                                    ler_imagem_b64(thumb) if thumb else None, frames_b64(video),
-                                   momentos, reserva=eh_reserva(pasta, bid))
+                                   momentos, reserva=eh_reserva(pasta, bid),
+                                   datas=linha_datas(pasta))
         checagens, resp = chamar_claude(client, conteudo)
     except (anthropic.APIError, subprocess.CalledProcessError, json.JSONDecodeError) as e:
         print(f"  [!] {nn}: revisão falhou ({type(e).__name__}: {str(e)[:200]})")
