@@ -688,6 +688,34 @@ def rodar(script: str, *args: str) -> bool:
                           cwd=ROOT).returncode == 0
 
 
+def ja_baixado(stem: str) -> bool:
+    """O 01 só grava o .url depois do download inteiro: .mp4 + .url = baixado de verdade."""
+    return (INPUTS / f"{stem}.mp4").exists() and (INPUTS / f"{stem}.url").exists()
+
+
+def causa_da_falha(stem: str, desde: str) -> str:
+    """Motivo real de um step que falhou (ex.: "sem crédito na API"), do evento de falha que o
+    pipeline/script gravou no banco desde `desde`. Vira a mensagem do alerta no painel, que
+    sem isso só dizia "pipeline.py falhou". Começa pelo nome do step (04b_polir...), então o
+    alerta some quando esse step roda ok depois. "" = não achou (banco fora do ar etc.)."""
+    try:
+        con = conectar()
+        try:
+            r = con.execute("SELECT etapa, mensagem FROM eventos WHERE stem = ? AND status = 'falha' "
+                            "AND agente != 'curador' AND ts >= ? "
+                            "ORDER BY (agente = 'pipeline') DESC, id DESC LIMIT 1",
+                            (stem, desde)).fetchone()
+        finally:
+            con.close()
+    except Exception as e:  # noqa: BLE001 — banco é best-effort
+        print(f"[aviso] não li a causa da falha ({e})", file=sys.stderr)
+        return ""
+    if not r:
+        return ""
+    msg = re.sub(r"^exit -?\d+:?\s*", "", r["mensagem"] or "").removeprefix("[!] ").strip()
+    return f"{r['etapa']}: {msg}" if msg else r["etapa"]
+
+
 def processar(item: dict) -> dict:
     """Baixa, roda o pipeline com polimento + legenda, revisa e gera a lista de publicação."""
     from _paths import achar_pasta
@@ -707,13 +735,18 @@ def processar(item: dict) -> dict:
     etapas = [("01_baixar.py", item["url"], stem),
               ("pipeline.py", stem, "--polir"),
               ("11_revisor.py", stem)]
+    if ja_baixado(stem):            # "Tentar de novo" depois do download: o 01 recusaria o stem
+        print(f"\n>> 01_baixar.py pulado: inputs/{stem}.mp4 já está baixado")
+        etapas = etapas[1:]
     for script, *args in etapas:
         if script == "11_revisor.py" and colagem in ("padrao", "ab"):   # revisor já avalia a colagem
             flag = "--aplicar" if colagem == "padrao" else "--ab"   # ab: só b/c; a fica no template
             if not rodar("07b_colagem.py", stem, flag):
                 res["avisos"].append(f"{stem}: thumb colagem falhou, ficou o template atual")
+        inicio = datetime.now().isoformat(timespec="seconds")
         if not rodar(script, *args):
-            res["erro"] = f"{script} falhou"
+            causa = causa_da_falha(stem, inicio)
+            res["erro"] = f"{script} falhou" + (f": {causa}" if causa else "")
             evento(stem, "curador_pipeline", "falha", agente="curador", mensagem=res["erro"])
             return res
     pasta = achar_pasta(stem)
