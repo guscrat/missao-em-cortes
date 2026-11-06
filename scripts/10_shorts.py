@@ -249,7 +249,14 @@ def main(argv: list[str]) -> int:
         # frase com pausa, encaixados sozinhos; o que mudou volta pro blocos.json
         t_ini, t_fim = (hhmmss_para_segundos(co["timestamp_inicio"]),
                         hhmmss_para_segundos(co["timestamp_fim"]))
-        enc = fr.encaixar_short(todas, t_ini, t_fim)
+        # "fronteira_conferida": o Gu ouviu e liberou os tempos à mão (ex.: frase de impacto
+        # com pausa curta depois): não reencaixa nem segura o Short
+        conferida = bool(co.get("fronteira_conferida"))
+        enc = ({"inicio": t_ini, "fim": t_fim, "inicio_ok": True, "fim_ok": True,
+                "primeiras": "", "ultimas": ""} if conferida
+               else fr.encaixar_short(todas, t_ini, t_fim))
+        if conferida:
+            print(f"  [conferida] bloco {bid}: tempos do Short liberados à mão pelo Gu")
         if (enc["inicio"], enc["fim"]) != (t_ini, t_fim):
             print(f"  [encaixe] bloco {bid}: Short {t_fim - t_ini:.0f}s → "
                   f"{enc['fim'] - enc['inicio']:.0f}s no ponto natural "

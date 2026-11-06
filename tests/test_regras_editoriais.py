@@ -29,3 +29,12 @@ def test_apelido_de_pessoa_real_proibido_no_03_editor_e_revisor():
     assert "NUNCA usam apelido de pessoa real" in SEGMENTACAO
     assert "NUNCA usam apelido de pessoa real" in editor
     assert "usam apelido de pessoa real" in revisor
+
+
+def test_lulinha_e_excecao_na_regra_de_apelido():
+    import sys
+    sys.path.insert(0, str(RAIZ / "scripts"))
+    import _grafias
+    assert _grafias.corrigir("LULINHA E OS INQUÉRITOS") == "LULINHA E OS INQUÉRITOS"
+    for arq in ("prompts/segmentacao.md", "scripts/_editor.py", "scripts/11_revisor.py"):
+        assert 'Exceção: "Lulinha"' in (RAIZ / arq).read_text(encoding="utf-8"), arq

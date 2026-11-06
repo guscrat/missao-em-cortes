@@ -232,6 +232,21 @@ def test_main_sem_ponto_natural_fica_em_revisar(video, capsys):
     assert reg["01"]["revisar"] is True and "meio da frase" in reg["01"]["motivo_revisar"]
 
 
+def test_main_fronteira_conferida_pelo_gu_nao_reencaixa(video, capsys):
+    pasta, _ = video
+    w = _frases_json(pasta, continuo=True)
+    _trecho(pasta, 1, "short", 0.0, 30.2)
+    dados = json.loads((pasta / "blocos.json").read_text(encoding="utf-8"))
+    dados["blocos"][0]["short"]["fronteira_conferida"] = True
+    (pasta / "blocos.json").write_text(json.dumps(dados), encoding="utf-8")
+    sh.main([str(pasta), "--bloco=1"])
+    assert "[conferida]" in capsys.readouterr().out
+    b = json.loads((pasta / "blocos.json").read_text(encoding="utf-8"))["blocos"][0]
+    assert b["short"]["timestamp_fim"] == fr.segundos_para_ts(30.2)      # não mexeu
+    reg = json.loads((pasta / "shorts" / "shorts.json").read_text(encoding="utf-8"))
+    assert reg["01"]["revisar"] is False
+
+
 def test_main_sem_video_original_falha_alto(video, projeto):
     pasta, _ = video
     (projeto.inputs / "kim.mp4").unlink()
