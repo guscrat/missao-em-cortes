@@ -451,6 +451,27 @@ def test_slots_shorts_nunca_antes_do_longo_e_pula_ocupados():
     assert [(x.day, x.hour) for x in s] == [(22, 12)]
 
 
+def test_fila_de_prioridade_novo_na_frente_antigo_pega_o_que_o_novo_nao_pode():
+    """Ordem dada = prioridade. O novo (longo vai ao ar 22/10 18h) fica com o 1º horário depois
+    do longo; os antigos (longo já no ar) pegam os horários de antes e os de depois do novo."""
+    agora_ = datetime(2026, 10, 21, 9, 0, tzinfo=SP)
+    novo = datetime(2026, 10, 22, 18, 0, tzinfo=SP)
+    s = up.slots_shorts([novo, novo, None, None, None, None], set(), CFG, agora_)
+    assert [(x.day, x.hour) for x in s] == [(22, 20), (23, 12), (21, 12), (21, 20), (22, 12),
+                                            (23, 20)]
+
+
+def test_prioridade_short_mais_recente_depois_score():
+    from datetime import date
+
+    def item(dia, score, bid=1, stem="v"):
+        return {"data_live": date(2026, 11, dia), "score": score, "stem": stem, "bid": bid}
+    itens = [item(2, 9), item(6, 7), item(6, 9, bid=3), item(1, 10), {"stem": "z", "bid": 1}]
+    ordem = sorted(itens, key=up.prioridade_short)
+    assert [(x.get("data_live") and x["data_live"].day, x.get("score")) for x in ordem] == \
+        [(6, 9), (6, 7), (2, 9), (1, 10), (None, None)]
+
+
 def test_slots_shorts_respeita_antecedencia():
     s = up.slots_shorts([None], set(), CFG, datetime(2026, 10, 21, 10, 30, tzinfo=SP))
     assert (s[0].day, s[0].hour) == (21, 20)          # 12h já não dá 2h de antecedência
@@ -598,6 +619,23 @@ def test_checagem_de_atualidade_que_falha_nao_sobe(shorts, monkeypatch, capsys):
     assert "checagem falhou" in capsys.readouterr().out
     sh = json.loads((pasta / "shorts" / "shorts.json").read_text(encoding="utf-8"))
     assert not sh["01"].get("arquivado")   # falha não arquiva
+
+
+def test_dry_run_com_atualidade_mostra_e_nao_arquiva(shorts, monkeypatch, capsys):
+    import _atualidade
+    pasta, yt, _ = shorts
+    monkeypatch.setattr(_atualidade, "checar_short",
+                        lambda stem, p, bid, quando, titulo="": (bid == 1, "apuração"))
+    assert up.main([str(pasta), "--shorts", "--dry-run", "--atualidade"]) == 0
+    out = capsys.readouterr().out
+    assert "[seria arquivado]" in out and "1 upload(s)" in out and yt.uploads == []
+    sh = json.loads((pasta / "shorts" / "shorts.json").read_text(encoding="utf-8"))
+    assert not sh["01"].get("arquivado")
+
+
+def test_atualidade_sem_dry_run_recusa(shorts):
+    with pytest.raises(SystemExit):
+        up.main([str(shorts[0]), "--shorts", "--atualidade"])
 
 
 def test_dry_run_nao_paga_atualidade(shorts, capsys):

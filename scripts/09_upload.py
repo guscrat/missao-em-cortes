@@ -6,6 +6,7 @@ Uso:
     uv run py scripts/09_upload.py <stem> --bloco=N --teste   # upload de TESTE (único liberado sem auditoria)
     uv run py scripts/09_upload.py <stem>|todos --shorts [--bloco=N] [--max=N]   # Shorts (shorts/)
     ... --dry-run --como-aprovada   # simula o plano como se a auditoria já estivesse aprovada
+    ... --shorts --dry-run --atualidade   # + checagem de atualidade (paga, ~US$ 0,002/Short), sem arquivar
     uv run py scripts/09_upload.py --demo=<etapa> [--lang=en]  # screencast da auditoria (_demo_auditoria.py)
 
 O que lê (da pasta do vídeo):
@@ -28,7 +29,8 @@ foi agendado à mão (_cobertura: canal.json do 14 + banco), então nada disputa
 
 Shorts (--shorts): sobe os shorts/short_NN_*.mp4 (do 10_shorts) como privados + publishAt
 nos "shorts_horarios" do config (2/dia), só de bloco cujo longo JÁ está no YouTube, no 1º
-horário livre a partir da ida do longo ao ar. "todos" = um plano só com todas as lives.
+horário livre a partir da ida do longo ao ar, numa fila pelo MAIS RECENTE (data da live, score:
+prioridade_short; Short novo passa na frente). "todos" = um plano só com todas as lives.
 Título = "MANCHETE | quem fala" (_descricoes.titulo_short, até 60 chars; o 14 casa por ele),
 descrição do longo com "Vídeo completo: youtu.be/<longo>" no topo. Registro em
 youtube_shorts.json e youtube_id/postado no shorts/shorts.json. Short com "revisar" (pouco
@@ -53,7 +55,7 @@ sys.stdout.reconfigure(encoding='utf-8')
 import json
 import tempfile
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -201,25 +203,50 @@ def _data(iso: str, cfg: dict) -> datetime:
 
 def slots_shorts(minimos: list[datetime | None], ocupados: set[datetime], cfg: dict,
                  agora_: datetime | None = None) -> list[datetime]:
-    """Um horário por Short, na ordem dada: o 1º dos shorts_horarios do config (2/dia) que
-    respeite a antecedência, não esteja ocupado por outro Short e não venha antes do
-    `minimo` do item (o publish_at do longo: o "Vídeo completo" aponta pra vídeo público)."""
+    """Um horário por Short, alinhado com `minimos`, que vem na ORDEM DE PRIORIDADE (fila do
+    mais recente: prioridade_short). Fila de prioridade: percorre os shorts_horarios do config
+    (2/dia) em ordem cronológica, a partir da antecedência, pulando os ocupados por outro
+    Short, e cada horário vai pro Short de maior prioridade que já pode sair, isto é, cujo
+    `minimo` (o publish_at do longo: o "Vídeo completo" aponta pra vídeo público) não é
+    depois do horário. Short novo passa na frente; antigo pega o horário que o novo ainda
+    não pode usar (longo dele não foi ao ar), nunca fica horário vazio à toa."""
     tz = ZoneInfo(cfg["fuso"])
     horas = sorted(tuple(map(int, h.split(":"))) for h in cfg["shorts_horarios"])
     piso = (agora_ or agora()).astimezone(tz) + timedelta(hours=cfg["antecedencia_min_horas"])
     tomados = {o.astimezone(tz) for o in ocupados}
-    saida = []
-    for minimo in minimos:
-        desde = max(piso, minimo.astimezone(tz)) if minimo else piso
-        dia, slot = desde.date(), None
-        while slot is None:
-            slot = next((x for h, m in horas
-                         if (x := datetime(dia.year, dia.month, dia.day, h, m, tzinfo=tz)) >= desde
-                         and x not in tomados), None)
-            dia += timedelta(days=1)
-        tomados.add(slot)
-        saida.append(slot)
+    minimos_tz = [m.astimezone(tz) if m else None for m in minimos]
+    saida: list[datetime | None] = [None] * len(minimos)
+    pendentes = list(range(len(minimos)))   # índices na ordem de prioridade
+    dia = piso.date()
+    while pendentes:
+        for h, m in horas:
+            x = datetime(dia.year, dia.month, dia.day, h, m, tzinfo=tz)
+            if x < piso or x in tomados:
+                continue
+            i = next((i for i in pendentes if minimos_tz[i] is None or minimos_tz[i] <= x), None)
+            if i is None:
+                continue
+            saida[i] = x
+            tomados.add(x)
+            pendentes.remove(i)
+            if not pendentes:
+                break
+        dia += timedelta(days=1)
     return saida
+
+
+def _data_da_pasta(pasta: Path) -> date | None:
+    try:
+        return date.fromisoformat(pasta.name[:10])   # <AAAA-MM-DD>_<stem>
+    except ValueError:
+        return None
+
+
+def prioridade_short(x: dict) -> tuple:
+    """Fila de Shorts pelo MAIS RECENTE (06/11/2026): data da live (pasta) mais nova
+    primeiro, depois o maior score, depois o bloco. Não é ordem de chegada."""
+    return (-(x.get("data_live") or date.min).toordinal(), -(x.get("score") or 0),
+            x["stem"], x["bid"])
 
 
 def shorts_ocupados(outputs: Path, cfg: dict) -> set[datetime]:
@@ -379,7 +406,10 @@ def main(argv: list[str]) -> int:
             sys.exit("[!] --bloco=N precisa de um stem, não de 'todos'.")
         pastas = (sorted(p.parent.parent for p in _paths.OUTPUTS.glob("*/shorts/shorts.json"))
                   if alvo == "todos" else [achar_pasta(alvo)])
-        return main_shorts(pastas, cfg, so_bloco, maximo, dry, simulado)
+        if flags.get("atualidade") and not dry:
+            sys.exit("[!] --atualidade só vale com --dry-run (no envio real ela já roda).")
+        return main_shorts(pastas, cfg, so_bloco, maximo, dry, simulado,
+                           atualidade=bool(flags.get("atualidade")))
     pasta = achar_pasta(alvo)
     stem = stem_de(pasta)
     desc_txt = pasta / "descricoes.txt"
@@ -593,7 +623,8 @@ def planejar_shorts(pasta: Path, cfg: dict, so_bloco: int | None) -> list[dict]:
             print(f"   [!] {stem} {nn}: {problema} — não sobe")
             continue
         itens.append({"pasta": pasta, "stem": stem, "bid": bid, "nn": nn, "video": video,
-                      "longo_id": longo_id,
+                      "longo_id": longo_id, "data_live": _data_da_pasta(pasta),
+                      "score": blocos.get(bid, {}).get("score_potencial") or 0,
                       "minimo": _data(publish_at, cfg) if publish_at else None,
                       "meta": meta_short(meta, longo_id, titulo)})
     return itens
@@ -610,10 +641,11 @@ def arquivar_short(pasta: Path, nn: str, motivo: str) -> None:
     path.write_text(json.dumps(shorts, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def sem_datados(itens: list[dict], slots: list[datetime], cfg: dict) -> list[dict]:
+def sem_datados(itens: list[dict], slots: list[datetime], cfg: dict,
+                arquivar: bool = True) -> list[dict]:
     """Checa a atualidade de cada Short na data do horário dele (_atualidade, chamada paga).
     Datado → arquivado no shorts.json, sai do plano. Checagem que falha → o Short não sobe
-    nesta rodada (na dúvida, não publica)."""
+    nesta rodada (na dúvida, não publica). arquivar=False (--dry-run --atualidade): só mostra."""
     import _atualidade
     from _custo import descrever_erro
     tz = ZoneInfo(cfg["fuso"])
@@ -630,6 +662,9 @@ def sem_datados(itens: list[dict], slots: list[datetime], cfg: dict) -> list[dic
                   f"não sobe agora, rode de novo")
             evento(x["stem"], "09_upload", "aviso", agente="publicador", bloco_id=x["bid"],
                    mensagem=f"Short parado: checagem de atualidade falhou ({descrever_erro(e)})"[:300])
+            continue
+        if datado and not arquivar:
+            print(f"   [seria arquivado] {x['stem']} {x['nn']}: datado em {quando:%d/%m}: {motivo}")
             continue
         if datado:
             motivo = f"datado em {quando:%d/%m}: {motivo or 'depende de algo já resolvido'}"
@@ -649,17 +684,16 @@ def sem_datados(itens: list[dict], slots: list[datetime], cfg: dict) -> list[dic
 
 
 def main_shorts(pastas: list[Path], cfg: dict, so_bloco: int | None, maximo: int | None,
-                dry: bool, simulado: bool) -> int:
+                dry: bool, simulado: bool, atualidade: bool = False) -> int:
     itens = [x for pasta in pastas for x in planejar_shorts(pasta, cfg, so_bloco)]
-    longe = datetime.max.replace(tzinfo=timezone.utc)
-    itens.sort(key=lambda x: (x["minimo"] or longe, x["stem"], x["bid"]))
+    itens.sort(key=prioridade_short)   # fila pelo mais recente, não por ordem de chegada
     if maximo is not None:
         itens = itens[:maximo]
     outputs = pastas[0].parent if pastas else _paths.OUTPUTS
     slots = slots_shorts([x["minimo"] for x in itens], shorts_ocupados(outputs, cfg), cfg)
-    if itens and not dry and cfg["auditoria_aprovada"]:
+    if itens and (not dry or atualidade) and (cfg["auditoria_aprovada"] or simulado):
         # o Short sai dias depois do longo: atualidade checada de novo na data de publicação
-        itens = sem_datados(itens, slots, cfg)
+        itens = sem_datados(itens, slots, cfg, arquivar=not dry)
         slots = slots_shorts([x["minimo"] for x in itens], shorts_ocupados(outputs, cfg), cfg)
     modo = ("SIMULAÇÃO como se a auditoria estivesse aprovada" if simulado
             else "agendado" if cfg["auditoria_aprovada"] else "TRAVADO, auditoria pendente")
@@ -676,7 +710,7 @@ def main_shorts(pastas: list[Path], cfg: dict, so_bloco: int | None, maximo: int
                    mensagem="Shorts recusados: auditoria da API pendente")
             return 1
     if dry or not itens:
-        if dry and itens:
+        if dry and itens and not atualidade:
             print(f"   No envio real, cada Short passa antes pela checagem de atualidade na data "
                   f"de publicação (~US$ {CUSTO_ATUALIDADE:.3f} cada); os datados saem do plano.")
         print("\n(dry-run: nada foi enviado)" if dry else "\nNada a fazer.")
@@ -686,7 +720,7 @@ def main_shorts(pastas: list[Path], cfg: dict, so_bloco: int | None, maximo: int
     print(f"   Cota já usada hoje (dia do Pacífico): {cota.usadas:,}")
     youtube = autenticar()
     enviados, falhas = 0, 0
-    for x, slot in zip(itens, slots):
+    for x, slot in sorted(zip(itens, slots), key=lambda par: par[1]):   # cronológico: a cota corta o fim
         pasta, stem, nn, bid = x["pasta"], x["stem"], x["nn"], x["bid"]
         if not cota.cabe(cfg["cota_upload"]):
             print(f"\n[!] Parando antes de estourar a cota: {cota.usadas:,}/{cota.limite:,} usadas. "
