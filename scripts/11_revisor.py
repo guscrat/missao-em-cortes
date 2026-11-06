@@ -184,7 +184,7 @@ assassinado?", "vai morrer?", "está doente?", "mandou matar?"), MESMO que a fal
 público dito no trecho (está preso, foi condenado, é investigado) pode, sem especular além dele \
 (ex.: "Vorcaro vai ser solto?" passa; "Vorcaro vai ser solto ou assassinado?" não): diga isso em titulo_problema.
 Reprove TAMBÉM se o título ou o texto da thumb usam apelido de pessoa real (ex.: "Carluxo", \
-"Bananinha", "Bozo"), MESMO que a fala use: tem que ser o nome completo ("Carlos Bolsonaro"); diga isso em titulo_problema.
+"Bananinha", "Bozo"), MESMO que a fala use: tem que ser o nome completo ("Carlos Bolsonaro"); diga isso em titulo_problema. Exceção: "Lulinha" (Fábio Luís Lula da Silva) pode, é a forma usada pela imprensa e buscada.
 2. thumb_ok: """ + CRITERIO_THUMB + """
 3. tela_compartilhada: nos frames do corte (imagens seguintes), a MAIOR parte mostra tela \
 compartilhada (navegador, matéria, gráfico, documento) em vez de pessoas falando? Isso é \

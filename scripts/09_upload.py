@@ -591,6 +591,8 @@ def fronteira_short(pasta: Path, bloco: dict) -> str | None:
     trecho = bloco.get("short") or bloco.get("cold_open") or {}
     if not (trecho.get("timestamp_inicio") and trecho.get("timestamp_fim")):
         return None
+    if trecho.get("fronteira_conferida"):   # o Gu ouviu e liberou à mão
+        return None
     if pasta not in _PALAVRAS:
         try:
             dados = json.loads((pasta / "words.json").read_text(encoding="utf-8"))

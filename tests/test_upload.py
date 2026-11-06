@@ -652,6 +652,19 @@ def test_short_no_meio_da_frase_nao_entra_na_fila(shorts, capsys):
     assert len(yt.uploads) == 1                                   # só o 02
 
 
+def test_fronteira_conferida_pelo_gu_entra_na_fila(shorts):
+    pasta, yt, _ = shorts
+    dados = json.loads((pasta / "blocos.json").read_text(encoding="utf-8"))
+    dados["blocos"][0]["short"] = {"timestamp_inicio": "00:00:00.00", "timestamp_fim": "00:00:10.20",
+                                   "fronteira_conferida": True}
+    (pasta / "blocos.json").write_text(json.dumps(dados), encoding="utf-8")
+    palavras = [{"word": f"x{k}", "start": k * 0.5, "end": k * 0.5 + 0.4} for k in range(100)]
+    (pasta / "words.json").write_text(json.dumps({"words": palavras}), encoding="utf-8")
+    up._PALAVRAS.clear()
+    up.main([str(pasta), "--shorts"])
+    assert len(yt.uploads) == 2
+
+
 def test_revisar_mostra_o_motivo(shorts, capsys):
     pasta, yt, _ = shorts
     reg = json.loads((pasta / "shorts" / "shorts.json").read_text(encoding="utf-8"))
