@@ -21,3 +21,11 @@ def test_03_leitura_de_pix_nunca_vira_bloco():
 
 def test_04b_remove_pix_no_meio_do_assunto():
     assert "Leitura de Pix, superchat ou doação no meio do assunto" in POLIR
+
+
+def test_apelido_de_pessoa_real_proibido_no_03_editor_e_revisor():
+    editor = (RAIZ / "scripts" / "_editor.py").read_text(encoding="utf-8")
+    revisor = (RAIZ / "scripts" / "11_revisor.py").read_text(encoding="utf-8")
+    assert "NUNCA usam apelido de pessoa real" in SEGMENTACAO
+    assert "NUNCA usam apelido de pessoa real" in editor
+    assert "usam apelido de pessoa real" in revisor
