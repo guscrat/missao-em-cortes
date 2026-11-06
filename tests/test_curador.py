@@ -444,6 +444,45 @@ def test_processar_para_na_primeira_falha(raiz, monkeypatch, banco):
     assert banco("SELECT 1 FROM eventos WHERE agente='curador' AND status='falha'")
 
 
+def test_processar_tentar_de_novo_pula_download_ja_feito(raiz, monkeypatch):
+    chamadas = []
+    monkeypatch.setattr(cu, "rodar", lambda script, *a: chamadas.append(script) or True)
+    import _paths, _publicacao
+    monkeypatch.setattr(_paths, "achar_pasta", lambda stem: raiz / "outputs" / stem)
+    monkeypatch.setattr(_publicacao, "gerar", lambda pasta: (None, []))
+    cu.INPUTS.mkdir(parents=True, exist_ok=True)
+    (cu.INPUTS / "renan_x.mp4").write_bytes(b"x")
+    cu.processar({**_item("a"), "stem": "renan_x"})
+    assert chamadas[0] == "01_baixar.py"                 # sem .url = download pela metade: baixa
+    chamadas.clear()
+    (cu.INPUTS / "renan_x.url").write_text("u", encoding="utf-8")
+    cu.processar({**_item("a"), "stem": "renan_x"})
+    assert chamadas == ["pipeline.py", "11_revisor.py"]
+
+
+def test_processar_falha_traz_a_causa_do_step(raiz, monkeypatch, banco):
+    from _eventos import evento
+
+    def rodar(script, *a):
+        if script == "pipeline.py":
+            evento("renan_x", "04b_polir", "falha", agente="editor", mensagem="bloco 1: sem crédito")
+            evento("renan_x", "04b_polir", "falha",
+                   mensagem="exit 1: [!] 1 bloco(s) sem polimento (bloco 1: sem crédito na API)")
+            return False
+        return True
+    monkeypatch.setattr(cu, "rodar", rodar)
+    res = cu.processar({**_item("a"), "stem": "renan_x"})
+    assert res["erro"] == ("pipeline.py falhou: 04b_polir: 1 bloco(s) sem polimento "
+                           "(bloco 1: sem crédito na API)")
+    assert banco("SELECT 1 FROM eventos WHERE agente='curador' AND mensagem LIKE '%sem crédito%'")
+
+
+def test_causa_da_falha_ignora_falha_antiga(banco):
+    from _eventos import evento
+    evento("renan_x", "03_segmentar", "falha", mensagem="exit 1: velha")
+    assert cu.causa_da_falha("renan_x", "2999-01-01T00:00:00") == ""
+
+
 # --- lacunas: resumo, fila + novos, recusa do modelo ---------------------------------------
 
 def _rodada_vazia(**kw):
