@@ -76,7 +76,7 @@ uv run py scripts/09_upload.py todos --shorts
 ```
 
 - Horários: `shorts_horarios` do `config/upload.json` (12:00 e 20:00), um plano só com todas
-  as lives, cada Short no 1º horário livre **depois do longo dele ir ao ar**.
+  as lives, fila pelo mais recente (data da live, score), cada Short só **depois do longo dele ir ao ar** (`upload.md`).
 - Só sobe Short de bloco cujo longo já está no YouTube (API ou à mão, via 14_canal), fora de
   quarentena/descartado/arquivado, com crédito da fonte e sem `revisar: true` (pouco rosto) nem `"arquivado": true` (Short datado).
 - Título = **"MANCHETE | quem fala"** (`_descricoes.titulo_short`), até 60 chars: se não couber, corta a manchete, nunca o nome. Manchete = `texto_thumb` (senão `tema`, com aviso) com as grafias oficiais, inclusive em CAIXA ALTA; quem fala = 1º `speakers_principais` que é personagem das grafias, senão o dono do canal (prefixo do stem). Sem quem fala, não sobe. No vídeo (10) vai só a manchete. O 14 reconhece pelo título, exato. Sem thumb (Short não tem).
