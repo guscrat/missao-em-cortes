@@ -545,6 +545,17 @@ def test_short_para_revisar_nao_sobe(shorts, capsys):
     assert len(yt.uploads) == 1 and "pouco rosto" in capsys.readouterr().out
 
 
+def test_short_arquivado_nao_sobe(shorts, capsys):
+    """Short datado sai só ele: o bloco (longo publicado) continua como está."""
+    pasta, yt, _ = shorts
+    reg = json.loads((pasta / "shorts" / "shorts.json").read_text(encoding="utf-8"))
+    reg["01"].update(arquivado=True, motivo="datado: debate do 2º turno")
+    (pasta / "shorts" / "shorts.json").write_text(json.dumps(reg), encoding="utf-8")
+    up.main([str(pasta), "--shorts"])
+    out = capsys.readouterr().out
+    assert len(yt.uploads) == 1 and "Short arquivado (datado: debate do 2º turno)" in out
+
+
 def test_shorts_travados_sem_auditoria(shorts, monkeypatch):
     pasta, _, _ = shorts
     monkeypatch.setitem(up.DEFAULTS, "auditoria_aprovada", False)

@@ -32,7 +32,7 @@ horário livre a partir da ida do longo ao ar. "todos" = um plano só com todas 
 Título = "MANCHETE | quem fala" (_descricoes.titulo_short, até 60 chars; o 14 casa por ele),
 descrição do longo com "Vídeo completo: youtu.be/<longo>" no topo. Registro em
 youtube_shorts.json e youtube_id/postado no shorts/shorts.json. Short com "revisar" (pouco
-rosto) não sobe. O "vídeo relacionado" do Short NÃO existe na API: é marcado à mão no
+rosto) ou com "arquivado": true (+ "motivo"; ex.: datado) não sobe. O "vídeo relacionado" do Short NÃO existe na API: é marcado à mão no
 Studio (lista em `dia_d.py relacionados`).
 
 Idempotente: bloco com youtube_id (no youtube.json da pasta ou no banco) não sobe de
@@ -579,6 +579,7 @@ def planejar_shorts(pasta: Path, cfg: dict, so_bloco: int | None) -> list[dict]:
         if titulo and not blocos.get(bid, {}).get("texto_thumb"):
             print(f"   [aviso] {stem} {nn}: sem texto_thumb, título do Short vem do tema: '{titulo}'")
         problema = (f"bloco em {bloco['status']} no painel" if bloco.get("status") in NAO_SOBE else
+                    f"Short arquivado ({sh.get('motivo') or 'sem motivo'})" if sh.get("arquivado") else
                     "longo ainda não está no YouTube — o Short espera" if not longo_id else
                     "pouco rosto (revisar: true no shorts.json) — confira e libere à mão"
                     if sh.get("revisar") else
