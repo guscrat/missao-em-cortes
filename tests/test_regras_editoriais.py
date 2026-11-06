@@ -1,0 +1,23 @@
+"""Guarda das regras editoriais que moram em prompt (06/11/2026): se alguém reescrever o
+prompt e perder a regra, o teste avisa. Só lê o texto, sem API."""
+from pathlib import Path
+
+RAIZ = Path(__file__).parent.parent
+SEGMENTACAO = (RAIZ / "prompts" / "segmentacao.md").read_text(encoding="utf-8")
+POLIR = (RAIZ / "scripts" / "04b_polir.py").read_text(encoding="utf-8")
+
+
+def test_03_atualidade_score_baixo_e_nao_vira_bloco():
+    assert "**Atualidade**" in SEGMENTACAO
+    for termo in ("previsão", "debate de uma eleição já encerrada", "apuração",
+                  "pesquisa de intenção de voto superada", "no máximo 3", "DATA DA LIVE"):
+        assert termo in SEGMENTACAO, termo
+
+
+def test_03_leitura_de_pix_nunca_vira_bloco():
+    assert "NÃO criar bloco de leitura de Pix, superchat ou doação" in SEGMENTACAO
+    assert "o polimento remove a leitura" in SEGMENTACAO
+
+
+def test_04b_remove_pix_no_meio_do_assunto():
+    assert "Leitura de Pix, superchat ou doação no meio do assunto" in POLIR

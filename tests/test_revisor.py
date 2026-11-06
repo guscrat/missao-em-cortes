@@ -40,6 +40,27 @@ def test_decidir_conteudo_ruim_descarta_mesmo_com_titulo_ruim():
     assert not rv.precisa_editor(*rv.decidir(ruim)[:1], ruim)
 
 
+def test_decidir_datado_descarta():
+    datado = {**OK, "datado": True, "datado_problema": "apuração ao vivo do 2º turno"}
+    assert rv.decidir(datado) == ("descartado", "datado: apuração ao vivo do 2º turno")
+
+
+def test_datado_no_schema_e_no_prompt():
+    assert {"datado", "datado_problema"} <= set(rv.SCHEMA["required"])
+    assert "6. datado:" in rv.SISTEMA and "apuração" in rv.SISTEMA
+    assert "Pix, superchat ou doação" in rv.SISTEMA
+
+
+def test_linha_datas_vai_na_mensagem(tmp_path):
+    from datetime import date
+    pasta = tmp_path / "2026-10-26_x"
+    linha = rv.linha_datas(pasta, hoje=date(2026, 11, 6))
+    assert linha == "DATA DA LIVE (aprox.): 26/10/2026 · HOJE: 06/11/2026\n"
+    c = rv.montar_conteudo("T", "TX", "fala", None, ["f1"], datas=linha)
+    assert c[-1]["text"].startswith("DATA DA LIVE (aprox.): 26/10/2026")
+    assert rv.linha_datas(tmp_path / "sem_data", hoje=date(2026, 11, 6)) == "HOJE: 06/11/2026\n"
+
+
 def test_precisa_editor_so_com_titulo_reprovado():
     assert rv.precisa_editor("quarentena", TITULO_RUIM)
     assert not rv.precisa_editor("quarentena", {**OK, "thumb_ok": False})

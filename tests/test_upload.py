@@ -464,11 +464,21 @@ def _quem_fala(pasta, nome="Speaker (Arthur do Val)"):
     (pasta / "blocos.json").write_text(json.dumps(blocos), encoding="utf-8")
 
 
+_ATUALIDADE = []   # chamadas da checagem de atualidade mockada (fixture shorts)
+
+
 @pytest.fixture
-def shorts(cenario):
-    """Shorts 01-03: longo 01 subiu pela API, 02 foi agendado à mão (só no banco), 03 não subiu."""
+def shorts(cenario, monkeypatch):
+    """Shorts 01-03: longo 01 subiu pela API, 02 foi agendado à mão (só no banco), 03 não subiu.
+    A checagem de atualidade (paga) vem mockada: nada datado; `atualidade` registra as chamadas."""
+    import _atualidade
     from _eventos import upsert_bloco
     pasta, yt, banco = cenario
+    chamadas = []
+    monkeypatch.setattr(_atualidade, "checar_short",
+                        lambda stem, p, bid, quando, titulo="": chamadas.append((bid, quando)) or (False, ""))
+    _ATUALIDADE.clear()
+    _ATUALIDADE.append(chamadas)
     _quem_fala(pasta)
     (pasta / "shorts").mkdir()
     reg = {}
@@ -554,6 +564,46 @@ def test_short_arquivado_nao_sobe(shorts, capsys):
     up.main([str(pasta), "--shorts"])
     out = capsys.readouterr().out
     assert len(yt.uploads) == 1 and "Short arquivado (datado: debate do 2º turno)" in out
+
+
+def test_short_datado_na_publicacao_e_arquivado_e_sai_do_plano(shorts, monkeypatch, capsys):
+    import _atualidade
+    pasta, yt, _ = shorts
+    monkeypatch.setattr(_atualidade, "checar_short",
+                        lambda stem, p, bid, quando, titulo="": (bid == 1, "apuração ao vivo"))
+    assert up.main([str(pasta), "--shorts"]) == 0
+    assert len(yt.uploads) == 1
+    assert yt.uploads[0]["status"]["publishAt"] == "2026-10-23T23:00:00Z"   # o 02 segue no horário dele
+    sh = json.loads((pasta / "shorts" / "shorts.json").read_text(encoding="utf-8"))
+    assert sh["01"]["arquivado"] is True and "apuração ao vivo" in sh["01"]["motivo"]
+    assert "datado em 22/10" in sh["01"]["motivo"]
+    assert "[arquivado]" in capsys.readouterr().out
+
+
+def test_atualidade_checa_na_data_do_horario_do_short(shorts):
+    pasta, yt, _ = shorts
+    up.main([str(pasta), "--shorts"])
+    from datetime import date
+    assert sorted(_ATUALIDADE[0]) == [(1, date(2026, 10, 22)), (2, date(2026, 10, 23))]
+
+
+def test_checagem_de_atualidade_que_falha_nao_sobe(shorts, monkeypatch, capsys):
+    import _atualidade
+
+    def falha(*a, **k):
+        raise RuntimeError("api fora")
+    monkeypatch.setattr(_atualidade, "checar_short", falha)
+    assert up.main([str(pasta := shorts[0]), "--shorts"]) == 0
+    assert shorts[1].uploads == []
+    assert "checagem falhou" in capsys.readouterr().out
+    sh = json.loads((pasta / "shorts" / "shorts.json").read_text(encoding="utf-8"))
+    assert not sh["01"].get("arquivado")   # falha não arquiva
+
+
+def test_dry_run_nao_paga_atualidade(shorts, capsys):
+    pasta, yt, _ = shorts
+    up.main([str(pasta), "--shorts", "--dry-run"])
+    assert _ATUALIDADE[0] == [] and "checagem de atualidade" in capsys.readouterr().out
 
 
 def test_shorts_travados_sem_auditoria(shorts, monkeypatch):
