@@ -43,6 +43,8 @@ O canal pequeno vive de **busca** (80% das views em out/2026; o nosso hit, "Flá
 - Continua valendo tudo o de baixo: fidelidade, nada de palavrão/ofensa, até ~70 chars.
 - **Nunca especular sobre morte, violência, crime ou saúde de pessoa real** (02/11/2026), nem no título nem no `texto_thumb`, **mesmo que a fala especule**. Fato público dito no trecho (está preso, foi condenado) pode. Caso real: "Vorcaro vai ser solto ou assassinado?" virou "Vorcaro vai ser solto? Por que ele é uma bomba política". O revisor reprova; está no 03, no editor e no revisor.
 
+- **Nunca apelido de pessoa real (06/11/2026)**, nem no título nem no `texto_thumb` (e por isso nem no Short), **mesmo que a fala use**: sempre o nome completo ("Carlos Bolsonaro", não "Carluxo"). Código: campo `apelidos` no `config/grafias.json` (Carluxo, Bananinha/Dudu Bananinha, Bozo), que o `_grafias.corrigir` troca pelo `nome` completo em qualquer caixa. Apelido fora da lista: o revisor reprova e o editor reescreve. Caso real: o Short "CARLUXO EM 2030?" virou "CARLOS BOLSONARO EM 2030?". Em aberto: "Lulinha" é a forma `curto` oficial do Fábio Luís Lula da Silva (decisão do Gu).
+
 Onde mora: `prompts/segmentacao.md` (critério 6 + schema), `_editor.SISTEMA` (reescrita) e o critério `titulo_fiel` do `11_revisor`. O Editor também recebe os termos de busca da semana (17_analytics).
 
 ## Postura

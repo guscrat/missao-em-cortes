@@ -60,6 +60,8 @@ sobre morte, violência, crime ou saúde de pessoa real (ex.: "vai ser \
 assassinado?", "vai morrer?", "está doente?", "mandou matar?"), MESMO que a fala especule. Fato \
 público dito no trecho (está preso, foi condenado, é investigado) pode, sem especular além dele \
 (ex.: "Vorcaro vai ser solto?" passa; "Vorcaro vai ser solto ou assassinado?" não).
+- Título e texto da thumb NUNCA usam apelido de pessoa real (ex.: "Carluxo", "Bananinha", \
+"Bozo"), MESMO que a fala use: sempre o nome completo ("Carlos Bolsonaro").
 - titulo: no máximo {MAX_TITULO} caracteres, pensado pra busca do YouTube (cauda longa): \
 nome COMPLETO da pessoa (ex.: "Flávio Bolsonaro", não "Flávio") + o tema concreto (o caso, a \
 lei, o escândalo: "Lava Jato", "Banco Master"). Prefira a forma de pergunta quando o trecho \

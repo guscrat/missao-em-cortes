@@ -13,6 +13,7 @@
 ## Regras
 
 - **`nao_trocar`** (por personagem): frases de outra pessoa com a mesma grafia ("Nicolas Maduro", "Nicolas Sarkozy"…) nunca são trocadas, **em qualquer caixa**. É o que protege texto todo em maiúsculas (thumb, manchete do Short), onde não dá pra ver inicial maiúscula. Outra pessoa nova com grafia de personagem → acrescentar aqui.
+- **`apelidos`** (por personagem, 06/11/2026): apelido de pessoa real ("Carluxo", "Bananinha", "Bozo") é trocado SEMPRE pelo `nome` completo, em qualquer caixa (título, thumb, manchete do Short). O `para_prompt` mostra "apelido, nunca usar: …" pro revisor e o editor. Apelido novo → acrescentar aqui.
 - Em texto misto, palavra solta seguida de outro nome próprio (inicial maiúscula) também não é trocada.
 - Em CAIXA ALTA a grafia é corrigida normalmente ("NICOLAS SERÁ O REI?" → "NIKOLAS SERÁ O REI?").
 - Personagem novo recorrente: acrescentar no JSON (nome, curto, erradas).

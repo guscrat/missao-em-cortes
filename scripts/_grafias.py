@@ -27,6 +27,8 @@ def _trocas(lista: list[dict]) -> list[tuple[str, str]]:
     Errada com sobrenome vira o nome completo; palavra solta vira a forma curta."""
     pares = [(e, p["nome"] if " " in e else p.get("curto") or p["nome"])
              for p in lista for e in p.get("erradas", [])]
+    # apelido de pessoa real nunca sai em título/thumb (06/11/2026): sempre o nome completo
+    pares += [(a, p["nome"]) for p in lista for a in p.get("apelidos", [])]
     return sorted(pares, key=lambda x: -len(x[0]))
 
 
@@ -74,6 +76,8 @@ def para_prompt(lista: list[dict] | None = None) -> str:
         extra = f"curto: {p['curto']}" if p.get("curto") and p["curto"] != p["nome"] else ""
         if p.get("erradas"):
             extra += ("; " if extra else "") + "nunca: " + ", ".join(p["erradas"])
+        if p.get("apelidos"):
+            extra += ("; " if extra else "") + "apelido, nunca usar: " + ", ".join(p["apelidos"])
         if p.get("nao_trocar"):
             extra += ("; " if extra else "") + "outra pessoa, não trocar: " + ", ".join(p["nao_trocar"])
         linhas.append(f"- {p['nome']}" + (f" ({extra})" if extra else ""))

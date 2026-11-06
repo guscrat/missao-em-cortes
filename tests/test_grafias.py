@@ -79,6 +79,20 @@ def test_config_real_protege_maduro_em_caixa_alta():
     assert g.corrigir("NICOLAS SERÁ O REI?") == "NIKOLAS SERÁ O REI?"
 
 
+def test_apelido_vira_nome_completo_em_qualquer_caixa():
+    """06/11/2026: título e thumb nunca usam apelido de pessoa real (caso: 'CARLUXO EM 2030?')."""
+    assert g.corrigir("CARLUXO EM 2030?") == "CARLOS BOLSONARO EM 2030?"
+    assert g.corrigir("o Carluxo falou") == "o Carlos Bolsonaro falou"
+    assert g.corrigir("DUDU BANANINHA x Bananinha") == "EDUARDO BOLSONARO x Eduardo Bolsonaro"
+    assert g.corrigir("O Bozo perdeu") == "O Jair Bolsonaro perdeu"
+    assert "apelido, nunca usar: Carluxo" in g.para_prompt()
+
+
+def test_titulo_do_short_sem_apelido():
+    b = {"texto_thumb": "CARLUXO EM 2030?", "speakers_principais": ["Renan Santos"]}
+    assert _descricoes.titulo_short(b, "renan_x") == "CARLOS BOLSONARO EM 2030? | Renan Santos"
+
+
 def test_config_real_corrige_lossinger():
     """A transcrição gera "Lossinger"; a grafia oficial é Roberta Luchsinger."""
     assert g.corrigir("Roberta Lossinger detona o governo") == "Roberta Luchsinger detona o governo"
