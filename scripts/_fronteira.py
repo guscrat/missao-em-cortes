@@ -197,6 +197,31 @@ def reencaixar(palavras: list[dict], ini: float, fim: float,
     return {"inicio": novo_ini, "fim": novo_fim, "inicio_ok": ini_ok, "fim_ok": fim_ok}
 
 
+SHORT_MIN_S = 15.0           # Short mais curto que isso não fecha ideia
+SHORT_MAX_S = 179.0 - 2 * COLD_PADDING_S   # limite do YouTube (3 min) com o padding do 10
+REENCAIXE_SHORT_S = 60.0     # Short: procura o ponto natural até 1 min de cada ponta
+
+
+def encaixar_short(palavras: list[dict], ini: float, fim: float) -> dict:
+    """Short (10 e 09, 06/11/2026): a MESMA regra de ponto natural dos longos. Início em
+    começo de frase e fim em fim de frase com pausa, pelo reencaixe do revisor (o ponto
+    natural mais perto que passa, até 1 min, dentro de [15s, 3 min]). A checagem final usa o
+    padding do Short (COLD_PADDING_S). {inicio, fim, inicio_ok, fim_ok, primeiras, ultimas}."""
+    r = reencaixar(palavras, ini, fim, SHORT_MIN_S, SHORT_MAX_S, REENCAIXE_SHORT_S)
+    chk = checar(palavras, r["inicio"], r["fim"], COLD_PADDING_S, COLD_PADDING_S)
+    return {"inicio": r["inicio"], "fim": r["fim"], "inicio_ok": chk["inicio_ok"],
+            "fim_ok": chk["fim_ok"], "primeiras": chk["primeiras"], "ultimas": chk["ultimas"]}
+
+
+def problema_short(enc: dict) -> str | None:
+    """Motivo pra o Short NÃO subir (o revisor de fronteira), ou None se fecha frase."""
+    if not enc["inicio_ok"]:
+        return f"Short começa no meio da frase (\"{enc['primeiras']}…\")"
+    if not enc["fim_ok"]:
+        return f"Short termina no meio da frase (\"…{enc['ultimas']}\")"
+    return None
+
+
 ANCORA_JANELA_S = 12 * 60   # em janelas de 60 min o LLM erra poucos minutos (numa chamada
                             # só pra live de 3h20, chegou a errar 10-20 min)
 ANCORA_TOKENS = 8           # palavras da frase usadas na busca (começo ou fim dela)
