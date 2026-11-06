@@ -38,3 +38,10 @@ def test_lulinha_e_excecao_na_regra_de_apelido():
     assert _grafias.corrigir("LULINHA E OS INQUÉRITOS") == "LULINHA E OS INQUÉRITOS"
     for arq in ("prompts/segmentacao.md", "scripts/_editor.py", "scripts/11_revisor.py"):
         assert 'Exceção: "Lulinha"' in (RAIZ / arq).read_text(encoding="utf-8"), arq
+
+
+def test_07_so_troca_thumb_publicada_com_flag_e_nunca_arquivada():
+    fonte = (RAIZ / "scripts" / "07_thumb.py").read_text(encoding="utf-8")
+    assert 'NAO_MEXER = {"agendado", "publicado", "arquivado"}' in fonte
+    assert 'if status in NAO_MEXER and not (trocar_publicada and status != "arquivado"):' in fonte
+    assert "--trocar-publicada exige --bloco=N" in fonte
