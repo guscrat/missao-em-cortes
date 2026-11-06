@@ -5,7 +5,9 @@ Uso:
 
 Regra editorial: até 3 min (limite do YouTube), ideal 30-90s, sempre fechando uma ideia
 (gancho → desenvolvimento → frase de impacto); nada de cortar no meio da fala. O 03 escolhe
-o trecho e encaixa no fim de frase; aqui só confere (avisa se o fim não fecha frase).
+o trecho; aqui ele é ENCAIXADO sozinho na mesma regra dos longos (_fronteira.encaixar_short:
+início e fim em fim de frase com pausa, até 1 min de cada ponta) e os tempos novos voltam pro
+blocos.json. Nenhum ponto natural serviu → `revisar: true` + `motivo_revisar` (o 09 não sobe).
 blocos.json antigo sem `short`: usa o cold open.
 
 Pra cada bloco com short (ou cold_open) no blocos.json:
@@ -214,7 +216,9 @@ def main(argv: list[str]) -> int:
     if not words_json.exists():
         sys.exit(f"[!] {words_json} não existe — rode o step 2 (02_transcribe.py) antes.")
     todas = json.loads(words_json.read_text(encoding="utf-8"))["words"]
-    blocos = json.loads((pasta / "blocos.json").read_text(encoding="utf-8"))["blocos"]
+    dados = json.loads((pasta / "blocos.json").read_text(encoding="utf-8"))
+    blocos = dados["blocos"]
+    mudou = False
 
     regiao = ler_zoom(stem)
     if regiao is None:
@@ -241,21 +245,32 @@ def main(argv: list[str]) -> int:
         if not co:
             print(f"  [aviso] bloco {bid}: sem short nem cold_open no blocos.json — pulando")
             continue
-        ini, fim = fr.janela(todas, hhmmss_para_segundos(co["timestamp_inicio"]),
-                             hhmmss_para_segundos(co["timestamp_fim"]),
-                             COLD_PADDING_S, COLD_PADDING_S)
+        # mesma regra de ponto natural dos longos (06/11/2026): início e fim em fim de
+        # frase com pausa, encaixados sozinhos; o que mudou volta pro blocos.json
+        t_ini, t_fim = (hhmmss_para_segundos(co["timestamp_inicio"]),
+                        hhmmss_para_segundos(co["timestamp_fim"]))
+        enc = fr.encaixar_short(todas, t_ini, t_fim)
+        if (enc["inicio"], enc["fim"]) != (t_ini, t_fim):
+            print(f"  [encaixe] bloco {bid}: Short {t_fim - t_ini:.0f}s → "
+                  f"{enc['fim'] - enc['inicio']:.0f}s no ponto natural "
+                  f"(\"{enc['primeiras'][:40]}…{enc['ultimas'][-50:]}\")")
+            if not b.get("short"):   # bloco antigo: o cold open do longo fica intacto
+                b["short"] = co = dict(co)
+            co.update(timestamp_inicio=fr.segundos_para_ts(enc["inicio"]),
+                      timestamp_fim=fr.segundos_para_ts(enc["fim"]),
+                      duracao_segundos=round(enc["fim"] - enc["inicio"], 1))
+            mudou = True
+        fronteira = fr.problema_short(enc)
+        if fronteira:
+            print(f"  [!] bloco {bid}: {fronteira} — nenhum ponto natural serviu; o Short fica "
+                  f"em revisar e NÃO sobe (corrija o 'short' no blocos.json)")
+        ini, fim = fr.janela(todas, enc["inicio"], enc["fim"], COLD_PADDING_S, COLD_PADDING_S)
         dur = fim - ini
         if dur > MAX_SHORT_S:
             print(f"  [!] bloco {bid}: trecho de {dur:.0f}s passa do limite de Short "
                   f"({MAX_SHORT_S:.0f}s) — pulando (corrija o 'short' no blocos.json)")
             falhas += 1
             continue
-        fronteira = fr.checar(todas, hhmmss_para_segundos(co["timestamp_inicio"]),
-                              hhmmss_para_segundos(co["timestamp_fim"]),
-                              COLD_PADDING_S, COLD_PADDING_S)
-        if not fronteira["fim_ok"]:
-            print(f"  [aviso] bloco {bid}: o Short não termina em fim de frase "
-                  f"(\"…{fronteira['ultimas']}\") — revise")
 
         cx, taxa = centro_rosto(video, ini, fim, regiao)
         crop = janela_9x16(regiao, cx)
@@ -264,6 +279,7 @@ def main(argv: list[str]) -> int:
         if alerta:
             print(f"  [aviso] pouco rosto: provável tela compartilhada/plateia — "
                   f"{'centralizado' if cx is None else 'usando o que achou'}, REVISE antes de subir")
+        motivos = [m for m in (fronteira, "pouco rosto" if alerta else None) if m]
 
         ass = out_dir / f"short_{nn}.ass"
         palavras = palavras_na_janela(todas, ini, fim)
@@ -280,11 +296,16 @@ def main(argv: list[str]) -> int:
         # **registro: preserva o "postado"/youtube_id do 14_canal ao regerar o Short
         registro[nn] = {**registro.get(nn, {}), "arquivo": saida.name, "duracao_s": round(dur, 2),
                         "crop": "{}:{}:{}:{}".format(*crop), "taxa_rosto": round(taxa, 2),
-                        "revisar": alerta}
+                        "revisar": bool(motivos), "motivo_revisar": "; ".join(motivos)}
         registro_path.write_text(json.dumps(registro, ensure_ascii=False, indent=2),
                                  encoding="utf-8")
         print(f"  OK shorts/{saida.name}")
 
+    if mudou:
+        dados["blocos"] = blocos
+        (pasta / "blocos.json").write_text(json.dumps(dados, ensure_ascii=False, indent=2),
+                                           encoding="utf-8")
+        print("  blocos.json: tempos do 'short' encaixados no ponto natural")
     print(f"\n{feitos} Short(s) gerado(s), {falhas} falha(s) em {out_dir}")
     return 1 if falhas else 0
 

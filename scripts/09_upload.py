@@ -67,6 +67,7 @@ from _cobertura import agenda_canal
 from _descricoes import ler_descricoes, manchete, titulo_short
 from _eventos import evento, ler_bloco, upsert_bloco
 from _google import credenciais
+import _fronteira as fr
 import _paths
 from _paths import achar_pasta, escolher_arquivo, escolher_thumb, stem_de
 
@@ -580,6 +581,34 @@ def meta_short(meta: dict, longo_id: str, titulo: str) -> dict:
     return preparar_metadados({"titulo": titulo, "descricao": descricao, "tags": meta["tags"]})
 
 
+_PALAVRAS: dict[Path, list | None] = {}
+
+
+def fronteira_short(pasta: Path, bloco: dict) -> str | None:
+    """Revisor de fronteira antes da fila (06/11/2026, $0): o trecho do Short (blocos.json,
+    `short` ou `cold_open`) começa e termina em ponto natural? Mesma checagem do 10
+    (_fronteira.encaixar_short); sem words.json ou sem trecho não dá pra checar → None."""
+    trecho = bloco.get("short") or bloco.get("cold_open") or {}
+    if not (trecho.get("timestamp_inicio") and trecho.get("timestamp_fim")):
+        return None
+    if pasta not in _PALAVRAS:
+        try:
+            dados = json.loads((pasta / "words.json").read_text(encoding="utf-8"))
+            _PALAVRAS[pasta] = dados["words"] if isinstance(dados, dict) else dados
+        except (OSError, ValueError, KeyError, TypeError):
+            _PALAVRAS[pasta] = None
+    palavras = _PALAVRAS[pasta]
+    if not palavras:
+        return None
+    from _legenda import hhmmss_para_segundos as seg
+    ini, fim = seg(trecho["timestamp_inicio"]), seg(trecho["timestamp_fim"])
+    chk = fr.checar(palavras, ini, fim, fr.COLD_PADDING_S, fr.COLD_PADDING_S)
+    if chk["inicio_ok"] and chk["fim_ok"]:
+        return None
+    return (f"{fr.problema_short({**chk, 'inicio': ini, 'fim': fim})} — rode o "
+            f"10_shorts de novo (ele encaixa no ponto natural)")
+
+
 def planejar_shorts(pasta: Path, cfg: dict, so_bloco: int | None) -> list[dict]:
     """Shorts da pasta prontos pra subir (o longo do bloco já está no YouTube)."""
     stem = stem_de(pasta)
@@ -611,9 +640,10 @@ def planejar_shorts(pasta: Path, cfg: dict, so_bloco: int | None) -> list[dict]:
         problema = (f"bloco em {bloco['status']} no painel" if bloco.get("status") in NAO_SOBE else
                     f"Short arquivado ({sh.get('motivo') or 'sem motivo'})" if sh.get("arquivado") else
                     "longo ainda não está no YouTube — o Short espera" if not longo_id else
-                    "pouco rosto (revisar: true no shorts.json) — confira e libere à mão"
-                    if sh.get("revisar") else
+                    f"{sh.get('motivo_revisar') or 'pouco rosto'} (revisar: true no shorts.json) "
+                    f"— confira e libere à mão" if sh.get("revisar") else
                     "arquivo do Short não existe" if not sh.get("arquivo") or not video.exists() else
+                    fronteira if (fronteira := fronteira_short(pasta, blocos.get(bid, {}))) else
                     "sem entrada no descricoes.txt" if not meta else
                     "sem manchete (texto_thumb/tema) no blocos.json"
                     if not manchete(blocos.get(bid, {})) else
