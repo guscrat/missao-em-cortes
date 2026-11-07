@@ -151,6 +151,7 @@ def cenario(projeto, monkeypatch, tmp_path):
     monkeypatch.setattr(up, "autenticar", lambda: yt)
     monkeypatch.setattr(up, "MediaFileUpload", lambda *a, **k: None)
     monkeypatch.setattr(up, "COTA_PATH", tmp_path / "state" / "cota_youtube.json")
+    monkeypatch.setattr(up, "FILA_SHORTS", tmp_path / "state" / "shorts_fila.json")
     monkeypatch.setattr(up, "CONFIG", tmp_path / "nao_existe.json")   # usa DEFAULTS
     monkeypatch.setitem(up.DEFAULTS, "auditoria_aprovada", True)   # os testes antigos cobrem o agendado
     monkeypatch.setattr(up, "agora", lambda: datetime(2026, 10, 21, 13, 0, tzinfo=timezone.utc))
@@ -847,3 +848,52 @@ def test_short_sem_quem_fala_nao_sobe(shorts, capsys):
     _quem_fala(pasta, "Speaker 1")                        # ninguém conhecido; stem "v" sem canal
     up.main([str(pasta), "--shorts"])
     assert not yt.uploads and "sem quem fala" in capsys.readouterr().out
+
+
+# ── resumo da rodada (tarefa do Agendador → painel) ─────────────────────────
+
+def _fila():
+    return json.loads(up.FILA_SHORTS.read_text(encoding="utf-8"))
+
+
+def test_rodada_grava_resumo_e_evento_ok(shorts):
+    pasta, _, banco = shorts
+    up.main([str(pasta), "--shorts"])
+    f = _fila()
+    assert (f["enviados"], f["falhas"], f["faltam"]) == (2, 0, 0)
+    ev = banco("SELECT status, mensagem FROM eventos WHERE etapa='09_shorts_rodada'")
+    assert [(e["status"], e["mensagem"]) for e in ev] == [("ok", "subiram 2 · faltam 0 · falhas 0")]
+
+
+def test_rodada_que_para_na_cota_conta_o_que_falta_e_nao_e_falha(shorts):
+    pasta, _, banco = shorts
+    cota = up.Cota(up.DEFAULTS["cota_limite_dia"])
+    cota.usadas = cota.limite - up.DEFAULTS["cota_upload"]
+    cota._salvar()
+    up.main([str(pasta), "--shorts"])
+    assert (_fila()["enviados"], _fila()["faltam"]) == (1, 1)
+    assert banco("SELECT status FROM eventos WHERE etapa='09_shorts_rodada'")[0]["status"] == "ok"
+
+
+def test_rodada_com_falha_vira_evento_de_falha(shorts):
+    pasta, yt, banco = shorts
+    _insert_falhando(yt, [up.HttpError(_Resp(500), b"erro")])
+    up.main([str(pasta), "--shorts"])
+    assert (_fila()["enviados"], _fila()["falhas"], _fila()["faltam"]) == (1, 1, 1)
+    assert banco("SELECT status FROM eventos WHERE etapa='09_shorts_rodada'")[0]["status"] == "falha"
+
+
+def test_fila_vazia_grava_zero(shorts):
+    pasta, _, _ = shorts
+    up.main([str(pasta), "--shorts"])
+    up.main([str(pasta), "--shorts"])                        # 2ª rodada: nada a subir
+    assert (_fila()["enviados"], _fila()["faltam"]) == (0, 0)
+
+
+def test_dry_run_max_e_bloco_nao_gravam_resumo(shorts):
+    pasta, _, banco = shorts
+    up.main([str(pasta), "--shorts", "--dry-run"])
+    up.main([str(pasta), "--shorts", "--max=1"])
+    up.main([str(pasta), "--shorts", "--bloco=2"])
+    assert not up.FILA_SHORTS.exists()
+    assert banco("SELECT 1 FROM eventos WHERE etapa='09_shorts_rodada'") == []

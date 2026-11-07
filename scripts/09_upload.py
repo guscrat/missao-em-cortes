@@ -75,6 +75,7 @@ ROOT = Path(__file__).parent.parent
 CONFIG = ROOT / "config" / "upload.json"
 TOKEN = ROOT / "secrets" / "youtube_token.json"
 COTA_PATH = ROOT / "state" / "cota_youtube.json"
+FILA_SHORTS = ROOT / "state" / "shorts_fila.json"   # resumo da última rodada real (painel)
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
 
 DEFAULTS = {
@@ -662,6 +663,25 @@ def planejar_shorts(pasta: Path, cfg: dict, so_bloco: int | None) -> list[dict]:
     return itens
 
 
+def registrar_rodada(enviados: int, falhas: int, faltam: int, motivo: str = "",
+                     path: Path | None = None) -> None:
+    """Fim de uma rodada real de Shorts (à mão ou pela tarefa do Agendador, shorts_oculto):
+    state/shorts_fila.json pro cartão "Shorts na fila" do painel + evento 09_shorts_rodada
+    (falha vira alerta e some na próxima rodada ok). faltam = prontos que não subiram agora
+    (cota, falha); os que esperam o longo ou estão em revisar não contam."""
+    path = path or FILA_SHORTS
+    dados = {"atualizado": agora().isoformat(timespec="seconds"), "enviados": enviados,
+             "falhas": falhas, "faltam": faltam, "motivo": motivo}
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(dados, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError as e:
+        print(f"   [aviso] não gravei {path.name} ({e}); o painel mostra a rodada anterior")
+    msg = f"subiram {enviados} · faltam {faltam} · falhas {falhas}" + (f" · {motivo}" if motivo else "")
+    evento(None, "09_shorts_rodada", "falha" if falhas or motivo else "ok", agente="publicador",
+           mensagem=msg[:300])
+
+
 CUSTO_ATUALIDADE = 0.002   # US$ por Short, estimativa (_atualidade, Sonnet 5.5)
 
 
@@ -740,12 +760,15 @@ def main_shorts(pastas: list[Path], cfg: dict, so_bloco: int | None, maximo: int
         if not dry:
             evento(None, "09_upload", "aviso", agente="publicador",
                    mensagem="Shorts recusados: auditoria da API pendente")
+            registrar_rodada(0, 0, len(itens), "upload travado (auditoria_aprovada: false)")
             return 1
     if dry or not itens:
         if dry and itens and not atualidade:
             print(f"   No envio real, cada Short passa antes pela checagem de atualidade na data "
                   f"de publicação (~US$ {CUSTO_ATUALIDADE:.3f} cada); os datados saem do plano.")
         print("\n(dry-run: nada foi enviado)" if dry else "\nNada a fazer.")
+        if not dry and so_bloco is None and maximo is None:
+            registrar_rodada(0, 0, 0)   # fila zerada: o painel mostra "0 na fila"
         return 0
 
     cota = Cota(cfg["cota_limite_dia"])
@@ -797,6 +820,8 @@ def main_shorts(pastas: list[Path], cfg: dict, so_bloco: int | None, maximo: int
           f"cota hoje {cota.usadas:,}/{cota.limite:,} · custo US$ 0")
     if enviados:
         print("Falta o VÍDEO RELACIONADO de cada um no Studio: uv run py scripts/dia_d.py relacionados")
+    if so_bloco is None and maximo is None:   # rodada da fila inteira (a do Agendador)
+        registrar_rodada(enviados, falhas, len(itens) - enviados)
     return 1 if falhas else 0
 
 
