@@ -72,3 +72,14 @@ def test_main_roda_o_09_e_loga(amb, monkeypatch):
     assert so.main() == 0
     assert chamadas and chamadas[0][-2:] == ["todos", "--shorts"]
     assert "shorts_oculto (sem janela)" in amb.log.read_text(encoding="utf-8")
+
+
+def test_resumo_em_utc_compara_na_hora_local(amb):
+    """O 09 grava em UTC: resumo de 1h antes do início (em UTC 'parece' depois) não conta."""
+    from datetime import timezone
+    antes = (INICIO - timedelta(hours=1)).astimezone(timezone.utc)
+    amb.fila.write_text(json.dumps({"atualizado": antes.isoformat(timespec="seconds")}))
+    assert so.resumo_gravado(INICIO) is False
+    depois = (INICIO + timedelta(minutes=2)).astimezone(timezone.utc)
+    amb.fila.write_text(json.dumps({"atualizado": depois.isoformat(timespec="seconds")}))
+    assert so.resumo_gravado(INICIO) is True
