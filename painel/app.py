@@ -283,6 +283,7 @@ def corpo() -> None:
     custo_lives = carregar_custo_lives()
     hoje.faixa_alertas(hoje.curador_rodando(eventos, agora)
                        + hoje.alertas_curador(eventos, agora) + hoje.alertas_token(eventos, agora)
+                       + hoje.alertas_shorts(eventos, agora)
                        + hoje.alerta_cota(pct_alerta=cfg["cota_alerta_pct"])
                        + hoje.alertas_custo_live(custo_lives, agora,
                                                  cfg["alerta_live_usd"], cfg["trava_live_usd"])

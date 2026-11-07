@@ -1,7 +1,7 @@
 """Aba "Hoje" do painel (tela inicial do PO) + faixa de alertas.
 
 Responde em 10 segundos: o que vai ao ar hoje/amanhã, quantos dias de estoque tem, o que
-espera decisão, se a auditoria do YouTube saiu, quanto do orçamento do mês já foi e o
+espera decisão, quantos Shorts faltam subir, quanto do orçamento do mês já foi e o
 placar do canal rumo ao YPP. Só LÊ: banco, config/ e state/. A única ação é o botão
 "Processar" das Sugestões do Curador: dispara o 13 (--processar=ID) num processo à parte,
 e é ele quem grava no banco.
@@ -14,6 +14,9 @@ Alertas (faixa acima das abas, aparece em qualquer aba):
   - erro de download (01_baixar falhou dentro do Curador)
   - token do YouTube/Analytics ausente, sem refresh_token ou recusado (invalid_grant)
   - cota diária do YouTube perto do limite (state/cota_youtube.json, gravado pelo 09)
+  - upload de Shorts (tarefa do Agendador, shorts_oculto → 09 todos --shorts): rodada que
+    falhou (evento 09_shorts_rodada falha; some na próxima ok) ou que não roda há mais de
+    um dia com Shorts esperando (state/shorts_fila.json)
   - estoque abaixo de dias_minimos (modo sugerir: "escolha uma sugestão") e nada agendado pra amanhã
   - Curador processou sozinho pela rede de segurança (evento curador_rede, últimas 24h)
   - live travada por custo: acima de trava_live_usd (US$ 2) os scripts pagos param
@@ -55,6 +58,7 @@ SECRETS = ROOT / "secrets"
 FUSO = ZoneInfo("America/Sao_Paulo")
 FUSO_COTA = ZoneInfo("America/Los_Angeles")   # a cota do YouTube vira à meia-noite do Pacífico
 HORA_CURADOR = time(17, 0)
+ATRASO_SHORTS = timedelta(hours=26)           # a tarefa dos Shorts roda 1x/dia (17:50)
 FOLGA_CURADOR = timedelta(hours=1)            # 18h sem rodada de hoje = não rodou
 JANELA_FALHA = timedelta(hours=48)
 JANELA_TOKEN = timedelta(days=7)
@@ -288,6 +292,35 @@ def alertas_curador(eventos: pd.DataFrame, agora: pd.Timestamp,
     elif any("Traceback" in linha for linha in cauda):
         saida.append(("erro", "Curador quebrou na última rodada",
                       f"{rodou:%d/%m %Hh%M} · veja o fim do state/curador.log"))
+    return saida
+
+
+def fila_shorts(path: Path | None = None) -> dict:
+    """Resumo da última rodada real de Shorts (state/shorts_fila.json, gravado pelo 09):
+    atualizado (datetime local), enviados, falhas, faltam, motivo. {} = nunca rodou."""
+    dados = ler_json(path or STATE / "shorts_fila.json")
+    quando = _local(dados.get("atualizado"))
+    return {**dados, "atualizado": quando} if quando else {}
+
+
+def alertas_shorts(eventos: pd.DataFrame, agora: pd.Timestamp,
+                   path: Path | None = None) -> list[tuple[str, str, str]]:
+    """Rodada de Shorts que falhou (em aberto até uma rodada ok) ou parada há mais de um dia
+    com Shorts na fila (tarefa do Agendador desligada/PC desligado)."""
+    saida = []
+    falhas = _falhas_sem_ok(eventos, agora - JANELA_FALHA)
+    if not falhas.empty:
+        for f in falhas[falhas["etapa"] == "09_shorts_rodada"].itertuples():
+            msg = f.mensagem if isinstance(f.mensagem, str) else ""
+            saida.append(("erro", "Upload de Shorts falhou",
+                          f"{msg} ({f.ts:%d/%m %Hh%M}) · veja o state/shorts.log; a próxima "
+                          f"rodada (17h50) tenta de novo"))
+    fila = fila_shorts(path)
+    if fila and (fila.get("faltam") or 0) > 0 and agora - pd.Timestamp(fila["atualizado"]) > ATRASO_SHORTS:
+        saida.append(("aviso", "Upload de Shorts parado",
+                      f"{fila['faltam']} Short(s) na fila e a última rodada foi "
+                      f"{fila['atualizado']:%d/%m %Hh%M}. Confira a tarefa MissaoEmCortes-Shorts "
+                      f"no Agendador do Windows."))
     return saida
 
 
@@ -747,6 +780,24 @@ def _custo(c: dict) -> None:
         visual.barras(c["por_agente"], nome="custo")
 
 
+def _cartao_shorts(fila: dict, liberado: bool) -> str:
+    """Quantos Shorts prontos faltam subir (última rodada do 09) e quando ela foi."""
+    if not liberado:
+        return visual.cartao("Shorts na fila", "—", "upload travado (auditoria_aprovada: false)")
+    if not fila:
+        return visual.cartao("Shorts na fila", "—", "nenhuma rodada ainda (tarefa das 17h50)")
+    quando = f"{fila['atualizado']:%d/%m %Hh%M}"
+    falhou = bool(fila.get("falhas") or fila.get("motivo"))
+    return visual.cartao(
+        "Shorts na fila", fila.get("faltam") or 0,
+        f"rodada {quando} · subiram {fila.get('enviados') or 0}"
+        + (f" · {fila.get('falhas') or 0} falha(s)" if falhou else ""),
+        tom="erro" if falhou else "",
+        ajuda="Shorts prontos que ainda não subiram (a cota dá ~6 por dia). A tarefa "
+              "MissaoEmCortes-Shorts do Agendador sobe o que couber todo dia às 17h50, cada um "
+              "checado na atualidade. Shorts esperando o longo ou em revisar não contam.")
+
+
 def aba_hoje(blocos: pd.DataFrame, tarefas: pd.DataFrame, est: dict | None, custo: dict,
              agora: pd.Timestamp | None = None, sugestoes: pd.DataFrame | None = None) -> list[str]:
     """Desenha a aba e devolve os pedidos do Gu nesta passada: {"video_id": ...} (botão
@@ -755,7 +806,8 @@ def aba_hoje(blocos: pd.DataFrame, tarefas: pd.DataFrame, est: dict | None, cust
     hoje, amanha = agora.date(), agora.date() + timedelta(days=1)
     df_hoje, df_amanha = no_ar(blocos, hoje), no_ar(blocos, amanha)
     pend = decisoes(tarefas, blocos)
-    auditoria = ler_json(UPLOAD_JSON).get("auditoria_aprovada") is True
+    liberado = ler_json(UPLOAD_JSON).get("auditoria_aprovada") is True
+    fila = fila_shorts()
     st.markdown(CSS, unsafe_allow_html=True)
     cartao = visual.cartao
 
@@ -797,9 +849,7 @@ def aba_hoje(blocos: pd.DataFrame, tarefas: pd.DataFrame, est: dict | None, cust
                f"até {DIAS_SEMANA[ultimo.weekday()]} {ultimo:%d/%m}" if n_fila and ultimo
                else "vazia" if est else "indisponível"),
         cartao("Prontos p/ publicar", prontos, "aprovados, fora do YouTube"),
-        cartao("Auditoria YouTube", "aprovada" if auditoria else "pendente",
-               "upload e Shorts liberados" if auditoria else "upload e Shorts travados",
-               tom="ok" if auditoria else ""),
+        _cartao_shorts(fila, liberado),
         cartao("Custo do mês", f"${custo['gasto']:.2f}",
                f"{custo['pct']:.0f}% de US$ {custo['orcamento']:.0f} · proj. US$ {custo['projecao']:.2f}",
                tom="alerta" if custo["projecao"] > custo["orcamento"] else "",

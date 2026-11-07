@@ -475,7 +475,7 @@ def test_painel_aba_hoje(banco, monkeypatch, tmp_path, cartoes):
     c = cartoes(at)
     assert c["Vai ao ar hoje"] == ("0", "nada hoje") and c["Amanhã"] == ("1", "18h00")
     assert c["Canal coberto até"] == ("24/10", "0,5 dia(s) · abaixo do mínimo (3)")
-    assert "Estoque" not in c and c["Auditoria YouTube"][0] == "pendente"
+    assert "Estoque" not in c and c["Shorts na fila"] == ("—", "upload travado (auditoria_aprovada: false)")
     assert c["Decisões pendentes"] == ("1", "1 em quarentena")
     textos = " ".join(m.value for m in at.markdown)
     assert "<div class='ct alerta'><div class='ct-r'>Canal coberto até" in textos   # abaixo do mínimo
@@ -483,3 +483,29 @@ def test_painel_aba_hoje(banco, monkeypatch, tmp_path, cartoes):
     assert "canal coberto só até 24/10" in textos
     assert "Nada agendado pra amanhã" not in textos
     st.cache_data.clear()
+
+
+# ── upload de Shorts (tarefa do Agendador) ────────────────────────────────
+
+def _fila_json(tmp_path, horas_atras, faltam):
+    quando = (AGORA - pd.Timedelta(hours=horas_atras)).strftime("%Y-%m-%dT%H:%M:%S")
+    path = tmp_path / "shorts_fila.json"
+    path.write_text(json.dumps({"atualizado": quando, "enviados": 0, "falhas": 0, "faltam": faltam}))
+    return path
+
+
+def test_shorts_falha_em_aberto_ate_rodada_ok(tmp_path):
+    nada = tmp_path / "nao_existe.json"
+    ev = _ev((30, "publicador", "09_shorts_rodada", "falha", "upload de Shorts quebrou (exit 1)", None))
+    r = hoje.alertas_shorts(ev, AGORA, path=nada)
+    assert len(r) == 1 and r[0][:2] == ("erro", "Upload de Shorts falhou") and "exit 1" in r[0][2]
+    ev = pd.concat([ev, _ev((6, "publicador", "09_shorts_rodada", "ok", "subiram 6", None))])
+    assert hoje.alertas_shorts(ev, AGORA, path=nada) == []
+
+
+def test_shorts_parado_com_fila_avisa_e_sem_fila_nao(tmp_path):
+    assert hoje.alertas_shorts(_ev(), AGORA, path=_fila_json(tmp_path, 20, 5)) == []   # rodou ontem
+    r = hoje.alertas_shorts(_ev(), AGORA, path=_fila_json(tmp_path, 30, 5))
+    assert len(r) == 1 and r[0][:2] == ("aviso", "Upload de Shorts parado") and "5 Short(s)" in r[0][2]
+    assert hoje.alertas_shorts(_ev(), AGORA, path=_fila_json(tmp_path, 72, 0)) == []   # fila zerada
+    assert hoje.alertas_shorts(_ev(), AGORA, path=tmp_path / "nao_existe.json") == []  # nunca rodou

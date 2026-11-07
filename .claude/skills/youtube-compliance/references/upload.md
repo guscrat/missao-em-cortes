@@ -37,6 +37,17 @@ Quando a auditoria for aprovada, mude a flag pra `true` e o 09 passa a subir pri
 - Título = "MANCHETE | quem fala" (`_descricoes.titulo_short`, até 60 chars, corta a manchete e nunca o nome). Manchete (`_descricoes.manchete`) = `texto_thumb`, senão `tema` (com aviso), com grafias oficiais também em CAIXA ALTA; é o que o 10 queima. Quem fala = `speakers_principais` casado nas grafias, senão o dono do canal. Sem manchete ou sem quem fala, não sobe. O 14 casa exato. Descrição do longo com `▶️ Vídeo completo: https://youtu.be/<longo>` no topo; sem thumb.
 - Registro em `outputs/<pasta>/youtube_shorts.json` (com `longo_id` e `relacionado_ok`) + `youtube_id`/`postado` no `shorts.json` (tira do estoque e do `publicacao.txt`).
 - **Vídeo relacionado** não existe na Data API: marcado à mão no Studio; a lista sai de `dia_d.py relacionados`.
+- **Rodada diária no Agendador (07/11/2026)**: a tarefa `MissaoEmCortes-Shorts` roda todo dia às **17:50** (depois do Curador; `-StartWhenAvailable`) o `scripts/shorts_oculto.py` sem janela, que chama `09_upload.py todos --shorts` e loga em `state/shorts.log`. Sobe o que couber na cota (~6/dia), com a checagem de atualidade, e para sozinha quando a fila zera (rodada sem nada não gasta). Toda rodada real da fila inteira (sem `--bloco`/`--max`/`--dry-run`, à mão ou pela tarefa) grava `state/shorts_fila.json` (`enviados`, `falhas`, `faltam` = prontos que não subiram) + evento `09_shorts_rodada` (`falha` se algum upload falhou). Se o 09 quebrar antes disso (token, rede), o `shorts_oculto` registra a falha com a última linha do log. Painel: cartão **Shorts na fila** (aba Hoje) + alertas "Upload de Shorts falhou" (some na próxima rodada ok) e "Upload de Shorts parado" (fila > 0 e nenhuma rodada há 26h). Registrar, no PowerShell, apontando pra **pasta principal**:
+
+```powershell
+$raiz = "C:\Users\gusta\Downloads\projetos\missao-em-cortes"
+$a = New-ScheduledTaskAction -Execute "$raiz\.venv\Scripts\pythonw.exe" -Argument "scripts\shorts_oculto.py" -WorkingDirectory $raiz
+$t = New-ScheduledTaskTrigger -Daily -At 17:50
+$s = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 2) -DontStopIfGoingOnBatteries -AllowStartIfOnBatteries
+Register-ScheduledTask -TaskName "MissaoEmCortes-Shorts" -Action $a -Trigger $t -Settings $s -Description "Missão em Cortes: sobe a fila de Shorts (09_upload todos --shorts, sem janela)"
+```
+
+Conferir: `Get-ScheduledTask -TaskName "MissaoEmCortes-Shorts" | Get-ScheduledTaskInfo`. Rodar agora: `Start-ScheduledTask -TaskName "MissaoEmCortes-Shorts"`. Pausar: `Disable-ScheduledTask -TaskName "MissaoEmCortes-Shorts"`.
 
 ## Simulação (`--como-aprovada`)
 
