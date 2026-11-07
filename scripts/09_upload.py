@@ -743,7 +743,11 @@ def main_shorts(pastas: list[Path], cfg: dict, so_bloco: int | None, maximo: int
         itens = itens[:maximo]
     outputs = pastas[0].parent if pastas else _paths.OUTPUTS
     slots = slots_shorts([x["minimo"] for x in itens], shorts_ocupados(outputs, cfg), cfg)
-    if itens and (not dry or atualidade) and (cfg["auditoria_aprovada"] or simulado):
+    sem_cota = not dry and not Cota(cfg["cota_limite_dia"]).cabe(cfg["cota_upload"])
+    if sem_cota and itens:   # nada cabe hoje: não paga a checagem de atualidade à toa
+        print(f"\n[!] Cota de hoje sem espaço pra um Short: {len(itens)} na fila, "
+              f"sobem na próxima rodada.")
+    if itens and not sem_cota and (not dry or atualidade) and (cfg["auditoria_aprovada"] or simulado):
         # o Short sai dias depois do longo: atualidade checada de novo na data de publicação
         itens = sem_datados(itens, slots, cfg, arquivar=not dry)
         slots = slots_shorts([x["minimo"] for x in itens], shorts_ocupados(outputs, cfg), cfg)

@@ -40,7 +40,10 @@ def resumo_gravado(inicio: datetime, fila: Path | None = None) -> bool:
     import json
     try:
         atualizado = json.loads((fila or FILA).read_text(encoding="utf-8")).get("atualizado") or ""
-        return datetime.fromisoformat(atualizado).replace(tzinfo=None) >= inicio.replace(microsecond=0)
+        quando = datetime.fromisoformat(atualizado)
+        if quando.tzinfo:   # o 09 grava em UTC; início é hora local sem fuso
+            quando = quando.astimezone().replace(tzinfo=None)
+        return quando >= inicio.replace(microsecond=0)
     except (OSError, ValueError, TypeError, AttributeError):
         return False
 

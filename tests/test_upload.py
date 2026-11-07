@@ -897,3 +897,13 @@ def test_dry_run_max_e_bloco_nao_gravam_resumo(shorts):
     up.main([str(pasta), "--shorts", "--bloco=2"])
     assert not up.FILA_SHORTS.exists()
     assert banco("SELECT 1 FROM eventos WHERE etapa='09_shorts_rodada'") == []
+
+
+def test_sem_cota_nao_paga_atualidade_e_conta_a_fila(shorts):
+    pasta, yt, _ = shorts
+    cota = up.Cota(up.DEFAULTS["cota_limite_dia"])
+    cota.usadas = cota.limite - 1                            # não cabe nenhum Short
+    cota._salvar()
+    up.main([str(pasta), "--shorts"])
+    assert _ATUALIDADE[0] == [] and yt.uploads == []
+    assert (_fila()["enviados"], _fila()["faltam"]) == (0, 2)
