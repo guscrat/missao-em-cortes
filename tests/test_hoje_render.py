@@ -54,14 +54,30 @@ def test_decisoes_pendentes_listam_e_escapam(monkeypatch, tmp_path):
     assert "<div class='ct '><div class='ct-r'>Canal coberto até" in txt     # estoque ok = sem tom
 
 
-def test_auditoria_aprovada_tom_ok(monkeypatch, tmp_path):
+def _fila(tmp_path, **dados):
+    (tmp_path / "state_falso").mkdir(exist_ok=True)
+    (tmp_path / "state_falso" / "shorts_fila.json").write_text(json.dumps(dados))
+
+
+def test_cartao_shorts_travado_sem_rodada_e_com_rodada(monkeypatch, tmp_path):
+    txt = _renderiza(monkeypatch, tmp_path, VAZIO, VAZIO, EST_OK, CUSTO_OK,
+                     upload={"auditoria_aprovada": "true"})   # só o booleano True libera
+    assert "upload travado" in txt
     txt = _renderiza(monkeypatch, tmp_path, VAZIO, VAZIO, EST_OK, CUSTO_OK,
                      upload={"auditoria_aprovada": True})
-    assert "<div class='ct ok'><div class='ct-r'>Auditoria YouTube" in txt
-    assert "upload e Shorts liberados" in txt
+    assert "nenhuma rodada ainda" in txt
+    _fila(tmp_path, atualizado="2026-11-07T17:50:00-03:00", enviados=6, falhas=0, faltam=11)
     txt = _renderiza(monkeypatch, tmp_path, VAZIO, VAZIO, EST_OK, CUSTO_OK,
-                     upload={"auditoria_aprovada": "true"})   # só o booleano True conta
-    assert "upload e Shorts travados" in txt and "ct ok'" not in txt
+                     upload={"auditoria_aprovada": True})
+    assert ("<div class='ct '><div class='ct-r'>Shorts na fila" in txt
+            and "<div class='ct-v'>11</div>" in txt and "rodada 07/11 17h50 · subiram 6" in txt)
+
+
+def test_cartao_shorts_com_falha_tom_erro(monkeypatch, tmp_path):
+    _fila(tmp_path, atualizado="2026-11-07T17:50:00-03:00", enviados=1, falhas=1, faltam=10)
+    txt = _renderiza(monkeypatch, tmp_path, VAZIO, VAZIO, EST_OK, CUSTO_OK,
+                     upload={"auditoria_aprovada": True})
+    assert "<div class='ct erro'><div class='ct-r'>Shorts na fila" in txt and "1 falha(s)" in txt
 
 
 def test_custo_acima_do_orcamento_tom_alerta(monkeypatch, tmp_path):

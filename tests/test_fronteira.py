@@ -172,3 +172,33 @@ def test_faixa_bordas():
 def test_segundos_para_ts():
     assert fr.segundos_para_ts(3725.5) == "01:02:05.50"
     assert fr.segundos_para_ts(-3) == "00:00:00.00"
+
+
+# ── Short: mesma regra dos longos (06/11/2026) ────────────────────────────────
+
+def frases(n_frases=12, por_frase=10):
+    """Frases de 10 palavras (0,4s cada + 0,1s), fim com ponto e 0,8s de pausa."""
+    palavras, t = [], 0.0
+    for f in range(n_frases):
+        for k in range(por_frase):
+            fim_frase = k == por_frase - 1
+            palavras.append({"word": f"p{f}_{k}" + ("." if fim_frase else ""), "start": t,
+                             "end": t + 0.4})
+            t += 0.4 + (0.8 if fim_frase else 0.1)
+    return palavras
+
+
+def test_encaixar_short_leva_o_fim_pro_fim_de_frase():
+    w = frases()
+    meio = w[34]["end"]                      # no meio da 4ª frase
+    r = fr.encaixar_short(w, 0.0, meio)
+    assert r["fim_ok"] and r["inicio_ok"]
+    assert r["fim"] in {w[29]["end"], w[39]["end"]}   # fim de uma frase vizinha
+    assert fr.problema_short(r) is None
+
+
+def test_encaixar_short_sem_ponto_natural_vira_problema():
+    w = [{"word": f"x{k}", "start": k * 0.5, "end": k * 0.5 + 0.4} for k in range(200)]
+    r = fr.encaixar_short(w, 0.0, 30.2)
+    assert not r["fim_ok"]
+    assert fr.problema_short(r).startswith("Short termina no meio da frase")

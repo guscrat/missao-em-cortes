@@ -83,6 +83,9 @@ CRITÉRIOS (SEJA CONSERVADOR — prefira deixar passar a cortar demais):
 1. Problemas técnicos óbvios ditos pelo speaker ("ah, espera, deixa eu arrumar a câmera", "sumiu o som", "a internet caiu")
 2. Cadeias longas de fillers que atrapalham ("éééé éééé éééé éééé", "hmmm hmmm hmmm" prolongados)
 3. Trechos onde o speaker está visivelmente procurando conteúdo sem falar nada relevante (rolando feed, abrindo link)
+4. Leitura de Pix, superchat ou doação no meio do assunto (nome do doador, valor, agradecimento,
+   mensagem paga lida em voz alta) que interrompe o raciocínio: remova do começo da leitura até
+   a volta ao assunto. Se a mensagem lida é a pergunta que puxa o assunto seguinte, NÃO remova.
 
 NÃO liste silêncios: gaps >3s entre palavras já são removidos automaticamente por
 um passo anterior do pipeline — não precisa caçar buracos nos timestamps.

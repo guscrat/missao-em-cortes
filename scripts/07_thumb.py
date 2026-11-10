@@ -79,6 +79,10 @@ TITULO_OVERRIDE = None
 variante = None
 proximo = "--proximo" in flags
 sem_llm = "--sem-llm" in flags
+# --trocar-publicada (06/11/2026): o Gu autorizou refazer a thumb de um longo JÁ agendado ou
+# publicado (ex.: apelido no texto). Só com --bloco; arquivado continua travado. A troca no
+# YouTube é à parte (09_upload.subir_thumb).
+trocar_publicada = "--trocar-publicada" in flags
 for f in flags:
     if f.startswith("--bloco="):
         bloco_manual = int(f.split("=", 1)[1])
@@ -95,6 +99,8 @@ if variante is not None and (bloco_manual is None or variante not in ("a", "b", 
     sys.exit("[!] --variante=a|b|c exige --bloco=N (refaz só a thumb escolhida, ex: pelo editor)")
 if proximo and bloco_manual is None:
     sys.exit("[!] --proximo exige --bloco=N (troca o frame da thumb escolhida de um bloco)")
+if trocar_publicada and bloco_manual is None:
+    sys.exit("[!] --trocar-publicada exige --bloco=N (só com ok do Gu, um longo por vez)")
 if TITULO_OVERRIDE is not None and bloco_manual is None:
     sys.exit("[!] --titulo exige --bloco=N (o texto se aplica a um bloco so)")
 
@@ -492,9 +498,12 @@ print(f"Gerando thumbs ({'variante ' + variante if variante else 'a/b/c'}"
 textos_novos = False
 for b in blocos_iter:
     status = (ler_bloco(stem, b["id"]) or {}).get("status")
-    if status in NAO_MEXER:
+    if status in NAO_MEXER and not (trocar_publicada and status != "arquivado"):
         print(f"[Bloco {b['id']}] já {status}: thumb não mexe\n")
         continue
+    if status in NAO_MEXER:
+        print(f"[Bloco {b['id']}] já {status}: --trocar-publicada (ok do Gu); a troca no "
+              f"YouTube é à parte")
     print(f"[Bloco {b['id']}] {b['tema']}")
     fila = ler_fila(b["id"]) if variante else None   # editor: mesmo frame, texto novo
     if fila is None:

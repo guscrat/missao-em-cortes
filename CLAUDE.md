@@ -16,7 +16,7 @@ Postura: simpática ao partido com independência crítica; títulos ousados **s
 |---|---|
 | `editorial-missao` | título, `texto_thumb`, descrição, segmentação (03/08), revisor (11), editor, grafias, Curador (13) |
 | `thumb-colagem` | thumbs: clássica pelo rosto (07, padrão; modo ab = 3 frames + 3 textos), colagem (07b, **pausada**), banco de personagens/licenças, identidade visual |
-| `youtube-compliance` | YPP, crédito da fonte, trava da auditoria, OAuth (2 projetos), upload (09), métricas (12), canal (14), `publicacao.txt` |
+| `youtube-compliance` | YPP, crédito da fonte, upload liberado (ex-trava da auditoria), OAuth (2 projetos), upload (09), métricas (12), canal (14), `publicacao.txt` |
 | `release` | git flow, as duas pastas, testador/revisor, PR, merge, release pra main, status de sexta |
 | `painel-eventos` | banco `state/pipeline.db`, eventos/custo por agente, status de bloco, kanban, arquivamento, `tarefa.py`/hooks |
 
@@ -43,8 +43,8 @@ tests/            pytest, tudo mockado
 
 Scripts (`scripts/`):
 - **Pipeline:** `pipeline.py` (orquestrador) · `01_baixar` · `02_transcribe` · `03_segmentar` · `04_cortar` · `04b_polir` · `04c_legendas` · `05_cards` · `06_montar` · `08_descricao`
-- **Off-pipeline:** `07_thumb` · `07b_colagem` · `09_upload` · `10_shorts` · `11_revisor` · `12_metricas` · `13_curador` · `14_canal` · `15_placar` · `16_thumb_ab` · `17_analytics` · `dia_d` · `calibrar_zoom` · `personagens` · `sincronizar_estado` · `tarefa` · `hook_agente` · `curador_oculto` (Agendador → Curador sem janela)
-- **Helpers (`_*.py`):** `_paths` (resolve pasta por stem, falha alto se ambíguo) · `_ffmpeg` (formato canônico) · `_eventos` (banco) · `_descricoes` · `_legenda` · `_grafias` · `_editor` · `_colagem` · `_thumb_rosto` · `_publicacao` · `_google` · `_youtube_leitura` · `_canal` · `_rodar` (roda step do pipeline com stderr ao vivo; a última linha vira o detalhe da falha) · `_fronteira` (ponto de corte natural: fim de frase + pausa, faixas de duração)
+- **Off-pipeline:** `07_thumb` · `07b_colagem` · `09_upload` · `10_shorts` · `11_revisor` · `12_metricas` · `13_curador` · `14_canal` · `15_placar` · `16_thumb_ab` · `17_analytics` · `dia_d` · `calibrar_zoom` · `personagens` · `sincronizar_estado` · `tarefa` · `hook_agente` · `curador_oculto` (Agendador → Curador sem janela) · `shorts_oculto` (Agendador 17h50 → fila de Shorts sem janela)
+- **Helpers (`_*.py`):** `_paths` (resolve pasta por stem, falha alto se ambíguo) · `_ffmpeg` (formato canônico) · `_eventos` (banco) · `_descricoes` · `_legenda` · `_grafias` · `_editor` · `_colagem` · `_thumb_rosto` · `_publicacao` · `_google` · `_youtube_leitura` · `_canal` · `_rodar` (roda step do pipeline com stderr ao vivo; a última linha vira o detalhe da falha) · `_fronteira` (ponto de corte natural: fim de frase + pausa, faixas de duração) · `_atualidade` (critério de atualidade: o 09 checa cada Short na data de publicação; mesmo texto no 11)
 
 ## Pipeline
 
@@ -66,7 +66,7 @@ Vídeo final: `[Cold open 15-30s] → [Intro 3s] → [Card 3s] → [Corte 3-30mi
 
 Overlays da live saem por **zoom por fonte** (`config/zoom.json`); stem sem entrada roda sem zoom e avisa. Calibrar: `calibrar_zoom.py <video> --salvar=<stem>`, depois `pipeline.py <stem> --desde=4`. Detalhes em `docs/pipeline.md`.
 
-Agentes off-pipeline (detalhes nas skills): Curador 13 às 17h **sugere** (`curador_modo: sugerir`; o Gu escolhe no painel com o botão Processar, ou cola um link em "Processar link" = origem `manual` no banco; só processa sozinho se o canal ficaria sem longo amanhã) · revisor 11 aprova/quarentena/descarta · 10 gera Shorts · 09 sobe longos e Shorts (`--shorts`, **travado até a auditoria**; dia D: `dia_d.py` + skill) · 12/14/15/17 só leem o canal (15 = placar do YPP; 17 = Analytics por vídeo no banco + termos de busca da semana pro Editor + vídeos antigos em alta (30+ dias, 3x as views semanais) com o tema, que o Curador prioriza; os dois 1x/dia pelo Curador) · 16 registra o resultado do "Testar e comparar" das thumbs (modo `ab`: a/b/c = 3 clássicas com frames e textos diferentes; colagem pausada).
+Agentes off-pipeline (detalhes nas skills): Curador 13 às 17h **sugere** (`curador_modo: sugerir`; o Gu escolhe no painel com o botão Processar, ou cola um link em "Processar link" = origem `manual` no banco; só processa sozinho se o canal ficaria sem longo amanhã) · revisor 11 aprova/quarentena/descarta · 10 gera Shorts · 09 sobe longos e Shorts (`--shorts`; upload **liberado em 06/11/2026**: o YouTube encerrou a revisão dizendo que vídeo da API não fica privado e a cota padrão de 10 mil basta; `auditoria_aprovada: true` em `config/upload.json` = upload liberado; dia D: `dia_d.py` + skill) · 12/14/15/17 só leem o canal (15 = placar do YPP; 17 = Analytics por vídeo no banco + termos de busca da semana pro Editor + vídeos antigos em alta (30+ dias, 3x as views semanais) com o tema, que o Curador prioriza; os dois 1x/dia pelo Curador) · 16 registra o resultado do "Testar e comparar" das thumbs (modo `ab`: a/b/c = 3 clássicas com frames e textos diferentes; colagem pausada).
 
 ## Regras transversais
 

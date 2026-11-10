@@ -17,7 +17,7 @@ FONTE = Path(__file__).parent.parent / "scripts" / "03_segmentar.py"
 NOMES_CONST = {"MODELO", "JANELA_MIN", "FOLGA_JANELA_MIN", "AVANCO_VAZIO_MIN",
                "RABO_JANELA_MIN"}
 NOMES_FUNC = {"linhas_com_tempo", "janelas", "pedir_blocos", "chamar_llm", "extrair_json",
-              "ts_s", "inicio_s", "assinatura"}
+              "ts_s", "inicio_s", "assinatura", "linha_datas"}
 
 
 def _ts(s):
@@ -53,7 +53,9 @@ def carregar(tmp_path, monkeypatch, minutos, respostas, palavras=None):
         Anthropic=lambda: SimpleNamespace(messages=msgs)))
     eventos = []
     monkeypatch.setattr(_custo, "gasto_live", lambda stem: 0.0)
-    ns = {"json": json, "hashlib": hashlib,
+    import _atualidade
+    from datetime import date
+    ns = {"json": json, "hashlib": hashlib, "_atualidade": _atualidade, "date": date,
           "BRUTA_PARCIAL": tmp_path / "segmentacao_bruta_parcial.json", "fr": fr, "_custo": _custo, "PASTA": tmp_path, "stem": "x",
           "INPUT": tmp_path / "transcricao.txt", "BRUTA": tmp_path / "segmentacao_bruta.json",
           "PROMPT": tmp_path / "prompt.md",
@@ -76,6 +78,16 @@ def test_live_curta_uma_chamada_sem_contexto_de_trecho(tmp_path, monkeypatch):
     assert [b["id"] for b in data["blocos"]] == [1]
     assert json.loads((tmp_path / "segmentacao_bruta.json").read_text(encoding="utf-8")) == data
     assert len(eventos) == 1 and eventos[0][1]["custo_usd"] > 0
+
+
+def test_pedido_leva_as_datas_pro_criterio_de_atualidade(tmp_path, monkeypatch):
+    pasta = tmp_path / "2026-10-26_x"
+    pasta.mkdir()
+    ns, msgs, _ = carregar(pasta, monkeypatch, 30, [{"blocos": [bloco(1, 20)]}])
+    ns["chamar_llm"]()
+    pedido = msgs.pedidos[0]["messages"][0]["content"]
+    assert pedido.startswith("DATA DA LIVE (aprox.): 26/10/2026 · HOJE: ")
+    assert "DATA DA LIVE" not in str(msgs.pedidos[0]["system"])   # fora do cache
 
 
 def test_live_longa_janelas_em_sequencia_a_partir_do_fim_do_ultimo_bloco(tmp_path, monkeypatch):

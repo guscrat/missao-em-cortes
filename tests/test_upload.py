@@ -151,6 +151,7 @@ def cenario(projeto, monkeypatch, tmp_path):
     monkeypatch.setattr(up, "autenticar", lambda: yt)
     monkeypatch.setattr(up, "MediaFileUpload", lambda *a, **k: None)
     monkeypatch.setattr(up, "COTA_PATH", tmp_path / "state" / "cota_youtube.json")
+    monkeypatch.setattr(up, "FILA_SHORTS", tmp_path / "state" / "shorts_fila.json")
     monkeypatch.setattr(up, "CONFIG", tmp_path / "nao_existe.json")   # usa DEFAULTS
     monkeypatch.setitem(up.DEFAULTS, "auditoria_aprovada", True)   # os testes antigos cobrem o agendado
     monkeypatch.setattr(up, "agora", lambda: datetime(2026, 10, 21, 13, 0, tzinfo=timezone.utc))
@@ -313,8 +314,8 @@ def travado(cenario, monkeypatch):
     return cenario
 
 
-def test_config_do_repo_esta_travada():
-    assert up.carregar_config()["auditoria_aprovada"] is False
+def test_config_do_repo_esta_liberada():
+    assert up.carregar_config()["auditoria_aprovada"] is True
 
 
 def test_travado_recusa_upload_real(travado, monkeypatch, capsys):
@@ -451,6 +452,27 @@ def test_slots_shorts_nunca_antes_do_longo_e_pula_ocupados():
     assert [(x.day, x.hour) for x in s] == [(22, 12)]
 
 
+def test_fila_de_prioridade_novo_na_frente_antigo_pega_o_que_o_novo_nao_pode():
+    """Ordem dada = prioridade. O novo (longo vai ao ar 22/10 18h) fica com o 1º horário depois
+    do longo; os antigos (longo já no ar) pegam os horários de antes e os de depois do novo."""
+    agora_ = datetime(2026, 10, 21, 9, 0, tzinfo=SP)
+    novo = datetime(2026, 10, 22, 18, 0, tzinfo=SP)
+    s = up.slots_shorts([novo, novo, None, None, None, None], set(), CFG, agora_)
+    assert [(x.day, x.hour) for x in s] == [(22, 20), (23, 12), (21, 12), (21, 20), (22, 12),
+                                            (23, 20)]
+
+
+def test_prioridade_short_mais_recente_depois_score():
+    from datetime import date
+
+    def item(dia, score, bid=1, stem="v"):
+        return {"data_live": date(2026, 11, dia), "score": score, "stem": stem, "bid": bid}
+    itens = [item(2, 9), item(6, 7), item(6, 9, bid=3), item(1, 10), {"stem": "z", "bid": 1}]
+    ordem = sorted(itens, key=up.prioridade_short)
+    assert [(x.get("data_live") and x["data_live"].day, x.get("score")) for x in ordem] == \
+        [(6, 9), (6, 7), (2, 9), (1, 10), (None, None)]
+
+
 def test_slots_shorts_respeita_antecedencia():
     s = up.slots_shorts([None], set(), CFG, datetime(2026, 10, 21, 10, 30, tzinfo=SP))
     assert (s[0].day, s[0].hour) == (21, 20)          # 12h já não dá 2h de antecedência
@@ -464,11 +486,21 @@ def _quem_fala(pasta, nome="Speaker (Arthur do Val)"):
     (pasta / "blocos.json").write_text(json.dumps(blocos), encoding="utf-8")
 
 
+_ATUALIDADE = []   # chamadas da checagem de atualidade mockada (fixture shorts)
+
+
 @pytest.fixture
-def shorts(cenario):
-    """Shorts 01-03: longo 01 subiu pela API, 02 foi agendado à mão (só no banco), 03 não subiu."""
+def shorts(cenario, monkeypatch):
+    """Shorts 01-03: longo 01 subiu pela API, 02 foi agendado à mão (só no banco), 03 não subiu.
+    A checagem de atualidade (paga) vem mockada: nada datado; `atualidade` registra as chamadas."""
+    import _atualidade
     from _eventos import upsert_bloco
     pasta, yt, banco = cenario
+    chamadas = []
+    monkeypatch.setattr(_atualidade, "checar_short",
+                        lambda stem, p, bid, quando, titulo="": chamadas.append((bid, quando)) or (False, ""))
+    _ATUALIDADE.clear()
+    _ATUALIDADE.append(chamadas)
     _quem_fala(pasta)
     (pasta / "shorts").mkdir()
     reg = {}
@@ -543,6 +575,110 @@ def test_short_para_revisar_nao_sobe(shorts, capsys):
     (pasta / "shorts" / "shorts.json").write_text(json.dumps(reg), encoding="utf-8")
     up.main([str(pasta), "--shorts"])
     assert len(yt.uploads) == 1 and "pouco rosto" in capsys.readouterr().out
+
+
+def test_short_arquivado_nao_sobe(shorts, capsys):
+    """Short datado sai só ele: o bloco (longo publicado) continua como está."""
+    pasta, yt, _ = shorts
+    reg = json.loads((pasta / "shorts" / "shorts.json").read_text(encoding="utf-8"))
+    reg["01"].update(arquivado=True, motivo="datado: debate do 2º turno")
+    (pasta / "shorts" / "shorts.json").write_text(json.dumps(reg), encoding="utf-8")
+    up.main([str(pasta), "--shorts"])
+    out = capsys.readouterr().out
+    assert len(yt.uploads) == 1 and "Short arquivado (datado: debate do 2º turno)" in out
+
+
+def test_short_datado_na_publicacao_e_arquivado_e_sai_do_plano(shorts, monkeypatch, capsys):
+    import _atualidade
+    pasta, yt, _ = shorts
+    monkeypatch.setattr(_atualidade, "checar_short",
+                        lambda stem, p, bid, quando, titulo="": (bid == 1, "apuração ao vivo"))
+    assert up.main([str(pasta), "--shorts"]) == 0
+    assert len(yt.uploads) == 1
+    assert yt.uploads[0]["status"]["publishAt"] == "2026-10-23T23:00:00Z"   # o 02 segue no horário dele
+    sh = json.loads((pasta / "shorts" / "shorts.json").read_text(encoding="utf-8"))
+    assert sh["01"]["arquivado"] is True and "apuração ao vivo" in sh["01"]["motivo"]
+    assert "datado em 22/10" in sh["01"]["motivo"]
+    assert "[arquivado]" in capsys.readouterr().out
+
+
+def test_atualidade_checa_na_data_do_horario_do_short(shorts):
+    pasta, yt, _ = shorts
+    up.main([str(pasta), "--shorts"])
+    from datetime import date
+    assert sorted(_ATUALIDADE[0]) == [(1, date(2026, 10, 22)), (2, date(2026, 10, 23))]
+
+
+def test_checagem_de_atualidade_que_falha_nao_sobe(shorts, monkeypatch, capsys):
+    import _atualidade
+
+    def falha(*a, **k):
+        raise RuntimeError("api fora")
+    monkeypatch.setattr(_atualidade, "checar_short", falha)
+    assert up.main([str(pasta := shorts[0]), "--shorts"]) == 0
+    assert shorts[1].uploads == []
+    assert "checagem falhou" in capsys.readouterr().out
+    sh = json.loads((pasta / "shorts" / "shorts.json").read_text(encoding="utf-8"))
+    assert not sh["01"].get("arquivado")   # falha não arquiva
+
+
+def test_dry_run_com_atualidade_mostra_e_nao_arquiva(shorts, monkeypatch, capsys):
+    import _atualidade
+    pasta, yt, _ = shorts
+    monkeypatch.setattr(_atualidade, "checar_short",
+                        lambda stem, p, bid, quando, titulo="": (bid == 1, "apuração"))
+    assert up.main([str(pasta), "--shorts", "--dry-run", "--atualidade"]) == 0
+    out = capsys.readouterr().out
+    assert "[seria arquivado]" in out and "1 upload(s)" in out and yt.uploads == []
+    sh = json.loads((pasta / "shorts" / "shorts.json").read_text(encoding="utf-8"))
+    assert not sh["01"].get("arquivado")
+
+
+def test_atualidade_sem_dry_run_recusa(shorts):
+    with pytest.raises(SystemExit):
+        up.main([str(shorts[0]), "--shorts", "--atualidade"])
+
+
+def test_short_no_meio_da_frase_nao_entra_na_fila(shorts, capsys):
+    """Revisor de fronteira antes da fila ($0): trecho que termina no meio da frase não sobe."""
+    pasta, yt, _ = shorts
+    dados = json.loads((pasta / "blocos.json").read_text(encoding="utf-8"))
+    dados["blocos"][0]["short"] = {"timestamp_inicio": "00:00:00.00", "timestamp_fim": "00:00:10.20"}
+    (pasta / "blocos.json").write_text(json.dumps(dados), encoding="utf-8")
+    palavras = [{"word": f"x{k}", "start": k * 0.5, "end": k * 0.5 + 0.4} for k in range(100)]
+    (pasta / "words.json").write_text(json.dumps({"words": palavras}), encoding="utf-8")
+    up._PALAVRAS.clear()
+    up.main([str(pasta), "--shorts"])
+    assert "Short termina no meio da frase" in capsys.readouterr().out
+    assert len(yt.uploads) == 1                                   # só o 02
+
+
+def test_fronteira_conferida_pelo_gu_entra_na_fila(shorts):
+    pasta, yt, _ = shorts
+    dados = json.loads((pasta / "blocos.json").read_text(encoding="utf-8"))
+    dados["blocos"][0]["short"] = {"timestamp_inicio": "00:00:00.00", "timestamp_fim": "00:00:10.20",
+                                   "fronteira_conferida": True}
+    (pasta / "blocos.json").write_text(json.dumps(dados), encoding="utf-8")
+    palavras = [{"word": f"x{k}", "start": k * 0.5, "end": k * 0.5 + 0.4} for k in range(100)]
+    (pasta / "words.json").write_text(json.dumps({"words": palavras}), encoding="utf-8")
+    up._PALAVRAS.clear()
+    up.main([str(pasta), "--shorts"])
+    assert len(yt.uploads) == 2
+
+
+def test_revisar_mostra_o_motivo(shorts, capsys):
+    pasta, yt, _ = shorts
+    reg = json.loads((pasta / "shorts" / "shorts.json").read_text(encoding="utf-8"))
+    reg["01"].update(revisar=True, motivo_revisar="Short começa no meio da frase")
+    (pasta / "shorts" / "shorts.json").write_text(json.dumps(reg), encoding="utf-8")
+    up.main([str(pasta), "--shorts"])
+    assert "Short começa no meio da frase (revisar: true" in capsys.readouterr().out
+
+
+def test_dry_run_nao_paga_atualidade(shorts, capsys):
+    pasta, yt, _ = shorts
+    up.main([str(pasta), "--shorts", "--dry-run"])
+    assert _ATUALIDADE[0] == [] and "checagem de atualidade" in capsys.readouterr().out
 
 
 def test_shorts_travados_sem_auditoria(shorts, monkeypatch):
@@ -712,3 +848,62 @@ def test_short_sem_quem_fala_nao_sobe(shorts, capsys):
     _quem_fala(pasta, "Speaker 1")                        # ninguém conhecido; stem "v" sem canal
     up.main([str(pasta), "--shorts"])
     assert not yt.uploads and "sem quem fala" in capsys.readouterr().out
+
+
+# ── resumo da rodada (tarefa do Agendador → painel) ─────────────────────────
+
+def _fila():
+    return json.loads(up.FILA_SHORTS.read_text(encoding="utf-8"))
+
+
+def test_rodada_grava_resumo_e_evento_ok(shorts):
+    pasta, _, banco = shorts
+    up.main([str(pasta), "--shorts"])
+    f = _fila()
+    assert (f["enviados"], f["falhas"], f["faltam"]) == (2, 0, 0)
+    ev = banco("SELECT status, mensagem FROM eventos WHERE etapa='09_shorts_rodada'")
+    assert [(e["status"], e["mensagem"]) for e in ev] == [("ok", "subiram 2 · faltam 0 · falhas 0")]
+
+
+def test_rodada_que_para_na_cota_conta_o_que_falta_e_nao_e_falha(shorts):
+    pasta, _, banco = shorts
+    cota = up.Cota(up.DEFAULTS["cota_limite_dia"])
+    cota.usadas = cota.limite - up.DEFAULTS["cota_upload"]
+    cota._salvar()
+    up.main([str(pasta), "--shorts"])
+    assert (_fila()["enviados"], _fila()["faltam"]) == (1, 1)
+    assert banco("SELECT status FROM eventos WHERE etapa='09_shorts_rodada'")[0]["status"] == "ok"
+
+
+def test_rodada_com_falha_vira_evento_de_falha(shorts):
+    pasta, yt, banco = shorts
+    _insert_falhando(yt, [up.HttpError(_Resp(500), b"erro")])
+    up.main([str(pasta), "--shorts"])
+    assert (_fila()["enviados"], _fila()["falhas"], _fila()["faltam"]) == (1, 1, 1)
+    assert banco("SELECT status FROM eventos WHERE etapa='09_shorts_rodada'")[0]["status"] == "falha"
+
+
+def test_fila_vazia_grava_zero(shorts):
+    pasta, _, _ = shorts
+    up.main([str(pasta), "--shorts"])
+    up.main([str(pasta), "--shorts"])                        # 2ª rodada: nada a subir
+    assert (_fila()["enviados"], _fila()["faltam"]) == (0, 0)
+
+
+def test_dry_run_max_e_bloco_nao_gravam_resumo(shorts):
+    pasta, _, banco = shorts
+    up.main([str(pasta), "--shorts", "--dry-run"])
+    up.main([str(pasta), "--shorts", "--max=1"])
+    up.main([str(pasta), "--shorts", "--bloco=2"])
+    assert not up.FILA_SHORTS.exists()
+    assert banco("SELECT 1 FROM eventos WHERE etapa='09_shorts_rodada'") == []
+
+
+def test_sem_cota_nao_paga_atualidade_e_conta_a_fila(shorts):
+    pasta, yt, _ = shorts
+    cota = up.Cota(up.DEFAULTS["cota_limite_dia"])
+    cota.usadas = cota.limite - 1                            # não cabe nenhum Short
+    cota._salvar()
+    up.main([str(pasta), "--shorts"])
+    assert _ATUALIDADE[0] == [] and yt.uploads == []
+    assert (_fila()["enviados"], _fila()["faltam"]) == (0, 2)

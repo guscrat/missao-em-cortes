@@ -20,9 +20,11 @@ O YouTube pune *reused content* desde Jul/2025. O que nos mantém elegíveis é 
 - URL da live original na descrição (vem de `inputs/<stem>.url`). Bloco com `[COLAR URL DA LIVE AQUI]` **não sobe**; `.url` apontando pro nosso canal → o 09 se recusa.
 - Foto de terceiro na thumb: só licença aberta e crédito na descrição (skill `thumb-colagem`).
 
-## Trava da auditoria — leia antes de qualquer upload
+## Upload liberado (06/11/2026) — ex-trava da auditoria
 
-Vídeo enviado por projeto de API **não auditado** fica **bloqueado como privado** no YouTube: não dá pra publicar nem recorrer, só reenviando (queima o vídeo). Por isso `"auditoria_aprovada": false` em `config/upload.json` faz o 09 **recusar** upload real. Exceção: upload de teste (`--bloco=N --teste`). Até a auditoria, Curador e `publicacao.txt` trabalham **só com longos**: o Curador nem gera Short (o `10_shorts` roda à mão no dia D) e eles sobem pela API depois. A flag é lida por `_paths.auditoria_aprovada()`. Virar pra `true` só quando a auditoria for aprovada, seguindo o **runbook do dia D** (`references/dia-d.md`): quando o Gu disser "auditoria aprovada", é executar ele.
+**O YouTube encerrou a revisão em 06/11/2026** sem auditoria: segundo eles, vídeo enviado pela API **não fica privado automaticamente** e a cota padrão (10 mil/dia) basta, sem pedir extra. Por isso `"auditoria_aprovada": true` em `config/upload.json` — o nome ficou por compatibilidade; leia como **"upload liberado"**. A liberação seguiu o runbook do dia D (`references/dia-d.md`) com um ajuste do Gu: o teste foi **1 longo + 1 Short** reais agendados públicos, e Shorts (12h/20h) e agendamento automático dos longos só depois do ok dele no YouTube. Se um vídeo da API aparecer travado como privado, é o Rollback do runbook.
+
+Histórico (até 06/11/2026): vídeo enviado por projeto de API **não auditado** fica **bloqueado como privado** no YouTube: não dá pra publicar nem recorrer, só reenviando (queima o vídeo). Por isso `"auditoria_aprovada": false` em `config/upload.json` faz o 09 **recusar** upload real. Exceção: upload de teste (`--bloco=N --teste`). Até a auditoria, Curador e `publicacao.txt` trabalham **só com longos**: o Curador nem gera Short (o `10_shorts` roda à mão no dia D) e eles sobem pela API depois. A flag é lida por `_paths.auditoria_aprovada()`. Virar pra `true` só quando a auditoria for aprovada, seguindo o **runbook do dia D** (`references/dia-d.md`): quando o Gu disser "auditoria aprovada", é executar ele.
 
 ## Dois projetos OAuth, nunca misturar
 

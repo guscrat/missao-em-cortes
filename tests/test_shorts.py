@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+import _fronteira as fr
 import _paths
 
 _spec = importlib.util.spec_from_file_location(
@@ -176,6 +177,74 @@ def test_main_pouco_rosto_marca_revisar(video, monkeypatch, capsys):
     assert "REVISE" in capsys.readouterr().out
     reg = json.loads((pasta / "shorts" / "shorts.json").read_text(encoding="utf-8"))
     assert reg["01"]["revisar"] is True and reg["01"]["taxa_rosto"] == 0.0
+
+
+def _frases_json(pasta, continuo=False):
+    """words.json com frases de 10 palavras e pausa de 0,8s no fim (ou fala contínua)."""
+    palavras, t = [], 0.0
+    for f in range(30 if continuo else 12):   # contínua: o fim da fala fica longe (> 1 min)
+        for k in range(10):
+            fim = k == 9 and not continuo
+            palavras.append({"word": f"p{f}_{k}" + ("." if fim else ""), "start": t, "end": t + 0.4})
+            t += 0.4 + (0.8 if fim else 0.1)
+    (pasta / "words.json").write_text(json.dumps({"words": palavras}), encoding="utf-8")
+    return palavras
+
+
+def _trecho(pasta, bid, campo, ini, fim):
+    dados = json.loads((pasta / "blocos.json").read_text(encoding="utf-8"))
+    b = dados["blocos"][bid - 1]
+    b.pop("cold_open", None)
+    b[campo] = {"timestamp_inicio": fr.segundos_para_ts(ini), "timestamp_fim": fr.segundos_para_ts(fim)}
+    (pasta / "blocos.json").write_text(json.dumps(dados), encoding="utf-8")
+
+
+def test_main_encaixa_o_short_no_ponto_natural_e_grava_no_blocos(video, capsys):
+    pasta, _ = video
+    w = _frases_json(pasta)
+    _trecho(pasta, 1, "short", 0.0, w[34]["end"])            # termina no meio da frase
+    assert sh.main([str(pasta), "--bloco=1"]) == 0
+    assert "[encaixe]" in capsys.readouterr().out
+    b = json.loads((pasta / "blocos.json").read_text(encoding="utf-8"))["blocos"][0]
+    fim = sh.hhmmss_para_segundos(b["short"]["timestamp_fim"])
+    assert round(fim, 2) in {round(w[29]["end"], 2), round(w[39]["end"], 2)}
+    reg = json.loads((pasta / "shorts" / "shorts.json").read_text(encoding="utf-8"))
+    assert reg["01"]["revisar"] is False and reg["01"]["motivo_revisar"] == ""
+
+
+def test_main_cold_open_do_longo_fica_intacto(video):
+    pasta, _ = video
+    w = _frases_json(pasta)
+    _trecho(pasta, 1, "cold_open", 0.0, w[34]["end"])
+    original = json.loads((pasta / "blocos.json").read_text(encoding="utf-8"))["blocos"][0]["cold_open"]
+    sh.main([str(pasta), "--bloco=1"])
+    b = json.loads((pasta / "blocos.json").read_text(encoding="utf-8"))["blocos"][0]
+    assert b["cold_open"] == original and b["short"]["timestamp_fim"] != original["timestamp_fim"]
+
+
+def test_main_sem_ponto_natural_fica_em_revisar(video, capsys):
+    pasta, _ = video
+    _frases_json(pasta, continuo=True)
+    _trecho(pasta, 1, "short", 0.0, 30.2)
+    sh.main([str(pasta), "--bloco=1"])
+    assert "NÃO sobe" in capsys.readouterr().out
+    reg = json.loads((pasta / "shorts" / "shorts.json").read_text(encoding="utf-8"))
+    assert reg["01"]["revisar"] is True and "meio da frase" in reg["01"]["motivo_revisar"]
+
+
+def test_main_fronteira_conferida_pelo_gu_nao_reencaixa(video, capsys):
+    pasta, _ = video
+    w = _frases_json(pasta, continuo=True)
+    _trecho(pasta, 1, "short", 0.0, 30.2)
+    dados = json.loads((pasta / "blocos.json").read_text(encoding="utf-8"))
+    dados["blocos"][0]["short"]["fronteira_conferida"] = True
+    (pasta / "blocos.json").write_text(json.dumps(dados), encoding="utf-8")
+    sh.main([str(pasta), "--bloco=1"])
+    assert "[conferida]" in capsys.readouterr().out
+    b = json.loads((pasta / "blocos.json").read_text(encoding="utf-8"))["blocos"][0]
+    assert b["short"]["timestamp_fim"] == fr.segundos_para_ts(30.2)      # não mexeu
+    reg = json.loads((pasta / "shorts" / "shorts.json").read_text(encoding="utf-8"))
+    assert reg["01"]["revisar"] is False
 
 
 def test_main_sem_video_original_falha_alto(video, projeto):

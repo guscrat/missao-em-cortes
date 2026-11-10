@@ -30,11 +30,24 @@ Quando a auditoria for aprovada, mude a flag pra `true` e o 09 passa a subir pri
 `uv run py scripts/09_upload.py <stem>|todos --shorts [--bloco=N] [--max=N] [--dry-run]` — mesma trava da auditoria (sem `--teste`).
 
 - Sobe `shorts/short_NN_*.mp4` (do 10) privado + `publishAt` nos `shorts_horarios` do config (`["12:00", "20:00"]` = 2/dia). `todos` faz **um plano só** com todas as lives que têm `shorts/shorts.json`.
-- Cada Short vai pro 1º horário livre (não ocupado por outro Short) **a partir da ida do longo ao ar**; só sobe se o longo do bloco já tem `youtube_id` (`youtube.json` ou banco, inclusive agendado à mão e marcado pelo 14).
-- Não sobe: bloco em quarentena/descartado/arquivado, `revisar: true` no `shorts.json` (pouco rosto), sem crédito da fonte.
+- **Fila pelo mais recente (06/11/2026)**: a fila é ordenada por **data da live** (pasta) mais nova e depois **score** (`prioridade_short`), não por ordem de chegada. Os horários são percorridos em ordem e cada um vai pro Short de maior prioridade que já pode sair (`slots_shorts`): Short novo passa na frente, o antigo pega o horário que o novo ainda não pode usar e continua na fila enquanto não ficar datado (checagem de atualidade). `--max` pega os N de maior prioridade. `--dry-run --atualidade` mostra a checagem (paga) sem arquivar.
+- Cada Short só sai num horário livre (não ocupado por outro Short) **a partir da ida do longo ao ar**; só sobe se o longo do bloco já tem `youtube_id` (`youtube.json` ou banco, inclusive agendado à mão e marcado pelo 14).
+- **Atualidade (06/11/2026)**: no envio real, antes de subir, cada Short passa por `_atualidade.checar_short` na data do horário dele (~US$ 0,002, Sonnet 5.5); datado → `"arquivado": true` + motivo no `shorts.json` e sai do plano; checagem que falha → não sobe nesta rodada. O `--dry-run` não paga. Regra na skill `editorial-missao`.
+- Não sobe: bloco em quarentena/descartado/arquivado, `revisar: true` no `shorts.json` (pouco rosto ou sem ponto natural; o motivo vem em `motivo_revisar`), trecho do Short que começa ou termina no meio da frase (revisor de fronteira, $0, `fronteira_short`), `"arquivado": true` + `"motivo"` no `shorts.json` (Short datado: arquiva só o Short, o bloco do longo publicado fica como está), sem crédito da fonte.
 - Título = "MANCHETE | quem fala" (`_descricoes.titulo_short`, até 60 chars, corta a manchete e nunca o nome). Manchete (`_descricoes.manchete`) = `texto_thumb`, senão `tema` (com aviso), com grafias oficiais também em CAIXA ALTA; é o que o 10 queima. Quem fala = `speakers_principais` casado nas grafias, senão o dono do canal. Sem manchete ou sem quem fala, não sobe. O 14 casa exato. Descrição do longo com `▶️ Vídeo completo: https://youtu.be/<longo>` no topo; sem thumb.
 - Registro em `outputs/<pasta>/youtube_shorts.json` (com `longo_id` e `relacionado_ok`) + `youtube_id`/`postado` no `shorts.json` (tira do estoque e do `publicacao.txt`).
 - **Vídeo relacionado** não existe na Data API: marcado à mão no Studio; a lista sai de `dia_d.py relacionados`.
+- **Rodada diária no Agendador (07/11/2026)**: a tarefa `MissaoEmCortes-Shorts` roda todo dia às **17:50** (depois do Curador; `-StartWhenAvailable`) o `scripts/shorts_oculto.py` sem janela, que chama `09_upload.py todos --shorts` e loga em `state/shorts.log`. Sobe o que couber na cota (~6/dia), com a checagem de atualidade, e para sozinha quando a fila zera (rodada sem nada não gasta). Toda rodada real da fila inteira (sem `--bloco`/`--max`/`--dry-run`, à mão ou pela tarefa) grava `state/shorts_fila.json` (`enviados`, `falhas`, `faltam` = prontos que não subiram) + evento `09_shorts_rodada` (`falha` se algum upload falhou). Se o 09 quebrar antes disso (token, rede), o `shorts_oculto` registra a falha com a última linha do log. Painel: cartão **Shorts na fila** (aba Hoje) + alertas "Upload de Shorts falhou" (some na próxima rodada ok) e "Upload de Shorts parado" (fila > 0 e nenhuma rodada há 26h). Registrar, no PowerShell, apontando pra **pasta principal**:
+
+```powershell
+$raiz = "C:\Users\gusta\Downloads\projetos\missao-em-cortes"
+$a = New-ScheduledTaskAction -Execute "$raiz\.venv\Scripts\pythonw.exe" -Argument "scripts\shorts_oculto.py" -WorkingDirectory $raiz
+$t = New-ScheduledTaskTrigger -Daily -At 17:50
+$s = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 2) -DontStopIfGoingOnBatteries -AllowStartIfOnBatteries
+Register-ScheduledTask -TaskName "MissaoEmCortes-Shorts" -Action $a -Trigger $t -Settings $s -Description "Missão em Cortes: sobe a fila de Shorts (09_upload todos --shorts, sem janela)"
+```
+
+Conferir: `Get-ScheduledTask -TaskName "MissaoEmCortes-Shorts" | Get-ScheduledTaskInfo`. Rodar agora: `Start-ScheduledTask -TaskName "MissaoEmCortes-Shorts"`. Pausar: `Disable-ScheduledTask -TaskName "MissaoEmCortes-Shorts"`.
 
 ## Simulação (`--como-aprovada`)
 

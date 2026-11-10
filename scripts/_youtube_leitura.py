@@ -64,9 +64,12 @@ def listar_videos(yt) -> list[dict]:
         pagina = r.get("nextPageToken")
         if not pagina:
             break
+    # Com 50+ uploads a playlist vem paginada e pode repetir um vídeo entre páginas: sem tirar a
+    # repetição, o 17 grava a mesma chave 2x no dia e a foto inteira falha (UNIQUE).
+    unicos = list(dict.fromkeys(it["contentDetails"]["videoId"] for it in itens))
     videos = []
-    for i in range(0, len(itens), 50):
-        ids = [it["contentDetails"]["videoId"] for it in itens[i:i + 50]]
+    for i in range(0, len(unicos), 50):
+        ids = unicos[i:i + 50]
         r = yt.videos().list(part="contentDetails,snippet,status", id=",".join(ids)).execute()
         for v in r["items"]:
             videos.append({"id": v["id"], "titulo": v["snippet"]["title"],
