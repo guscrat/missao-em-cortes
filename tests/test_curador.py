@@ -992,3 +992,30 @@ def test_ids_agendados_ignora_registro_estranho(tmp_path):
     assert cu.ids_agendados(tmp_path) == {1}
     (tmp_path / "youtube.json").write_text("[1]", encoding="utf-8")
     assert cu.ids_agendados(tmp_path) == set()
+
+
+def test_short_que_falha_no_agendamento_vira_aviso(raiz, monkeypatch):
+    monkeypatch.setattr(cu, "auditoria_aprovada", lambda: True)
+    monkeypatch.setattr(cu, "agendar_no_processar", lambda: True)
+    pasta = raiz / "outputs" / "renan_x"
+    pasta.mkdir(parents=True, exist_ok=True)
+    (pasta / "youtube.json").write_text('{"01": {"youtube_id": "y"}}', encoding="utf-8")
+    monkeypatch.setattr(cu, "rodar", lambda s, *a: not (s == "09_upload.py" and "--shorts" in a))
+    res = {"avisos": []}
+    cu.agendar("renan_x", pasta, [1], res)
+    assert res["agendados"] == 1 and any("Shorts falhou" in a for a in res["avisos"])
+
+
+def test_processar_escolhido_grava_mensagem_com_agendados(monkeypatch):
+    gravadas = []
+    monkeypatch.setattr(cu, "gravar_estado", lambda e: None)
+    monkeypatch.setattr(cu, "gravar_sugestao", lambda vid, **kw: gravadas.append(kw))
+    monkeypatch.setattr(cu, "evento", lambda *a, **k: None)
+    monkeypatch.setattr(cu, "processar_seguro",
+                        lambda item: {"ok": True, "aprovados": 3, "agendados": 2, "avisos": []})
+    estado = {"v": {"canal": "c", "url": "u", "titulo": "T", "prefixo": "p", "stem": "p_t"}}
+    monkeypatch.setattr(cu, "_canal_de", lambda cfg, c: {})
+    rodada = {"escolhidos": [], "fila": [], "processados": []}
+    cu.processar_escolhido({}, estado, "v", rodada, "teste")
+    assert gravadas[-1]["status"] == "processada"
+    assert gravadas[-1]["mensagem"] == "3 corte(s) pronto(s) pra publicar, 2 agendado(s) no YouTube"
