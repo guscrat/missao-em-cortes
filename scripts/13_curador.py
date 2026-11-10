@@ -39,8 +39,11 @@ Fluxo:
      hoje até o último longo agendado no canal + longos aprovados / longos_por_dia
      ("canal coberto até DD/MM"). Shorts não entram na conta.
      Aí processa 1 vídeo só, o de maior prioridade (empate: o mais recente):
-     01_baixar → pipeline.py --polir → 11_revisor → 10_shorts (aprovados) → publicacao.txt.
+     01_baixar → pipeline.py --polir → 11_revisor → 10_shorts (aprovados) → publicacao.txt
+     → 09_upload (longos aprovados) → 09_upload todos --shorts.
      Shorts só com config/upload.json → auditoria_aprovada true (antes disso ninguém posta).
+     O agendamento no fim (09) só com auditoria_aprovada E agendar_no_processar true
+     (config/upload.json; 10/11/2026). Cota/falha no 09 vira aviso, não falha do vídeo.
      ~US$ 0,65 por vídeo. Fila com mais de DIAS_ARQUIVAR dias expira.
      Thumb colagem (config/thumb.json): "teste" roda o 07b_colagem no fim, em thumbs/colagem/
      (~US$ 0,15/vídeo, não mexe nas thumbs que sobem); "padrao" roda com --aplicar antes do revisor;
@@ -677,8 +680,50 @@ def modo_colagem() -> str:
     return modo if modo in ("teste", "ab", "padrao") else "desligado"
 
 
+def agendar_no_processar() -> bool:
+    """config/upload.json → agendar_no_processar (o Gu confia no pipeline, 10/11/2026): no fim
+    do Processar o 09 já agenda os longos aprovados e a fila de Shorts. Sem a chave: não agenda."""
+    try:
+        cfg = json.loads((ROOT / "config" / "upload.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(cfg, dict) and cfg.get("agendar_no_processar") is True
+
+
+def ids_agendados(pasta: Path) -> set[int]:
+    """Blocos que o 09 já subiu (outputs/<pasta>/youtube.json, o registro à prova de falha)."""
+    try:
+        reg = json.loads((pasta / "youtube.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return set()
+    return {int(nn) for nn, r in reg.items()
+            if str(nn).isdigit() and isinstance(r, dict) and r.get("youtube_id")} \
+        if isinstance(reg, dict) else set()
+
+
+def agendar(stem: str, pasta: Path, ids: list[int], res: dict) -> None:
+    """Sobe os longos aprovados (privado + publishAt, slots do config) e depois a fila de
+    Shorts inteira (o Short só sai depois do longo dele). Falha ou cota no fim vira aviso:
+    os cortes estão prontos, dá pra rodar o 09 de novo à mão; os Shorts que sobrarem a
+    tarefa das 17h50 (shorts_oculto) sobe."""
+    if not ids:
+        return
+    antes = ids_agendados(pasta)                     # "Tentar de novo": não conta os de antes
+    rodar("09_upload.py", stem)
+    depois = ids_agendados(pasta)
+    faltam = sorted(set(ids) - depois)
+    res["agendados"] = len((depois - antes) & set(ids))
+    if faltam:
+        res["avisos"].append(f"{stem}: {len(faltam)} longo(s) não agendado(s) "
+                             f"(blocos {', '.join(map(str, faltam))}; cota ou falha no upload) — "
+                             f"rode 09_upload.py {stem}")
+    if res["agendados"] and not rodar("09_upload.py", "todos", "--shorts"):
+        res["avisos"].append(f"{stem}: upload de Shorts falhou ou ficou pra depois "
+                             f"(a tarefa das 17h50 tenta de novo; veja o 09_upload.py todos --shorts)")
+
+
 ROTULOS = {"01_baixar.py": "baixando", "pipeline.py": "pipeline", "11_revisor.py": "revisor",
-           "10_shorts.py": "Shorts", "07b_colagem.py": "thumb colagem"}
+           "10_shorts.py": "Shorts", "07b_colagem.py": "thumb colagem", "09_upload.py": "agendando"}
 
 
 def rodar(script: str, *args: str) -> bool:
@@ -762,8 +807,12 @@ def processar(item: dict) -> dict:
             res["avisos"].append(f"{stem}: thumb colagem (teste) falhou (07b_colagem.py {stem})")
     caminho, lista = gerar(pasta)
     res.update(ok=True, aprovados=len(lista), publicacao=str(caminho) if caminho else None)
-    evento(stem, "curador_pipeline", "ok", agente="curador",
-           mensagem=f"{len(lista)} corte(s) pronto(s) pra publicar")
+    if auditoria_aprovada() and agendar_no_processar():
+        agendar(stem, pasta, [b["id"] for b in aprovados(pasta)], res)
+    msg = f"{len(lista)} corte(s) pronto(s) pra publicar"
+    if "agendados" in res:
+        msg += f", {res['agendados']} agendado(s) no YouTube"
+    evento(stem, "curador_pipeline", "ok", agente="curador", mensagem=msg)
     return res
 
 
@@ -1030,8 +1079,10 @@ def processar_escolhido(cfg: dict, estado: dict, vid: str, rodada: dict, porque:
     res = processar_seguro(item)
     rodada["processados"].append(res)
     if res["ok"]:
-        gravar_sugestao(vid, status="processada",
-                        mensagem=f"{res['aprovados']} corte(s) pronto(s) pra publicar")
+        msg = f"{res['aprovados']} corte(s) pronto(s) pra publicar"
+        if "agendados" in res:
+            msg += f", {res['agendados']} agendado(s) no YouTube"
+        gravar_sugestao(vid, status="processada", mensagem=msg)
         return res
     if not (INPUTS / f"{item['stem']}.url").exists():
         # nem baixou: volta pra fila (sem nova chamada de LLM) até MAX_TENTATIVAS
