@@ -46,6 +46,14 @@ def test_views_semana_usa_coleta_mais_recente_ate_o_dia():
     assert pa.views_semana(h, "2026-10-28")[0] == 10
 
 
+def test_views_semana_coleta_longe_demais_do_alvo_nao_vale():
+    """Faltou a coleta de 7 dias antes e a mais próxima é bem mais velha: não vira 'semana'."""
+    h = _hist(("2026-10-15", "a", 5), ("2026-10-28", "a", 40))   # alvo 21/10, 6 dias antes
+    assert pa.views_semana(h, "2026-10-28") == (None, None)
+    h2 = _hist(("2026-10-19", "a", 5), ("2026-10-28", "a", 40))  # 2 dias antes: ainda vale
+    assert pa.views_semana(h2, "2026-10-28")[0] == 35
+
+
 # --- views_por_dia -------------------------------------------------------------------
 
 def test_views_por_dia_pula_buraco_de_coleta():
@@ -99,6 +107,16 @@ def test_publicados_fuso_naive_e_sao_paulo():
     assert pa.publicados_por_semana(_pub("2026-11-10T16:00:00Z"), naive).sum() == 0   # futuro
     assert pa.publicados_por_semana(_pub("2026-11-10T14:00:00Z"), naive).sum() == 1
     assert a.index[-1] == "03/11"                      # rótulo no fuso de SP
+
+
+def test_publicados_publish_at_sem_fuso_e_horario_de_brasilia():
+    """publish_at gravado sem offset = horário de Brasília (como hoje._local), não UTC."""
+    naive = pd.Timestamp("2026-11-10 12:00")          # agora: 12:00 SP
+    # 13:00 sem fuso = 13:00 SP (futuro); lido como UTC seria 10:00 SP e contaria
+    assert pa.publicados_por_semana(_pub("2026-11-10T13:00:00"), naive).sum() == 0
+    assert pa.publicados_por_semana(_pub("2026-11-10T11:00:00"), naive).sum() == 1
+    misto = _pub("2026-11-09T18:00:00-03:00", "2026-11-08T18:00:00", "lixo", None)
+    assert pa.publicados_por_semana(misto, naive).iloc[-1] == 2
 
 
 def test_publicados_corta_semanas_zeradas_iniciais_mas_mantem_ultimas_duas():

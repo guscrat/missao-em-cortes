@@ -33,6 +33,7 @@ FORA_DA_BUSCA_BAIXO = 25.0    # % das views que não vêm da busca
 LONGOS_MIN_SEMANA = 5         # longos publicados nos últimos 7 dias
 DIAS_COLETA_VELHA = 1         # coleta mais velha que isso = o 17 parou de gravar
 MIN_VIDEOS_FAIXA = 3          # faixa de duração com menos vídeos não entra na comparação
+TOLERANCIA_COLETA = 2         # semana contra semana: coleta até 2 dias antes do alvo ainda vale
 
 
 def _opcional(con, sql: str, params=()) -> pd.DataFrame:
@@ -48,8 +49,12 @@ def _diagnostico(con, data: str) -> dict:
     na semana (e na de 7+ dias antes), views dos 7 primeiros dias e o publish_at dos blocos."""
     hist = _opcional(con, "SELECT data, youtube_id, views FROM metricas_video "
                           "WHERE data >= date(?, ?)", (data, f"-{DIAS_HISTORICO + 14} days"))
-    semana = lambda d: ({} if d is None else {r[0]: r[1] for r in con.execute(   # noqa: E731
-        "SELECT origem, views FROM trafego_canal WHERE data = ?", (d,))})
+    def semana(d: str | None) -> dict:
+        if d is None:
+            return {}
+        return {r[0]: r[1] for r in con.execute(
+            "SELECT origem, views FROM trafego_canal WHERE data = ?", (d,))}
+
     try:
         ult = con.execute("SELECT MAX(data) FROM trafego_canal").fetchone()[0]
         antes = (con.execute("SELECT MAX(data) FROM trafego_canal WHERE data <= date(?, '-7 days')",
@@ -158,9 +163,12 @@ def _pct(v: float | None, casas: int = 1) -> str:
 # ── diagnóstico do canal (topo da aba) ─────────────────────────────────────
 
 def _views_em(hist: pd.DataFrame, dia: date) -> pd.Series | None:
-    """Views acumuladas por vídeo na coleta mais recente até `dia` (None sem coleta até lá)."""
+    """Views acumuladas por vídeo na coleta mais recente até `dia`, desde que no máximo
+    TOLERANCIA_COLETA dias antes (senão a "semana" seria um intervalo bem maior); None sem
+    coleta nessa faixa."""
     datas = pd.to_datetime(hist["data"]).dt.date if not hist.empty else pd.Series(dtype=object)
-    ate = hist[datas <= dia] if not hist.empty else hist
+    ate = (hist[(datas <= dia) & (datas >= dia - pd.Timedelta(days=TOLERANCIA_COLETA))]
+           if not hist.empty else hist)
     if ate.empty:
         return None
     ultima = ate["data"].max()
@@ -204,14 +212,25 @@ def concentracao(metricas: pd.DataFrame) -> tuple[float, str] | None:
     return float(top["views"] / metricas["views"].fillna(0).sum()), str(top["titulo"])
 
 
+def _utc(valor) -> pd.Timestamp | None:
+    """publish_at → UTC; sem fuso é horário de Brasília (como o hoje._local); inválido = None."""
+    try:
+        t = pd.Timestamp(valor)
+    except (ValueError, TypeError):
+        return None
+    if pd.isna(t):
+        return None
+    return (t.tz_localize("America/Sao_Paulo") if t.tzinfo is None else t).tz_convert("UTC")
+
+
 def publicados_por_semana(pub: pd.DataFrame, agora: pd.Timestamp,
                           semanas: int = SEMANAS_CADENCIA) -> pd.Series:
     """Longos que foram ao ar em cada uma das últimas `semanas` janelas de 7 dias até `agora`
     (agendado no futuro não conta). Índice 'dd/mm' do 1º dia da janela, da mais antiga pra
     mais nova; a última é a semana corrente."""
     agora = (agora.tz_localize("America/Sao_Paulo") if agora.tzinfo is None else agora).tz_convert("UTC")
-    quando = (pd.to_datetime(pub["publish_at"], utc=True, errors="coerce").dropna()
-              if not pub.empty else pd.Series(dtype="datetime64[ns, UTC]"))
+    quando = (pub["publish_at"].map(_utc).dropna() if not pub.empty
+              else pd.Series(dtype="datetime64[ns, UTC]"))
     saida = {}
     for i in range(semanas - 1, -1, -1):
         fim = agora - pd.Timedelta(days=7 * i)
@@ -315,8 +334,14 @@ def secao_diagnostico(dados: dict, agora: pd.Timestamp) -> None:
     if frases:
         st.markdown("\n".join(f"- {_ICONE[t]}{texto}" for t, texto in frases))
     a, b = d["views_semana"], d["views_semana_antes"]
-    var = f"{(a - b) / b:+.0%} contra a semana anterior ({b})" if a is not None and b else \
-        "sem coleta de 7 dias antes pra comparar"
+    if a is None:
+        var = "sem coleta de 7 dias antes pra comparar"
+    elif b is None:
+        var = "sem coleta de 14 dias antes pra comparar a semana"
+    elif not b:
+        var = "a semana anterior não teve view"
+    else:
+        var = f"{(a - b) / b:+.0%} contra a semana anterior ({b})"
     busca = d["busca"]
     c = d["concentracao"]
     visual.grade([
