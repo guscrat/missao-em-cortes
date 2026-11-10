@@ -11,5 +11,7 @@
   "cota_upload": 1600,
   "cota_thumbnail": 50,
   "shorts_horarios": ["12:00", "20:00"],
-  "agendar_no_processar": true
+  "agendar_no_processar": true,
+  "shorts_replanejar": true,
+  "shorts_grades": {"3": ["12:00", "16:00", "20:00"], "4": ["10:00", "13:00", "16:00", "20:00"]}
 }
