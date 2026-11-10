@@ -276,6 +276,30 @@ def test_listar_videos_pagina_e_lota_em_50():
     assert len(vs) == 60 and lotes == [50, 10]
 
 
+def test_listar_videos_tira_repetido_entre_paginas():
+    """A playlist de uploads paginada repete vídeo entre páginas (canal com 50+): cada id 1x,
+    na ordem da 1ª aparição (senão o 17 grava a mesma chave 2x e a coleta do dia falha)."""
+    ns = types.SimpleNamespace
+    paginas = {None: {"items": [{"contentDetails": {"videoId": f"v{i}"}} for i in range(50)],
+                      "nextPageToken": "P2"},
+               "P2": {"items": [{"contentDetails": {"videoId": v}} for v in ("v49", "v50", "v0")]}}
+    pedidos = []
+
+    def vlist(**k):
+        ids = k["id"].split(",")
+        pedidos.append(ids)
+        return _Req({"items": [{"id": i, "snippet": {"title": i, "publishedAt": "2026-10-20T21:00:00Z"},
+                                "status": {"privacyStatus": "public"},
+                                "contentDetails": {"duration": "PT1M"}} for i in ids]})
+    yt = ns(channels=lambda: ns(list=lambda **k: _Req(
+                {"items": [{"contentDetails": {"relatedPlaylists": {"uploads": "UU1"}}}]})),
+            playlistItems=lambda: ns(list=lambda **k: _Req(paginas[k["pageToken"]])),
+            videos=lambda: ns(list=vlist))
+    vs = yl.listar_videos(yt)
+    assert [v["id"] for v in vs] == [f"v{i}" for i in range(51)]
+    assert [len(p) for p in pedidos] == [50, 1]
+
+
 # --- correções da revisão: casamento conservador, 1 vídeo por bloco, nunca rebaixa ---------
 
 def test_titulo_parecido_com_2_blocos_nao_casa(projeto, monkeypatch):
