@@ -92,6 +92,8 @@ def test_verificar(banco, capsys):
     assert banco("SELECT count(*) n FROM eventos WHERE etapa='dia_d'")[0]["n"] == 3
 
 
+# ── candidato ao teste ─────────────────────────────────────────────────────
+
 def _aprovado(projeto, stem, url="https://youtu.be/fonte"):
     pasta = projeto.video(stem, blocos=[1, 2], finalizados=[1, 2], data="2026-10-22")
     (pasta / "revisao.json").write_text(json.dumps(
