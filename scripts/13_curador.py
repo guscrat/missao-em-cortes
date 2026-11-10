@@ -708,9 +708,11 @@ def agendar(stem: str, pasta: Path, ids: list[int], res: dict) -> None:
     tarefa das 17h50 (shorts_oculto) sobe."""
     if not ids:
         return
+    antes = ids_agendados(pasta)                     # "Tentar de novo": não conta os de antes
     rodar("09_upload.py", stem)
-    faltam = sorted(set(ids) - ids_agendados(pasta))
-    res["agendados"] = len(ids) - len(faltam)
+    depois = ids_agendados(pasta)
+    faltam = sorted(set(ids) - depois)
+    res["agendados"] = len((depois - antes) & set(ids))
     if faltam:
         res["avisos"].append(f"{stem}: {len(faltam)} longo(s) não agendado(s) "
                              f"(blocos {', '.join(map(str, faltam))}; cota ou falha no upload) — "

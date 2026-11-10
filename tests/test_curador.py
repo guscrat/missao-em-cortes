@@ -950,7 +950,8 @@ def test_processar_agenda_longos_e_depois_shorts(raiz, monkeypatch):
     nomes = [c[0] for c in chamadas]
     assert chamadas[-2:] == [("09_upload.py", "renan_x"), ("09_upload.py", "todos", "--shorts")]
     assert nomes.index("09_upload.py") > max(i for i, n in enumerate(nomes) if n == "10_shorts.py")
-    assert res["ok"] and res["agendados"] == 2 and not res["avisos"][1:]
+    assert res["ok"] and res["agendados"] == 2
+    assert not any("agendado" in a or "Shorts" in a for a in res["avisos"])
 
 
 def test_processar_sem_flag_nao_agenda(raiz, monkeypatch):
@@ -999,8 +1000,12 @@ def test_short_que_falha_no_agendamento_vira_aviso(raiz, monkeypatch):
     monkeypatch.setattr(cu, "agendar_no_processar", lambda: True)
     pasta = raiz / "outputs" / "renan_x"
     pasta.mkdir(parents=True, exist_ok=True)
-    (pasta / "youtube.json").write_text('{"01": {"youtube_id": "y"}}', encoding="utf-8")
-    monkeypatch.setattr(cu, "rodar", lambda s, *a: not (s == "09_upload.py" and "--shorts" in a))
+
+    def rodar(s, *a):
+        if a == ("renan_x",):                       # o 09 do longo grava o registro
+            (pasta / "youtube.json").write_text('{"01": {"youtube_id": "y"}}', encoding="utf-8")
+        return not (s == "09_upload.py" and "--shorts" in a)
+    monkeypatch.setattr(cu, "rodar", rodar)
     res = {"avisos": []}
     cu.agendar("renan_x", pasta, [1], res)
     assert res["agendados"] == 1 and any("Shorts falhou" in a for a in res["avisos"])
@@ -1019,3 +1024,11 @@ def test_processar_escolhido_grava_mensagem_com_agendados(monkeypatch):
     cu.processar_escolhido({}, estado, "v", rodada, "teste")
     assert gravadas[-1]["status"] == "processada"
     assert gravadas[-1]["mensagem"] == "3 corte(s) pronto(s) pra publicar, 2 agendado(s) no YouTube"
+
+
+def test_agendados_conta_so_os_desta_rodada(raiz, monkeypatch):
+    pasta = raiz / "outputs" / "renan_x"
+    pasta.mkdir(parents=True, exist_ok=True)
+    (pasta / "youtube.json").write_text('{"04": {"youtube_id": "velho"}}', encoding="utf-8")
+    res, _ = _processar_agendando(raiz, monkeypatch, sobe=(4, 1))
+    assert res["agendados"] == 1
