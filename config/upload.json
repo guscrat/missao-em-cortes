@@ -10,5 +10,6 @@
   "cota_limite_dia": 10000,
   "cota_upload": 1600,
   "cota_thumbnail": 50,
-  "shorts_horarios": ["12:00", "20:00"]
+  "shorts_horarios": ["12:00", "20:00"],
+  "agendar_no_processar": true
 }
