@@ -34,8 +34,8 @@ prioridade_short; Short novo passa na frente). "todos" = um plano só com todas 
 Título = "MANCHETE | quem fala" (_descricoes.titulo_short, até 60 chars; o 14 casa por ele),
 descrição do longo com "Vídeo completo: youtu.be/<longo>" no topo. Registro em
 youtube_shorts.json e youtube_id/postado no shorts/shorts.json. Short com "revisar" (pouco
-rosto) ou com "arquivado": true (+ "motivo"; ex.: datado) não sobe. O "vídeo relacionado" do Short NÃO existe na API: é marcado à mão no
-Studio (lista em `dia_d.py relacionados`).
+rosto) ou com "arquivado": true (+ "motivo"; ex.: datado) não sobe. O caminho do Short pro longo é o link "Vídeo completo" na descrição (o
+campo "vídeo relacionado" não existe na API nem aparece no Studio do canal).
 
 Idempotente: bloco com youtube_id (no youtube.json da pasta ou no banco) não sobe de
 novo. Se da outra vez só a thumb falhou, tenta só a thumb. O youtube.json é gravado logo
@@ -803,8 +803,7 @@ def main_shorts(pastas: list[Path], cfg: dict, so_bloco: int | None, maximo: int
             continue
         feitos = ler_registro(pasta, SHORTS_JSON)
         feitos[nn] = {"youtube_id": yt_id, "publish_at": slot.isoformat(), "longo_id": x["longo_id"],
-                      "titulo": x["meta"]["titulo"], "arquivo": x["video"].name,
-                      "relacionado_ok": False}
+                      "titulo": x["meta"]["titulo"], "arquivo": x["video"].name}
         salvar_registro(pasta, feitos, SHORTS_JSON)   # antes de tudo: idempotência
         shorts_path = pasta / "shorts" / "shorts.json"
         try:   # mesmo formato do 14_canal: tira o Short do estoque e do publicacao.txt
@@ -822,8 +821,6 @@ def main_shorts(pastas: list[Path], cfg: dict, so_bloco: int | None, maximo: int
 
     print(f"\n{'=' * 60}\nOK {enviados} Short(s) agendado(s) · {falhas} falha(s) · "
           f"cota hoje {cota.usadas:,}/{cota.limite:,} · custo US$ 0")
-    if enviados:
-        print("Falta o VÍDEO RELACIONADO de cada um no Studio: uv run py scripts/dia_d.py relacionados")
     if so_bloco is None and maximo is None:   # rodada da fila inteira (a do Agendador)
         registrar_rodada(enviados, falhas, len(itens) - enviados)
     return 1 if falhas else 0
