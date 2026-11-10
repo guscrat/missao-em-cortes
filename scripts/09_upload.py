@@ -335,14 +335,30 @@ class Cota:
 
 # ── API do YouTube ─────────────────────────────────────────────────────────
 
+def tem_terminal() -> bool:
+    """Rodada com alguém olhando (terminal)? O Agendador e o Curador oculto rodam sem stdin."""
+    try:
+        return bool(sys.stdin and sys.stdin.isatty())
+    except (AttributeError, ValueError, OSError):
+        return False
+
+
 def autenticar():
-    """Cliente da API. 1ª vez abre o navegador pro login; depois reusa o token."""
+    """Cliente da API. 1ª vez abre o navegador pro login; depois reusa o token. Sem terminal
+    (shorts_oculto, curador_oculto) nunca abre o navegador: token sem o escopo pedido levanta
+    _google.LoginNecessario (a rodada falha e vira alerta no painel, não fica esperando)."""
     from googleapiclient.discovery import build
-    return build("youtube", "v3", credentials=credenciais(SCOPES, TOKEN), cache_discovery=False)
+    return build("youtube", "v3", credentials=credenciais(SCOPES, TOKEN, interativo=tem_terminal()),
+                 cache_discovery=False)
 
 
 def _cota_estourada(e: HttpError) -> bool:
     return e.resp.status == 403 and b"quotaExceeded" in (e.content or b"")
+
+
+def _sem_permissao(e: HttpError) -> bool:
+    """403 de escopo (token sem youtube.force-ssl): todo reagendar vai falhar igual."""
+    return e.resp.status == 403 and b"insufficientPermissions" in (e.content or b"")
 
 
 def _quando(slot: datetime | None) -> str:
@@ -684,12 +700,25 @@ def planejar_ritmo(novos: list[dict], moveis: list[dict], fixos: set[datetime], 
         return slots_shorts([x["minimo"] for x in novos], fixos, cfg, agora_), [], None
     tz = ZoneInfo(cfg["fuso"])
     piso = (agora_ or agora()).astimezone(tz) + timedelta(hours=cfg["antecedencia_min_horas"])
-    todos = sorted(novos + moveis, key=prioridade_short)
-    por_dia = ritmo_shorts(len(todos), piso.date(), fim.astimezone(tz).date() if fim else None, cfg)
-    slots = slots_shorts([x["minimo"] for x in todos], fixos,
-                         {**cfg, "shorts_horarios": grade_shorts(por_dia, cfg)}, agora_)
-    por_id = {id(x): s for x, s in zip(todos, slots)}
-    return [por_id[id(x)] for x in novos], [por_id[id(x)] for x in moveis], por_dia
+    por_dia = ritmo_shorts(len(novos) + len(moveis), piso.date(),
+                           fim.astimezone(tz).date() if fim else None, cfg)
+    cfg_dia = {**cfg, "shorts_horarios": grade_shorts(por_dia, cfg)}
+    # Short já agendado só ADIANTA (nunca vai pra depois: não muda à toa entre rodadas e não
+    # precisa de nova checagem de atualidade). Quem iria pra depois fica parado no horário
+    # dele, que vira ocupado, e o plano é refeito até ninguém ir pra depois.
+    parados: set[int] = set()
+    while True:
+        livres = [m for m in moveis if id(m) not in parados]
+        todos = sorted(novos + livres, key=prioridade_short)
+        ocup = set(fixos) | {m["atual"] for m in moveis if id(m) in parados}
+        slots = slots_shorts([x["minimo"] for x in todos], ocup, cfg_dia, agora_)
+        por_id = {id(x): s for x, s in zip(todos, slots)}
+        atrasados = {id(m) for m in livres if por_id[id(m)] > m["atual"]}
+        if not atrasados:
+            break
+        parados |= atrasados
+    return ([por_id[id(x)] for x in novos],
+            [m["atual"] if id(m) in parados else por_id[id(m)] for m in moveis], por_dia)
 
 
 def reagendar_short(youtube, youtube_id: str, slot: datetime, cfg: dict) -> None:
@@ -905,6 +934,10 @@ def main_shorts(pastas: list[Path], cfg: dict, so_bloco: int | None, maximo: int
     # Um que falha fica no horário antigo, então o novo que ia ocupar o lugar dele não sobe agora
     bloqueados: set[datetime] = set()
     for x, slot in sorted(mover, key=lambda par: par[1]):
+        if slot in bloqueados:   # o dono do horário não saiu: este fica onde está
+            print(f"   [!] reagendar {x['stem']} {x['nn']}: {_quando(slot)} não liberou — fica")
+            bloqueados.add(x["atual"])
+            continue
         if not cota.cabe(cfg["cota_update"]):
             print(f"\n[!] Cota sem espaço pra reagendar: {cota.usadas:,}/{cota.limite:,}. "
                   f"A próxima rodada refaz o plano.")
@@ -919,8 +952,12 @@ def main_shorts(pastas: list[Path], cfg: dict, so_bloco: int | None, maximo: int
             print(f"   [!] reagendar {x['stem']} {x['nn']} falhou ({e.resp.status})")
             evento(x["stem"], "09_upload", "falha", agente="publicador", bloco_id=x["bid"],
                    mensagem=f"Short reagendar http {e.resp.status}")
-            if _cota_estourada(e):
-                cota.esgotar()
+            if _cota_estourada(e) or _sem_permissao(e):
+                if _cota_estourada(e):
+                    cota.esgotar()
+                else:
+                    print("   [!] o token do publisher não tem permissão de edição (youtube.force-ssl): "
+                          "rode o 09 à mão num terminal pra refazer o login")
                 bloqueados |= {x2["atual"] for x2, _ in mover}
                 break
             continue
