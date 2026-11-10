@@ -92,26 +92,6 @@ def test_verificar(banco, capsys):
     assert banco("SELECT count(*) n FROM eventos WHERE etapa='dia_d'")[0]["n"] == 3
 
 
-# ── relacionados ───────────────────────────────────────────────────────────
-
-def test_relacionados_lista_e_marca(tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr(_paths, "OUTPUTS", tmp_path)
-    pasta = tmp_path / "2026-10-22_v"
-    pasta.mkdir()
-    reg = {"01": {"youtube_id": "S1", "longo_id": "L1", "titulo": "T1",
-                  "publish_at": "2026-10-22T20:00:00-03:00", "relacionado_ok": False},
-           "02": {"youtube_id": "S2", "longo_id": "L2", "titulo": "T2",
-                  "publish_at": "2026-10-23T12:00:00-03:00", "relacionado_ok": False}}
-    (pasta / "youtube_shorts.json").write_text(json.dumps(reg), encoding="utf-8")
-    dia_d.relacionados()
-    out = capsys.readouterr().out
-    assert "2 Short(s) sem vídeo relacionado" in out and "youtu.be/L1" in out
-    dia_d.relacionados({"S1"})
-    salvo = json.loads((pasta / "youtube_shorts.json").read_text(encoding="utf-8"))
-    assert salvo["01"]["relacionado_ok"] is True and salvo["02"]["relacionado_ok"] is False
-    assert "1 Short(s) sem vídeo relacionado" in capsys.readouterr().out
-
-
 # ── candidato ao teste ─────────────────────────────────────────────────────
 
 def _aprovado(projeto, stem, url="https://youtu.be/fonte"):
@@ -208,13 +188,11 @@ def test_rodar_09_usa_subprocess_mockado(monkeypatch):
     assert visto["cmd"][1].endswith("09_upload.py") and visto["cmd"][-2:] == ["todos", "--shorts"]
 
 
-def test_main_despacha_checar_verificar_e_relacionados(monkeypatch):
+def test_main_despacha_checar_e_verificar(monkeypatch):
     monkeypatch.setattr(dia_d, "checar", lambda: 7)
     monkeypatch.setattr(dia_d, "verificar", lambda ids: ids)
-    monkeypatch.setattr(dia_d, "relacionados", lambda feitos=None: feitos)
     assert dia_d.main([]) == 7 and dia_d.main(["checar"]) == 7
     assert dia_d.main(["verificar", "A", "B"]) == ["A", "B"]
-    assert dia_d.main(["relacionados", "--feito=S1,S2"]) == {"S1", "S2"}
 
 
 def test_verificar_sem_ids_sai():

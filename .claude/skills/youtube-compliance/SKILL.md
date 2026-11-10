@@ -56,7 +56,7 @@ Publicar no YouTube pela primeira vez numa feature nova · rodar upload real (se
 
 ## Onde está o detalhe
 
-- `references/dia-d.md` — **runbook do dia D** da auditoria: `dia_d.py checar` (simulação), virar a flag, teste com 1 vídeo, verificação (script + Studio), liberação dos Shorts (`09 todos --shorts`, 2/dia) e vídeo relacionado, rollback.
+- `references/dia-d.md` — **runbook do dia D** da auditoria: `dia_d.py checar` (simulação), virar a flag, teste com 1 vídeo, verificação (script + Studio), liberação dos Shorts (`09 todos --shorts`, 2/dia), rollback.
 - `references/upload.md` — 09: slots, idempotência, cota, upload de teste, Shorts (`--shorts`).
 - `references/metricas.md` — 12: regra com/sem legenda + **setup do projeto analytics passo a passo**; 15: placar do canal pro YPP.
 - `references/canal-e-publicacao.md` — 14 (casamento por título, status) e `publicacao.txt`.

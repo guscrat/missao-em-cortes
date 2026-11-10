@@ -526,7 +526,7 @@ def test_shorts_sobem_depois_do_longo_com_link_e_manchete(shorts):
     assert a["snippet"]["description"].startswith("▶️ Vídeo completo: https://youtu.be/L1\n\n")
     assert "Conteúdo original: https://youtu.be/fonte" in a["snippet"]["description"]
     feitos = json.loads((pasta / "youtube_shorts.json").read_text(encoding="utf-8"))
-    assert feitos["01"]["longo_id"] == "L1" and feitos["02"]["relacionado_ok"] is False
+    assert feitos["01"]["longo_id"] == "L1" and "relacionado_ok" not in feitos["02"]
     sh = json.loads((pasta / "shorts" / "shorts.json").read_text(encoding="utf-8"))
     assert sh["01"]["youtube_id"] == feitos["01"]["youtube_id"] and sh["01"]["postado"] == "2026-10-22"
     assert "youtube_id" not in sh["03"]
