@@ -49,7 +49,8 @@ from pathlib import Path
 from _eventos import (em_alta_atual, evento, gravar_analytics, gravar_em_alta, gravar_reach,
                       gravar_views_7d, reach_importados, reach_por_video, temas_por_youtube,
                       termos_semana, ultima_coleta, views_7d)
-from _fronteira import FAIXAS, faixa_do_video
+from _analise_canal import (RECOMENDACAO, ROTULO_FAIXA, SEMANAS_7D, fora_da_busca,  # noqa: F401
+                            media_7d, minutos_por_faixa)
 from _google import credenciais
 from _youtube_leitura import (CLIENT_SECRET, ESCOPOS, MAX_SHORT_S, TOKEN, listar_videos,
                               nome_origem)
@@ -63,10 +64,6 @@ DIAS_ANTIGO = 30         # "vídeo antigo": publicado há mais que isso
 MIN_VIEWS_SEMANA = 50    # abaixo disso é ruído, não alta
 FATOR_ALTA = 3.0         # views da semana >= isso x a média semanal de antes
 DIAS_7D_PRONTO = 9       # idade em que os 7 primeiros dias já estão no Analytics (atrasa ~2)
-SEMANAS_7D = 4           # resumo: média das views em 7 dias dos publicados nas últimas N semanas
-RECOMENDACAO = ("SUBSCRIBER", "RELATED_VIDEO", "SHORTS")   # início/feed + sugeridos + Shorts
-ROTULO_FAIXA = {"curto": "curto 3-10 min", "medio": "médio 10-20 min", "longo": "longo 20-30 min",
-                "abaixo_3": "abaixo de 3 min", "acima_30": "acima de 30 min"}
 
 
 def _query(analytics, **kw) -> list[list]:
@@ -309,42 +306,6 @@ def linha_em_alta(x: dict) -> str:
     """Uma linha do vídeo em alta (resumo semanal e do Curador)."""
     return (f"**{x['tema']}** — {x['views_semana']} views na semana ({x['fator']:.0f}x o ritmo de "
             f"antes) · \"{x['titulo'][:60]}\", de {x['publicado'][8:10]}/{x['publicado'][5:7]}")
-
-
-def minutos_por_faixa(metricas: list[dict]) -> list[dict]:
-    """[{faixa, n, views, min_por_view, retencao_pct}] dos longos com view, por faixa de duração
-    do corte (só as que têm vídeo) + 'todos' no fim. Médias ponderadas pelas views."""
-    longos = [m for m in metricas if (m.get("duracao_s") or 0) > MAX_SHORT_S and m.get("views")
-              and m.get("assistido_s") is not None]
-    grupos = {nome: [] for nome in ("abaixo_3", *(f[0] for f in FAIXAS), "acima_30")}
-    for m in longos:
-        grupos[faixa_do_video(m["duracao_s"])].append(m)
-
-    def linha(nome, ms):
-        views = sum(m["views"] for m in ms)
-        return {"faixa": nome, "n": len(ms), "views": views,
-                "min_por_view": round(sum(m["assistido_s"] * m["views"] for m in ms) / views / 60, 1),
-                "retencao_pct": round(sum((m["retencao_pct"] or 0) * m["views"] for m in ms) / views, 1)}
-    saida = [linha(nome, ms) for nome, ms in grupos.items() if ms]
-    return saida + [linha("todos", longos)] if longos else []
-
-
-def fora_da_busca(trafego: dict[str, int]) -> dict | None:
-    """{total, fora_pct, recomendacao_pct} das views de um período (None sem views)."""
-    total = sum(trafego.values())
-    if not total:
-        return None
-    return {"total": total, "fora_pct": round(100 * (total - trafego.get("YT_SEARCH", 0)) / total, 1),
-            "recomendacao_pct": round(100 * sum(trafego.get(o, 0) for o in RECOMENDACAO) / total, 1)}
-
-
-def media_7d(v7: list[dict], hoje: date, semanas: int, desloc: int = 0) -> tuple[int, float | None]:
-    """(n, média de views em 7 dias) dos longos publicados entre (semanas + desloc) e desloc
-    semanas atrás."""
-    ini, fim = hoje - timedelta(weeks=semanas + desloc), hoje - timedelta(weeks=desloc)
-    vs = [x["views"] for x in v7 if (x.get("duracao_s") or 0) > MAX_SHORT_S
-          and ini < date.fromisoformat(x["publicado"][:10]) <= fim]
-    return len(vs), (round(sum(vs) / len(vs), 1) if vs else None)
 
 
 def resumo_semanal(termos_top: list[dict], metricas: list[dict], trafego_canal: dict[str, int],
