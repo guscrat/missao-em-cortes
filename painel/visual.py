@@ -152,3 +152,27 @@ def barras(serie: pd.Series, formato=lambda v: f"US$ {v:.2f}", nome: str = "valo
             .encode(text="rotulo:N"))
     st.altair_chart(graf.properties(height=24 + 38 * len(df), background="transparent")
                     .configure_view(stroke=None), width="stretch", theme=None)
+
+
+def colunas(serie: pd.Series, formato=lambda v: f"{v:.0f}", nome: str = "valor",
+            altura: int = 220) -> None:
+    """Colunas verticais na ordem da série (o índice já vem como rótulo, ex.: '03/11'), com o
+    valor escrito em cima de cada uma: pra tendência no tempo."""
+    if serie.empty:
+        return
+    tk = TOKENS[tema_ativo()]
+    df = serie.rename_axis("item").reset_index(name="v")
+    df["item"] = df["item"].astype(str)
+    df["rotulo"] = df["v"].map(formato)
+    topo = float(df["v"].max()) or 1.0
+    base = alt.Chart(df).encode(
+        x=alt.X("item:N", sort=None, title=None,
+                axis=alt.Axis(domain=False, ticks=False, labelColor=tk["tx2"], labelFontSize=12,
+                              labelAngle=0, labelPadding=6)),
+        y=alt.Y("v:Q", axis=None, scale=alt.Scale(domain=[0, topo * 1.2])),
+        tooltip=[alt.Tooltip("item:N", title=" "), alt.Tooltip("rotulo:N", title=nome)])
+    graf = (base.mark_bar(color=tk["acento"], cornerRadiusEnd=4, width={"band": 0.7})
+            + base.mark_text(baseline="bottom", dy=-4, color=tk["tx"], fontSize=12, fontWeight=600)
+            .encode(text="rotulo:N"))
+    st.altair_chart(graf.properties(height=altura, background="transparent")
+                    .configure_view(stroke=None), width="stretch", theme=None)

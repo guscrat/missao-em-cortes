@@ -329,6 +329,7 @@ def _captura(monkeypatch):
     monkeypatch.setattr(st, "dataframe", lambda df, **k: cap.append(f"DF:{len(df)}"))
     monkeypatch.setattr(painel.visual, "grade", lambda c, **k: cap.extend(c))
     monkeypatch.setattr(painel.visual, "barras", lambda s, **k: cap.append(f"BARRAS:{list(s.index)}"))
+    monkeypatch.setattr(painel.visual, "colunas", lambda s, **k: cap.append(f"COLUNAS:{list(s.index)}"))
     return cap
 
 
