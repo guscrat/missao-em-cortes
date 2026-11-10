@@ -118,6 +118,17 @@ class FakeYouTube:
         fake = self
 
         class _V:
+            def update(self, part, body):
+                class _Req:
+                    def execute(self):
+                        if body["id"] in getattr(fake, "update_falha", ()):
+                            raise up.HttpError(_Resp(500), b"erro")
+                        erro = getattr(fake, "update_erro", None)
+                        if erro:
+                            raise up.HttpError(_Resp(erro[0]), erro[1])
+                        fake.updates = getattr(fake, "updates", []) + [body]
+                return _Req()
+
             def insert(self, part, body, media_body):
                 fake.uploads.append(body)
 
@@ -907,3 +918,251 @@ def test_sem_cota_nao_paga_atualidade_e_conta_a_fila(shorts):
     up.main([str(pasta), "--shorts"])
     assert _ATUALIDADE[0] == [] and yt.uploads == []
     assert (_fila()["enviados"], _fila()["faltam"]) == (0, 2)
+
+
+# ── ritmo dos Shorts: N/dia até o último longo + reagendar (10/11/2026) ──────
+
+GRADES = {"3": ["12:00", "16:00", "20:00"], "4": ["10:00", "13:00", "16:00", "20:00"]}
+
+
+def test_ritmo_shorts_divide_pelos_dias_ate_o_ultimo_longo():
+    from datetime import date
+    cfg = {**CFG, "shorts_grades": GRADES}
+    ini = date(2026, 11, 10)
+    assert up.ritmo_shorts(18, ini, date(2026, 11, 16), cfg) == 3      # 18/7 → 3
+    assert up.ritmo_shorts(4, ini, date(2026, 11, 16), cfg) == 2       # nunca abaixo do mínimo
+    assert up.ritmo_shorts(60, ini, date(2026, 11, 16), cfg) == 4      # nem acima da maior grade
+    assert up.ritmo_shorts(9, ini, None, cfg) == 2                     # sem longo à frente
+    assert up.ritmo_shorts(9, ini, date(2026, 11, 9), cfg) == 2        # longo já passou
+    assert up.ritmo_shorts(0, ini, date(2026, 11, 16), cfg) == 2
+    assert up.ritmo_shorts(60, ini, date(2026, 11, 16), CFG) == 2      # sem grades: fica no mínimo
+
+
+def test_grade_shorts_cai_no_padrao():
+    cfg = {**CFG, "shorts_grades": GRADES}
+    assert up.grade_shorts(3, cfg) == ["12:00", "16:00", "20:00"]
+    assert up.grade_shorts(2, cfg) == up.grade_shorts(None, cfg) == CFG["shorts_horarios"]
+
+
+def _movel(dia, hora, bid, data_live, minimo=None):
+    from datetime import date
+    return {"stem": "velho", "bid": bid, "nn": f"{bid:02d}", "data_live": date(2026, 10, data_live),
+            "score": 0, "minimo": minimo, "atual": datetime(2026, 11, dia, hora, 0, tzinfo=SP),
+            "youtube_id": f"S{bid}", "movel": True}
+
+
+def test_planejar_ritmo_novo_fica_com_as_20h_do_dia_do_longo_e_velhos_adiantam():
+    from datetime import date
+    cfg = {**CFG, "shorts_grades": GRADES}
+    agora_ = datetime(2026, 11, 11, 8, 0, tzinfo=SP)
+    moveis = [_movel(d, h, i, 26) for i, (d, h) in
+              enumerate([(11, 12), (11, 20), (12, 12), (12, 20), (13, 12)], start=1)]
+    novos = [{"stem": "novo", "bid": b, "data_live": date(2026, 11, 10), "score": 0,
+              "minimo": datetime(2026, 11, d, 18, 0, tzinfo=SP)} for b, d in ((1, 11), (2, 12))]
+    fim = datetime(2026, 11, 12, 18, 0, tzinfo=SP)
+    s_novos, s_moveis, por_dia = up.planejar_ritmo(novos, moveis, set(), cfg, fim, agora_)
+    assert por_dia == 4                                              # 7 Shorts em 2 dias (teto 4)
+    assert [(x.day, x.hour) for x in s_novos] == [(11, 20), (12, 20)]
+    assert all(s <= m["atual"] for s, m in zip(s_moveis, moveis))    # antigos só adiantam aqui
+    assert len(set(s_novos + s_moveis)) == 7
+
+
+def test_planejar_ritmo_sem_replanejar_e_o_plano_antigo():
+    agora_ = datetime(2026, 10, 21, 9, 0, tzinfo=SP)
+    s, sm, por_dia = up.planejar_ritmo([{"minimo": None, "data_live": None, "score": 0,
+                                         "stem": "v", "bid": 1}], None, set(), CFG, None, agora_)
+    assert [(x.day, x.hour) for x in s] == [(21, 12)] and sm == [] and por_dia is None
+
+
+@pytest.fixture
+def ritmo(shorts, projeto, monkeypatch, tmp_path):
+    """Live velha com 3 Shorts já agendados (22/10 12h e 20h, 23/10 12h) + a live `v` (shorts)
+    com longos em 22 e 23/10. Config com replanejar e grades de 3/4 por dia."""
+    import _paths
+    pasta, yt, banco = shorts
+    monkeypatch.setattr(_paths, "OUTPUTS", projeto.outputs)
+    cfg = tmp_path / "upload.json"
+    cfg.write_text(json.dumps({"auditoria_aprovada": True, "shorts_replanejar": True,
+                               "shorts_grades": GRADES}), encoding="utf-8")
+    monkeypatch.setattr(up, "CONFIG", cfg)
+    velha = projeto.video("velha", blocos=[1, 2, 3], finalizados=[])
+    (velha / "shorts").mkdir()
+    (velha / "shorts" / "shorts.json").write_text(json.dumps(
+        {f"0{i}": {"arquivo": f"s{i}.mp4", "youtube_id": f"S{i}"} for i in (1, 2, 3)}), encoding="utf-8")
+    up.salvar_registro(velha, {"01": {"youtube_id": "VL", "publish_at": "2026-10-01T18:00:00-03:00"}})
+    quando = ["2026-10-22T12:00:00-03:00", "2026-10-22T20:00:00-03:00", "2026-10-23T12:00:00-03:00"]
+    up.salvar_registro(velha, {f"0{i}": {"youtube_id": f"S{i}", "publish_at": q, "longo_id": "VL",
+                                         "titulo": f"VELHO {i}", "arquivo": f"s{i}.mp4"}
+                               for i, q in zip((1, 2, 3), quando)}, up.SHORTS_JSON)
+    return pasta, velha, yt, banco
+
+
+def test_rodada_todos_reagenda_velhos_e_novo_pega_as_20h(ritmo):
+    pasta, velha, yt, banco = ritmo
+    assert up.main(["todos", "--shorts"]) == 0
+    novos = {u["snippet"]["description"].splitlines()[0][-2:]: u["status"]["publishAt"]
+             for u in yt.uploads}
+    assert novos == {"L1": "2026-10-22T23:00:00Z", "L2": "2026-10-23T23:00:00Z"}   # 20h do dia do longo
+    movidos = {u["id"]: u["status"]["publishAt"] for u in yt.updates}
+    assert "S2" in movidos                           # o velho das 20h de 22/10 saiu pro novo
+    assert all(u["status"]["privacyStatus"] == "private" for u in yt.updates)
+    feitos = json.loads((velha / up.SHORTS_JSON).read_text(encoding="utf-8"))
+    novo_s2 = datetime.fromisoformat(movidos["S2"].replace("Z", "+00:00"))
+    assert up._data(feitos["02"]["publish_at"], CFG) == novo_s2
+    todos = {up._data(i["publish_at"], CFG) for i in feitos.values()}
+    todos |= {datetime.fromisoformat(v.replace("Z", "+00:00")) for v in novos.values()}
+    assert len(todos) == 5                           # ninguém no mesmo horário
+    assert banco("SELECT 1 FROM eventos WHERE mensagem LIKE 'Short reagendado%'")
+
+
+def test_rodada_de_uma_live_so_nao_reagenda(ritmo):
+    pasta, velha, yt, _ = ritmo
+    assert up.main([str(pasta), "--shorts"]) == 0
+    assert not getattr(yt, "updates", [])
+
+
+def test_dry_run_mostra_o_ritmo_e_nao_reagenda(ritmo, monkeypatch, capsys):
+    pasta, velha, yt, _ = ritmo
+    monkeypatch.setattr(up, "autenticar", lambda: pytest.fail("dry-run autenticou"))
+    antes = (velha / up.SHORTS_JSON).read_text(encoding="utf-8")
+    assert up.main(["todos", "--shorts", "--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert "Ritmo:" in out and "reagendar" in out
+    assert (velha / up.SHORTS_JSON).read_text(encoding="utf-8") == antes
+
+
+def test_reagendar_que_falha_segura_o_novo_daquele_horario(ritmo):
+    pasta, velha, yt, banco = ritmo
+    yt.update_falha = {"S2"}
+    assert up.main(["todos", "--shorts"]) == 1
+    publicados = [u["status"]["publishAt"] for u in yt.uploads]
+    assert "2026-10-22T23:00:00Z" not in publicados            # S2 continua lá: o novo espera
+    feitos = json.loads((velha / up.SHORTS_JSON).read_text(encoding="utf-8"))
+    assert feitos["02"]["publish_at"] == "2026-10-22T20:00:00-03:00"
+    assert banco("SELECT 1 FROM eventos WHERE mensagem LIKE 'Short reagendar http%'")
+
+
+def test_shorts_moveis_ignora_os_que_ja_estao_perto_de_ir_ao_ar(ritmo):
+    pasta, velha, yt, _ = ritmo
+    piso = datetime(2026, 10, 22, 15, 0, tzinfo=SP)
+    ids = {m["youtube_id"] for m in up.shorts_moveis(velha.parent, up.carregar_config(), piso)}
+    assert ids == {"S2", "S3"}
+
+
+def test_config_do_repo_liga_o_ritmo(monkeypatch):
+    monkeypatch.setattr(up, "CONFIG", up.ROOT / "config" / "upload.json")
+    cfg = up.carregar_config()
+    assert cfg["shorts_replanejar"] is True
+    assert up.grade_shorts(3, cfg)[-1] == "20:00"
+
+
+def test_escopo_cobre_reagendar():
+    assert "https://www.googleapis.com/auth/youtube.force-ssl" in up.SCOPES
+
+
+def _gastar_cota(usadas):
+    cota = up.Cota(up.DEFAULTS["cota_limite_dia"])
+    cota.usadas = usadas
+    cota._salvar()
+
+
+def _registro(velha):
+    return json.loads((velha / up.SHORTS_JSON).read_text(encoding="utf-8"))
+
+
+def test_cota_sem_espaco_pra_reagendar_nao_move_e_segura_os_novos(ritmo):
+    pasta, velha, yt, _ = ritmo
+    antes = _registro(velha)
+    _gastar_cota(up.DEFAULTS["cota_limite_dia"] - 1)
+    assert up.main(["todos", "--shorts"]) == 0
+    assert not getattr(yt, "updates", []) and yt.uploads == []
+    assert _registro(velha) == antes
+
+
+def test_cota_acaba_no_meio_dos_reagendamentos_so_grava_os_feitos(ritmo):
+    pasta, velha, yt, _ = ritmo
+    u = up.DEFAULTS["cota_update"]
+    _gastar_cota(up.DEFAULTS["cota_limite_dia"] - u)       # cabe exatamente 1 reagendar
+    up.main(["todos", "--shorts"])
+    assert len(getattr(yt, "updates", [])) <= 1
+    for i in yt.updates:                                   # o que foi pra API foi gravado
+        assert i["id"] in {v["youtube_id"] for v in _registro(velha).values()}
+    publicados = {up._data(i["publish_at"], CFG) for i in _registro(velha).values()}
+    publicados |= {datetime.fromisoformat(x["status"]["publishAt"].replace("Z", "+00:00"))
+                   for x in yt.uploads}
+    assert len(publicados) == len(_registro(velha)) + len(yt.uploads)   # nenhum horário repetido
+
+
+def test_reagendar_quota_exceeded_para_tudo_e_trava_a_cota(ritmo):
+    pasta, velha, yt, _ = ritmo
+    yt.update_erro = (403, b'{"error":{"errors":[{"reason":"quotaExceeded"}]}}')
+    antes = _registro(velha)
+    assert up.main(["todos", "--shorts"]) == 1
+    assert _registro(velha) == antes and yt.uploads == []
+    assert json.loads(up.COTA_PATH.read_text())["usadas"] == up.DEFAULTS["cota_limite_dia"]
+
+
+def test_reagendar_sem_permissao_avisa_do_force_ssl_e_nao_sobe_novo(ritmo, capsys):
+    pasta, velha, yt, _ = ritmo
+    yt.update_erro = (403, b'{"error":{"errors":[{"reason":"insufficientPermissions"}]}}')
+    antes = _registro(velha)
+    assert up.main(["todos", "--shorts"]) == 1
+    assert "force-ssl" in capsys.readouterr().out
+    assert _registro(velha) == antes
+    assert "2026-10-22T23:00:00Z" not in [u["status"]["publishAt"] for u in yt.uploads]  # horário do S2 segue preso
+
+
+def test_shorts_json_ilegivel_deixa_a_pasta_onde_esta(ritmo, capsys):
+    pasta, velha, yt, _ = ritmo
+    (velha / up.SHORTS_JSON).write_text("{quebrado", encoding="utf-8")
+    piso = datetime(2026, 10, 21, 0, 0, tzinfo=SP)
+    assert up.shorts_moveis(velha.parent, up.carregar_config(), piso) == []
+    assert "Shorts ficam onde estão" in capsys.readouterr().out
+    assert up.main(["todos", "--shorts"]) in (0, 1)         # não derruba a rodada
+    assert not getattr(yt, "updates", [])
+
+
+def test_shorts_json_que_nao_e_dict_ou_entrada_torta_e_ignorada(ritmo):
+    pasta, velha, yt, _ = ritmo
+    (velha / up.SHORTS_JSON).write_text(json.dumps(
+        {"01": "lixo", "02": {"youtube_id": "S2"}, "03": {"youtube_id": "S3", "publish_at": "nao-data"},
+         "x": {"youtube_id": "S9", "publish_at": "2026-10-25T12:00:00-03:00"}}), encoding="utf-8")
+    piso = datetime(2026, 10, 21, 0, 0, tzinfo=SP)
+    assert up.shorts_moveis(velha.parent, up.carregar_config(), piso) == []
+    (velha / up.SHORTS_JSON).write_text("[]", encoding="utf-8")
+    assert up.shorts_moveis(velha.parent, up.carregar_config(), piso) == []
+
+
+def test_movel_sem_shorts_json_de_postado_ainda_reagenda(ritmo):
+    pasta, velha, yt, _ = ritmo
+    (velha / "shorts" / "shorts.json").unlink()
+    assert up.main(["todos", "--shorts"]) == 0
+    assert getattr(yt, "updates", [])                       # gravar_reagendado só avisa
+
+
+def test_short_arquivado_no_shorts_json_nao_perde_o_registro_ao_reagendar(ritmo):
+    """O Short móvel já está no YouTube; reagendar não pode apagar campos do shorts.json."""
+    pasta, velha, yt, _ = ritmo
+    p = velha / "shorts" / "shorts.json"
+    d = json.loads(p.read_text(encoding="utf-8"))
+    d["02"]["arquivado"] = True
+    p.write_text(json.dumps(d), encoding="utf-8")
+    up.main(["todos", "--shorts"])
+    assert json.loads(p.read_text(encoding="utf-8"))["02"]["arquivado"] is True
+
+
+def test_sem_shorts_replanejar_no_config_nao_reagenda(ritmo, monkeypatch, tmp_path):
+    pasta, velha, yt, _ = ritmo
+    cfg = tmp_path / "off.json"
+    cfg.write_text(json.dumps({"auditoria_aprovada": True, "shorts_replanejar": False,
+                               "shorts_grades": GRADES}), encoding="utf-8")
+    monkeypatch.setattr(up, "CONFIG", cfg)
+    assert up.main(["todos", "--shorts"]) == 0
+    assert not getattr(yt, "updates", [])
+
+
+def test_max_e_bloco_nao_reagendam(ritmo):
+    pasta, velha, yt, _ = ritmo
+    up.main(["todos", "--shorts", "--max=1"])
+    up.main([str(pasta), "--shorts", "--bloco=1"])
+    assert not getattr(yt, "updates", [])

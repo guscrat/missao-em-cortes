@@ -76,7 +76,10 @@ CONFIG = ROOT / "config" / "upload.json"
 TOKEN = ROOT / "secrets" / "youtube_token.json"
 COTA_PATH = ROOT / "state" / "cota_youtube.json"
 FILA_SHORTS = ROOT / "state" / "shorts_fila.json"   # resumo da última rodada real (painel)
-SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+# upload + edição (10/11/2026, ok do Gu): o force-ssl cobre o videos.update que reagenda
+# Short já agendado (ritmo dos Shorts); o upload sozinho não cobre update
+SCOPES = ["https://www.googleapis.com/auth/youtube.upload",
+          "https://www.googleapis.com/auth/youtube.force-ssl"]
 
 DEFAULTS = {
     "auditoria_aprovada": False, "horario": "18:00", "intervalo_dias": 1, "fuso": "America/Sao_Paulo",
@@ -84,6 +87,8 @@ DEFAULTS = {
     "feito_para_criancas": False,
     "cota_limite_dia": 10_000, "cota_upload": 1_600, "cota_thumbnail": 50,
     "shorts_horarios": ["12:00", "20:00"],
+    # ritmo dos Shorts (10/11/2026): grade por quantidade/dia e se a rodada da fila reagenda
+    "shorts_grades": {}, "shorts_replanejar": False, "cota_update": 50,
 }
 PLACEHOLDER_URL = "[COLAR URL DA LIVE AQUI]"
 TESTE_JSON = "youtube_teste.json"
@@ -237,6 +242,24 @@ def slots_shorts(minimos: list[datetime | None], ocupados: set[datetime], cfg: d
     return saida
 
 
+def grade_shorts(por_dia: int | None, cfg: dict) -> list[str]:
+    """Horários do dia pra `por_dia` Shorts (config shorts_grades {"3": [...]}); sem grade
+    pra esse número (ou None) = shorts_horarios, o mínimo."""
+    return (cfg.get("shorts_grades") or {}).get(str(por_dia)) or cfg["shorts_horarios"]
+
+
+def ritmo_shorts(n: int, inicio: date, fim: date | None, cfg: dict) -> int:
+    """Shorts por dia pra a fila (agendados que ainda não foram ao ar + novos) acabar junto
+    com o último longo agendado (10/11/2026, ideia do Gu): ceil(n / dias até `fim`), nunca
+    abaixo do mínimo (shorts_horarios) nem acima da maior grade de shorts_grades."""
+    base = len(cfg["shorts_horarios"])
+    teto = max([base] + [int(k) for k in (cfg.get("shorts_grades") or {}) if str(k).isdigit()])
+    if not n or fim is None or fim < inicio:
+        return base
+    dias = (fim - inicio).days + 1
+    return max(base, min(teto, -(-n // dias)))
+
+
 def _data_da_pasta(pasta: Path) -> date | None:
     try:
         return date.fromisoformat(pasta.name[:10])   # <AAAA-MM-DD>_<stem>
@@ -312,14 +335,30 @@ class Cota:
 
 # ── API do YouTube ─────────────────────────────────────────────────────────
 
+def tem_terminal() -> bool:
+    """Rodada com alguém olhando (terminal)? O Agendador e o Curador oculto rodam sem stdin."""
+    try:
+        return bool(sys.stdin and sys.stdin.isatty())
+    except (AttributeError, ValueError, OSError):
+        return False
+
+
 def autenticar():
-    """Cliente da API. 1ª vez abre o navegador pro login; depois reusa o token."""
+    """Cliente da API. 1ª vez abre o navegador pro login; depois reusa o token. Sem terminal
+    (shorts_oculto, curador_oculto) nunca abre o navegador: token sem o escopo pedido levanta
+    _google.LoginNecessario (a rodada falha e vira alerta no painel, não fica esperando)."""
     from googleapiclient.discovery import build
-    return build("youtube", "v3", credentials=credenciais(SCOPES, TOKEN), cache_discovery=False)
+    return build("youtube", "v3", credentials=credenciais(SCOPES, TOKEN, interativo=tem_terminal()),
+                 cache_discovery=False)
 
 
 def _cota_estourada(e: HttpError) -> bool:
     return e.resp.status == 403 and b"quotaExceeded" in (e.content or b"")
+
+
+def _sem_permissao(e: HttpError) -> bool:
+    """403 de escopo (token sem youtube.force-ssl): todo reagendar vai falhar igual."""
+    return e.resp.status == 403 and b"insufficientPermissions" in (e.content or b"")
 
 
 def _quando(slot: datetime | None) -> str:
@@ -411,7 +450,8 @@ def main(argv: list[str]) -> int:
         if flags.get("atualidade") and not dry:
             sys.exit("[!] --atualidade só vale com --dry-run (no envio real ela já roda).")
         return main_shorts(pastas, cfg, so_bloco, maximo, dry, simulado,
-                           atualidade=bool(flags.get("atualidade")))
+                           atualidade=bool(flags.get("atualidade")),
+                           replanejar=alvo == "todos" and so_bloco is None and maximo is None)
     pasta = achar_pasta(alvo)
     stem = stem_de(pasta)
     desc_txt = pasta / "descricoes.txt"
@@ -612,6 +652,98 @@ def fronteira_short(pasta: Path, bloco: dict) -> str | None:
             f"10_shorts de novo (ele encaixa no ponto natural)")
 
 
+def shorts_moveis(outputs: Path, cfg: dict, piso: datetime) -> list[dict]:
+    """Shorts já agendados pela API que ainda não foram ao ar (publish_at depois do piso de
+    antecedência): entram de novo no plano e podem ganhar outro horário (reagendar)."""
+    itens = []
+    for reg in sorted(outputs.glob(f"*/{SHORTS_JSON}")):
+        pasta = reg.parent
+        try:
+            feitos = json.loads(reg.read_text(encoding="utf-8"))
+            blocos = {b["id"]: b for b in json.loads(
+                (pasta / "blocos.json").read_text(encoding="utf-8"))["blocos"]}
+        except (OSError, ValueError, KeyError, TypeError) as e:
+            print(f"   [aviso] {pasta.name}: não li {reg.name}/blocos.json ({e}) — Shorts ficam onde estão")
+            continue
+        if not isinstance(feitos, dict):
+            continue
+        stem, longos = stem_de(pasta), ler_registro(pasta)
+        for nn, i in sorted(feitos.items()):
+            if not (str(nn).isdigit() and isinstance(i, dict) and i.get("youtube_id")
+                    and i.get("publish_at")):
+                continue
+            try:
+                atual = _data(i["publish_at"], cfg)
+            except (ValueError, TypeError):
+                continue
+            if atual <= piso:
+                continue
+            bid = int(nn)
+            lp = (longos.get(nn) or {}).get("publish_at") or (ler_bloco(stem, bid) or {}).get("publish_at")
+            itens.append({"pasta": pasta, "stem": stem, "bid": bid, "nn": nn, "movel": True,
+                          "youtube_id": i["youtube_id"], "atual": atual,
+                          "video": Path(i.get("arquivo") or f"short_{nn}"),
+                          "longo_id": i.get("longo_id"), "data_live": _data_da_pasta(pasta),
+                          "score": blocos.get(bid, {}).get("score_potencial") or 0,
+                          "minimo": _data(lp, cfg) if lp else None,
+                          "meta": {"titulo": i.get("titulo") or ""}})
+    return itens
+
+
+def planejar_ritmo(novos: list[dict], moveis: list[dict], fixos: set[datetime], cfg: dict,
+                   fim: datetime | None, agora_: datetime | None = None
+                   ) -> tuple[list[datetime], list[datetime], int | None]:
+    """Plano da fila inteira (novos + móveis) no ritmo que acaba com o último longo (`fim`).
+    Devolve (slots dos novos, slots dos móveis, Shorts/dia). Sem móveis e sem replanejar
+    (moveis=None) é o plano antigo, 2/dia nos shorts_horarios."""
+    if moveis is None:
+        return slots_shorts([x["minimo"] for x in novos], fixos, cfg, agora_), [], None
+    tz = ZoneInfo(cfg["fuso"])
+    piso = (agora_ or agora()).astimezone(tz) + timedelta(hours=cfg["antecedencia_min_horas"])
+    por_dia = ritmo_shorts(len(novos) + len(moveis), piso.date(),
+                           fim.astimezone(tz).date() if fim else None, cfg)
+    cfg_dia = {**cfg, "shorts_horarios": grade_shorts(por_dia, cfg)}
+    # Short já agendado só ADIANTA (nunca vai pra depois: não muda à toa entre rodadas e não
+    # precisa de nova checagem de atualidade). Quem iria pra depois fica parado no horário
+    # dele, que vira ocupado, e o plano é refeito até ninguém ir pra depois.
+    parados: set[int] = set()
+    while True:
+        livres = [m for m in moveis if id(m) not in parados]
+        todos = sorted(novos + livres, key=prioridade_short)
+        ocup = set(fixos) | {m["atual"] for m in moveis if id(m) in parados}
+        slots = slots_shorts([x["minimo"] for x in todos], ocup, cfg_dia, agora_)
+        por_id = {id(x): s for x, s in zip(todos, slots)}
+        atrasados = {id(m) for m in livres if por_id[id(m)] > m["atual"]}
+        if not atrasados:
+            break
+        parados |= atrasados
+    return ([por_id[id(x)] for x in novos],
+            [m["atual"] if id(m) in parados else por_id[id(m)] for m in moveis], por_dia)
+
+
+def reagendar_short(youtube, youtube_id: str, slot: datetime, cfg: dict) -> None:
+    """Troca o publishAt de um Short já agendado (videos.update, 50 unidades; o status
+    inteiro vai de novo: privado + data, como no upload)."""
+    youtube.videos().update(part="status", body={"id": youtube_id, "status": {
+        "privacyStatus": "private", "selfDeclaredMadeForKids": cfg["feito_para_criancas"],
+        "publishAt": slot.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}}).execute()
+
+
+def gravar_reagendado(x: dict, slot: datetime) -> None:
+    """Novo horário no youtube_shorts.json (o que o 09 lê) e no shorts.json (postado)."""
+    feitos = ler_registro(x["pasta"], SHORTS_JSON)
+    feitos[x["nn"]]["publish_at"] = slot.isoformat()
+    salvar_registro(x["pasta"], feitos, SHORTS_JSON)
+    path = x["pasta"] / "shorts" / "shorts.json"
+    try:
+        shorts = json.loads(path.read_text(encoding="utf-8"))
+        if x["nn"] in shorts:
+            shorts[x["nn"]]["postado"] = slot.date().isoformat()
+            path.write_text(json.dumps(shorts, ensure_ascii=False, indent=2), encoding="utf-8")
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        print(f"   [aviso] não atualizei o shorts.json ({e}); o 14_canal acerta depois")
+
+
 def planejar_shorts(pasta: Path, cfg: dict, so_bloco: int | None) -> list[dict]:
     """Shorts da pasta prontos pra subir (o longo do bloco já está no YouTube)."""
     stem = stem_de(pasta)
@@ -736,13 +868,23 @@ def sem_datados(itens: list[dict], slots: list[datetime], cfg: dict,
 
 
 def main_shorts(pastas: list[Path], cfg: dict, so_bloco: int | None, maximo: int | None,
-                dry: bool, simulado: bool, atualidade: bool = False) -> int:
+                dry: bool, simulado: bool, atualidade: bool = False,
+                replanejar: bool = False) -> int:
+    """replanejar (rodada da fila inteira, `todos`, com shorts_replanejar no config): os Shorts
+    já agendados que não foram ao ar entram no plano junto com os novos, no ritmo que acaba
+    com o último longo agendado (ritmo_shorts), e os que mudaram de horário são reagendados."""
     itens = [x for pasta in pastas for x in planejar_shorts(pasta, cfg, so_bloco)]
     itens.sort(key=prioridade_short)   # fila pelo mais recente, não por ordem de chegada
     if maximo is not None:
         itens = itens[:maximo]
     outputs = pastas[0].parent if pastas else _paths.OUTPUTS
-    slots = slots_shorts([x["minimo"] for x in itens], shorts_ocupados(outputs, cfg), cfg)
+    tz = ZoneInfo(cfg["fuso"])
+    piso = agora().astimezone(tz) + timedelta(hours=cfg["antecedencia_min_horas"])
+    moveis = (shorts_moveis(outputs, cfg, piso)
+              if replanejar and cfg.get("shorts_replanejar") and cfg["auditoria_aprovada"] else None)
+    fixos = shorts_ocupados(outputs, cfg) - {m["atual"] for m in moveis or []}
+    fim = ultimo_longo(outputs, cfg) if moveis is not None else None
+    slots, slots_m, por_dia = planejar_ritmo(itens, moveis, fixos, cfg, fim)
     sem_cota = not dry and not Cota(cfg["cota_limite_dia"]).cabe(cfg["cota_upload"])
     if sem_cota and itens:   # nada cabe hoje: não paga a checagem de atualidade à toa
         print(f"\n[!] Cota de hoje sem espaço pra um Short: {len(itens)} na fila, "
@@ -750,9 +892,18 @@ def main_shorts(pastas: list[Path], cfg: dict, so_bloco: int | None, maximo: int
     if itens and not sem_cota and (not dry or atualidade) and (cfg["auditoria_aprovada"] or simulado):
         # o Short sai dias depois do longo: atualidade checada de novo na data de publicação
         itens = sem_datados(itens, slots, cfg, arquivar=not dry)
-        slots = slots_shorts([x["minimo"] for x in itens], shorts_ocupados(outputs, cfg), cfg)
+        slots, slots_m, por_dia = planejar_ritmo(itens, moveis, fixos, cfg, fim)
+    mover = [(x, s) for x, s in zip(moveis or [], slots_m) if s != x["atual"]]
     modo = ("SIMULAÇÃO como se a auditoria estivesse aprovada" if simulado
             else "agendado" if cfg["auditoria_aprovada"] else "TRAVADO, auditoria pendente")
+    if por_dia is not None:
+        alvo = f"até o último longo ({fim.astimezone(tz):%d/%m})" if fim else "sem longo agendado à frente"
+        print(f"\nRitmo: {por_dia} Short(s)/dia ({', '.join(grade_shorts(por_dia, cfg))}) pra "
+              f"{len(itens) + len(moveis)} Short(s), {alvo}")
+        for x, s in sorted(mover, key=lambda par: par[1]):
+            print(f"   reagendar {x['atual'].astimezone(tz):%d/%m %H:%M} → {s:%d/%m %H:%M}  "
+                  f"{x['stem'][:24]:<24} {x['nn']}  {x['meta']['titulo'][:40]}")
+        print(f"   {len(mover)} reagendamento(s) · cota {cfg['cota_update'] * len(mover):,} unidades")
     print(f"\nShorts ({modo}): {len(itens)} upload(s) em {len(pastas)} live(s)")
     for x, slot in sorted(zip(itens, slots), key=lambda par: par[1]):
         print(f"   {slot:%d/%m %H:%M}  {x['stem'][:24]:<24} {x['nn']}  {x['meta']['titulo'][:50]}")
@@ -766,7 +917,7 @@ def main_shorts(pastas: list[Path], cfg: dict, so_bloco: int | None, maximo: int
                    mensagem="Shorts recusados: auditoria da API pendente")
             registrar_rodada(0, 0, len(itens), "upload travado (auditoria_aprovada: false)")
             return 1
-    if dry or not itens:
+    if dry or not (itens or mover):
         if dry and itens and not atualidade:
             print(f"   No envio real, cada Short passa antes pela checagem de atualidade na data "
                   f"de publicação (~US$ {CUSTO_ATUALIDADE:.3f} cada); os datados saem do plano.")
@@ -779,7 +930,47 @@ def main_shorts(pastas: list[Path], cfg: dict, so_bloco: int | None, maximo: int
     print(f"   Cota já usada hoje (dia do Pacífico): {cota.usadas:,}")
     youtube = autenticar()
     enviados, falhas = 0, 0
+    # reagendar antes de subir (barato, 50 un.): libera os horários que os novos vão usar.
+    # Um que falha fica no horário antigo, então o novo que ia ocupar o lugar dele não sobe agora
+    bloqueados: set[datetime] = set()
+    for x, slot in sorted(mover, key=lambda par: par[1]):
+        if slot in bloqueados:   # o dono do horário não saiu: este fica onde está
+            print(f"   [!] reagendar {x['stem']} {x['nn']}: {_quando(slot)} não liberou — fica")
+            bloqueados.add(x["atual"])
+            continue
+        if not cota.cabe(cfg["cota_update"]):
+            print(f"\n[!] Cota sem espaço pra reagendar: {cota.usadas:,}/{cota.limite:,}. "
+                  f"A próxima rodada refaz o plano.")
+            bloqueados |= {x2["atual"] for x2, _ in mover}
+            break
+        cota.gastar(cfg["cota_update"])
+        try:
+            reagendar_short(youtube, x["youtube_id"], slot, cfg)
+        except HttpError as e:
+            falhas += 1
+            bloqueados.add(x["atual"])
+            print(f"   [!] reagendar {x['stem']} {x['nn']} falhou ({e.resp.status})")
+            evento(x["stem"], "09_upload", "falha", agente="publicador", bloco_id=x["bid"],
+                   mensagem=f"Short reagendar http {e.resp.status}")
+            if _cota_estourada(e) or _sem_permissao(e):
+                if _cota_estourada(e):
+                    cota.esgotar()
+                else:
+                    print("   [!] o token do publisher não tem permissão de edição (youtube.force-ssl): "
+                          "rode o 09 à mão num terminal pra refazer o login")
+                bloqueados |= {x2["atual"] for x2, _ in mover}
+                break
+            continue
+        gravar_reagendado(x, slot)
+        print(f"   OK reagendado youtu.be/{x['youtube_id']} → {_quando(slot)}")
+        evento(x["stem"], "09_upload", "ok", agente="publicador", bloco_id=x["bid"],
+               mensagem=f"Short reagendado youtube_id={x['youtube_id']} "
+                        f"{x['atual'].isoformat()} → {slot.isoformat()} cota={cfg['cota_update']}")
     for x, slot in sorted(zip(itens, slots), key=lambda par: par[1]):   # cronológico: a cota corta o fim
+        if slot in bloqueados:
+            print(f"   [!] Short {x['stem']} {x['nn']}: o horário {_quando(slot)} não liberou — "
+                  f"sobe na próxima rodada")
+            continue
         pasta, stem, nn, bid = x["pasta"], x["stem"], x["nn"], x["bid"]
         if not cota.cabe(cfg["cota_upload"]):
             print(f"\n[!] Parando antes de estourar a cota: {cota.usadas:,}/{cota.limite:,} usadas. "

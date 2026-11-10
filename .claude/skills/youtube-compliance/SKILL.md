@@ -32,7 +32,7 @@ Histórico (até 06/11/2026): vídeo enviado por projeto de API **não auditado*
 
 | Projeto Google Cloud | Uso | Credenciais (em `secrets/`, gitignored, repo público) | Escopos |
 |---|---|---|---|
-| `missao-em-cortes-publisher` | upload (09) | `youtube_client_secret.json` + `youtube_token.json` | upload |
+| `missao-em-cortes-publisher` | upload (09) | `youtube_client_secret.json` + `youtube_token.json` | `youtube.upload` + `youtube.force-ssl` (edição, desde 10/11/2026 com ok do Gu: reagendar Short pelo `videos.update`) |
 | `missao-em-cortes-analytics` | métricas (12/15/17, inclusive o job Reach da Reporting API) e leitura do canal (14) | `analytics_client_secret.json` + `analytics_token.json` | `yt-analytics.readonly` + `youtube.readonly` |
 
 - **Nunca** ativar a Analytics API no publisher: a auditoria dele declara só upload.

@@ -210,4 +210,4 @@ def test_09_chama_credenciais_sem_client_secret():
     import re
     from pathlib import Path
     src = (Path(_google.__file__).parent / "09_upload.py").read_text(encoding="utf-8")
-    assert re.search(r"credenciais\(SCOPES, TOKEN\)", src)
+    assert re.search(r"credenciais\(SCOPES, TOKEN[,)]", src)
