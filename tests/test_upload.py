@@ -123,6 +123,9 @@ class FakeYouTube:
                     def execute(self):
                         if body["id"] in getattr(fake, "update_falha", ()):
                             raise up.HttpError(_Resp(500), b"erro")
+                        erro = getattr(fake, "update_erro", None)
+                        if erro:
+                            raise up.HttpError(_Resp(erro[0]), erro[1])
                         fake.updates = getattr(fake, "updates", []) + [body]
                 return _Req()
 
@@ -1055,3 +1058,111 @@ def test_config_do_repo_liga_o_ritmo(monkeypatch):
 
 def test_escopo_cobre_reagendar():
     assert "https://www.googleapis.com/auth/youtube.force-ssl" in up.SCOPES
+
+
+def _gastar_cota(usadas):
+    cota = up.Cota(up.DEFAULTS["cota_limite_dia"])
+    cota.usadas = usadas
+    cota._salvar()
+
+
+def _registro(velha):
+    return json.loads((velha / up.SHORTS_JSON).read_text(encoding="utf-8"))
+
+
+def test_cota_sem_espaco_pra_reagendar_nao_move_e_segura_os_novos(ritmo):
+    pasta, velha, yt, _ = ritmo
+    antes = _registro(velha)
+    _gastar_cota(up.DEFAULTS["cota_limite_dia"] - 1)
+    assert up.main(["todos", "--shorts"]) == 0
+    assert not getattr(yt, "updates", []) and yt.uploads == []
+    assert _registro(velha) == antes
+
+
+def test_cota_acaba_no_meio_dos_reagendamentos_so_grava_os_feitos(ritmo):
+    pasta, velha, yt, _ = ritmo
+    u = up.DEFAULTS["cota_update"]
+    _gastar_cota(up.DEFAULTS["cota_limite_dia"] - u)       # cabe exatamente 1 reagendar
+    up.main(["todos", "--shorts"])
+    assert len(getattr(yt, "updates", [])) <= 1
+    for i in yt.updates:                                   # o que foi pra API foi gravado
+        assert i["id"] in {v["youtube_id"] for v in _registro(velha).values()}
+    publicados = {up._data(i["publish_at"], CFG) for i in _registro(velha).values()}
+    publicados |= {datetime.fromisoformat(x["status"]["publishAt"].replace("Z", "+00:00"))
+                   for x in yt.uploads}
+    assert len(publicados) == len(_registro(velha)) + len(yt.uploads)   # nenhum horário repetido
+
+
+def test_reagendar_quota_exceeded_para_tudo_e_trava_a_cota(ritmo):
+    pasta, velha, yt, _ = ritmo
+    yt.update_erro = (403, b'{"error":{"errors":[{"reason":"quotaExceeded"}]}}')
+    antes = _registro(velha)
+    assert up.main(["todos", "--shorts"]) == 1
+    assert _registro(velha) == antes and yt.uploads == []
+    assert json.loads(up.COTA_PATH.read_text())["usadas"] == up.DEFAULTS["cota_limite_dia"]
+
+
+def test_reagendar_sem_permissao_avisa_do_force_ssl_e_nao_sobe_novo(ritmo, capsys):
+    pasta, velha, yt, _ = ritmo
+    yt.update_erro = (403, b'{"error":{"errors":[{"reason":"insufficientPermissions"}]}}')
+    antes = _registro(velha)
+    assert up.main(["todos", "--shorts"]) == 1
+    assert "force-ssl" in capsys.readouterr().out
+    assert _registro(velha) == antes
+    assert "2026-10-22T23:00:00Z" not in [u["status"]["publishAt"] for u in yt.uploads]  # horário do S2 segue preso
+
+
+def test_shorts_json_ilegivel_deixa_a_pasta_onde_esta(ritmo, capsys):
+    pasta, velha, yt, _ = ritmo
+    (velha / up.SHORTS_JSON).write_text("{quebrado", encoding="utf-8")
+    piso = datetime(2026, 10, 21, 0, 0, tzinfo=SP)
+    assert up.shorts_moveis(velha.parent, up.carregar_config(), piso) == []
+    assert "Shorts ficam onde estão" in capsys.readouterr().out
+    assert up.main(["todos", "--shorts"]) in (0, 1)         # não derruba a rodada
+    assert not getattr(yt, "updates", [])
+
+
+def test_shorts_json_que_nao_e_dict_ou_entrada_torta_e_ignorada(ritmo):
+    pasta, velha, yt, _ = ritmo
+    (velha / up.SHORTS_JSON).write_text(json.dumps(
+        {"01": "lixo", "02": {"youtube_id": "S2"}, "03": {"youtube_id": "S3", "publish_at": "nao-data"},
+         "x": {"youtube_id": "S9", "publish_at": "2026-10-25T12:00:00-03:00"}}), encoding="utf-8")
+    piso = datetime(2026, 10, 21, 0, 0, tzinfo=SP)
+    assert up.shorts_moveis(velha.parent, up.carregar_config(), piso) == []
+    (velha / up.SHORTS_JSON).write_text("[]", encoding="utf-8")
+    assert up.shorts_moveis(velha.parent, up.carregar_config(), piso) == []
+
+
+def test_movel_sem_shorts_json_de_postado_ainda_reagenda(ritmo):
+    pasta, velha, yt, _ = ritmo
+    (velha / "shorts" / "shorts.json").unlink()
+    assert up.main(["todos", "--shorts"]) == 0
+    assert getattr(yt, "updates", [])                       # gravar_reagendado só avisa
+
+
+def test_short_arquivado_no_shorts_json_nao_perde_o_registro_ao_reagendar(ritmo):
+    """O Short móvel já está no YouTube; reagendar não pode apagar campos do shorts.json."""
+    pasta, velha, yt, _ = ritmo
+    p = velha / "shorts" / "shorts.json"
+    d = json.loads(p.read_text(encoding="utf-8"))
+    d["02"]["arquivado"] = True
+    p.write_text(json.dumps(d), encoding="utf-8")
+    up.main(["todos", "--shorts"])
+    assert json.loads(p.read_text(encoding="utf-8"))["02"]["arquivado"] is True
+
+
+def test_sem_shorts_replanejar_no_config_nao_reagenda(ritmo, monkeypatch, tmp_path):
+    pasta, velha, yt, _ = ritmo
+    cfg = tmp_path / "off.json"
+    cfg.write_text(json.dumps({"auditoria_aprovada": True, "shorts_replanejar": False,
+                               "shorts_grades": GRADES}), encoding="utf-8")
+    monkeypatch.setattr(up, "CONFIG", cfg)
+    assert up.main(["todos", "--shorts"]) == 0
+    assert not getattr(yt, "updates", [])
+
+
+def test_max_e_bloco_nao_reagendam(ritmo):
+    pasta, velha, yt, _ = ritmo
+    up.main(["todos", "--shorts", "--max=1"])
+    up.main([str(pasta), "--shorts", "--bloco=1"])
+    assert not getattr(yt, "updates", [])
