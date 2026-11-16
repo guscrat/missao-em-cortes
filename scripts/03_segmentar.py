@@ -419,12 +419,15 @@ for b in data["blocos"]:
                 if not e["fim_ok"]:
                     avisos.append(f"bloco {bid}: short sem fim de frase perto do tempo do LLM")
 
+    # Cold open: problema nele também não derruba o bloco (nem a live). Sem cold open que
+    # sirva, o bloco segue sem ele: o 04 avisa e pula só o cold open.
     co = b.get("cold_open")
     if co:
         try:
             co_i, co_f = ts_s(co["timestamp_inicio"]), ts_s(co["timestamp_fim"])
         except (ValueError, AttributeError, KeyError):
-            erros.append(f"bloco {bid}: cold_open com timestamps ilegíveis")
+            avisos.append(f"bloco {bid}: cold_open com timestamps ilegíveis — sai sem cold open")
+            b.pop("cold_open")
             continue
         co_i, co_f = ancorar_trecho(f"bloco {bid} (cold open)", co, co_i, co_f,
                                     co.get("frase"), co.get("frase"))
@@ -435,10 +438,22 @@ for b in data["blocos"]:
             co_i, co_f, _ = encaixar_trecho(co, sh_ok[0], sh_ok[0] + 22, fr.JANELA_TRECHO_S, 12, 35)
             co["frase"] = " ".join(w["word"] for w in palavras if co_i <= w["start"] < co_f)
             avisos.append(f"bloco {bid}: cold open do LLM não serviu — usei o gancho do Short")
-        co["duracao_segundos"] = round(co_f - co_i, 1)
+        elif ini <= co_i < fim < co_f:
+            # começa no bloco e vaza o fim: fecha no último fim de frase até o fim do bloco
+            novo = fr.ajustar_fim(palavras, fim, co_f - co_i, minimo=co_i + 8, maximo=fim) \
+                if palavras else None
+            if novo is not None:
+                co_f = novo
+                co["timestamp_fim"] = fr.segundos_para_ts(co_f)
+                avisos.append(f"bloco {bid}: cold open passava do fim do bloco — "
+                              f"fechei no último fim de frase antes dele")
         if not (ini <= co_i < co_f <= fim):
-            erros.append(f"bloco {bid}: cold_open fora do intervalo do bloco")
-        elif not 8 <= co_f - co_i <= 45:
+            avisos.append(f"bloco {bid}: cold_open fora do intervalo do bloco e sem Short pra "
+                          f"substituir — sai sem cold open")
+            b.pop("cold_open")
+            continue
+        co["duracao_segundos"] = round(co_f - co_i, 1)
+        if not 8 <= co_f - co_i <= 45:
             avisos.append(f"bloco {bid}: cold_open de {co_f - co_i:.0f}s (alvo é 15-30s)")
 
 descartados = []
@@ -510,7 +525,9 @@ if erros:
     print(f"\n[!] Timestamps inválidos vindos do LLM:")
     for e in erros:
         print(f"   - {e}")
-    sys.exit(f"\nResposta salva em {dump} pra inspeção. blocos.json NÃO foi gravado — "
+    # o painel mostra só a última linha (_rodar): os erros vão nela também
+    sys.exit(f"\n{len(erros)} erro(s): {' | '.join(erros)}. "
+             f"Resposta salva em {dump} pra inspeção. blocos.json NÃO foi gravado — "
              f"corrija {BRUTA.name} à mão e rode o step 3 de novo (reaproveita, $0), ou "
              f"rode com --refazer (paga outra segmentação).")
 

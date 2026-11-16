@@ -155,6 +155,50 @@ def test_cold_open_fora_do_bloco_cai_pro_gancho_do_short(pasta):
     assert c["frase"].startswith(f"t{sh_i}k0")
 
 
+def test_cold_open_fora_do_bloco_sem_short_sai_sem_cold_open(pasta):
+    # caso real (renan_nikolas, 15/11): cold open inteiro depois do fim e sem Short
+    co = {"timestamp_inicio": ts(25 * 60), "timestamp_fim": ts(25 * 60 + 25),
+          "frase": frase(idx(25))}
+    bom = bloco(2, 30, 40)
+    r, d = rodar(pasta, [bloco(1, 10, 20, cold_open=co), bom])
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert not (pasta / "blocos_invalido.json").exists()
+    assert len(d["blocos"]) == 2
+    assert "cold_open" not in d["blocos"][0]
+    assert "sai sem cold open" in r.stdout
+
+
+def test_cold_open_que_vaza_o_fim_fecha_antes_do_fim_do_bloco(pasta):
+    # começa ~15s antes do fim do bloco e passa ~10s dele (bloco 8 do caso real)
+    fim_i = idx(20)
+    co_i = fim_i - 4
+    co = {"timestamp_inicio": ts(t_frase(co_i)), "timestamp_fim": ts(t_frase(fim_i + 2)),
+          "frase": " ".join(frase(i) for i in range(co_i, fim_i + 2))}
+    r, d = rodar(pasta, [bloco(1, 10, 20, cold_open=co)])
+    assert r.returncode == 0, r.stdout + r.stderr
+    b = d["blocos"][0]
+    c = b["cold_open"]
+    assert secs(c["timestamp_fim"]) <= secs(b["timestamp_fim"])
+    assert secs(c["timestamp_fim"]) - secs(c["timestamp_inicio"]) >= 8
+    assert c["duracao_segundos"] == round(secs(c["timestamp_fim"]) - secs(c["timestamp_inicio"]), 1)
+    assert "fechei no último fim de frase" in r.stdout
+
+
+def test_cold_open_ilegivel_nao_derruba_bloco_valido(pasta):
+    co = {"timestamp_inicio": "bobagem", "timestamp_fim": "x", "frase": "a b c"}
+    r, d = rodar(pasta, [bloco(1, 10, 20, cold_open=co)])
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "cold_open" not in d["blocos"][0]
+
+
+def test_erro_fatal_vai_na_ultima_linha(pasta):
+    # o painel mostra só a última linha do stderr: os erros têm de estar nela
+    r, d = rodar(pasta, [bloco(1, 50, 62)])   # passa do fim do vídeo (60 min)
+    assert r.returncode != 0 and d is None
+    ultima = r.stderr.strip().splitlines()[-1]
+    assert "passa do fim do vídeo" in ultima and "NÃO foi gravado" in ultima
+
+
 def test_ids_renumerados_por_tempo_sem_buraco(pasta):
     r, d = rodar(pasta, [bloco(7, 30, 40), bloco(3, 10, 20), bloco(9, 45, 55)])
     assert r.returncode == 0, r.stdout + r.stderr
