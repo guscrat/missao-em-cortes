@@ -184,6 +184,17 @@ def test_cold_open_que_vaza_o_fim_fecha_antes_do_fim_do_bloco(pasta):
     assert "fechei no último fim de frase" in r.stdout
 
 
+def test_cold_open_vaza_o_fim_sem_fim_de_frase_de_8s_sai_sem_cold_open(pasta):
+    # começa a ~4s do fim do bloco: não existe fim de frase com >= 8s dentro do bloco
+    fim_i = idx(20)
+    co = {"timestamp_inicio": ts(t_frase(fim_i - 1)), "timestamp_fim": ts(t_frase(fim_i + 5)),
+          "frase": " ".join(frase(i) for i in range(fim_i - 1, fim_i + 5))}
+    r, d = rodar(pasta, [bloco(1, 10, 20, cold_open=co)])
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "cold_open" not in d["blocos"][0]
+    assert "sai sem cold open" in r.stdout
+
+
 def test_cold_open_ilegivel_nao_derruba_bloco_valido(pasta):
     co = {"timestamp_inicio": "bobagem", "timestamp_fim": "x", "frase": "a b c"}
     r, d = rodar(pasta, [bloco(1, 10, 20, cold_open=co)])
