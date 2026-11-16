@@ -32,7 +32,7 @@ def _item(vid, titulo="Live boa", minutos=90, dias_atras=1, canal=0, **extra):
 @pytest.fixture
 def raiz(tmp_path, monkeypatch, banco):
     """Projeto falso: config/, inputs/, outputs/, state/ em tmp_path."""
-    (tmp_path / "config").mkdir()
+    (tmp_path / "config").mkdir(exist_ok=True)
     (tmp_path / "inputs").mkdir()
     (tmp_path / "outputs").mkdir()
     (tmp_path / "config" / "canais.json").write_text(json.dumps(CFG), encoding="utf-8")
@@ -919,3 +919,116 @@ def test_texto_estoque_com_e_sem_cobertura():
     vazio = cu._texto_estoque({"longos": 0, "shorts": 0, "dias_agendados": 0, "dias": 0.0,
                                "coberto_ate": None})
     assert vazio.startswith("nada agendado nem pronto = 0.0 dia(s)")
+
+
+# --- agendamento no fim do Processar (agendar_no_processar) ---------------------------------
+
+def _processar_agendando(raiz, monkeypatch, sobe=(4, 1), ligado=True, aprovada=True):
+    """processar() com o 09 mockado: `sobe` = blocos que o 09 grava no youtube.json."""
+    monkeypatch.setattr(cu, "auditoria_aprovada", lambda: aprovada)
+    monkeypatch.setattr(cu, "agendar_no_processar", lambda: ligado)
+    pasta = raiz / "outputs" / "renan_x"
+    pasta.mkdir(parents=True, exist_ok=True)
+    chamadas = []
+
+    def rodar(script, *a):
+        chamadas.append((script, *a))
+        if script == "09_upload.py" and a == ("renan_x",):
+            (pasta / "youtube.json").write_text(json.dumps(
+                {f"{b:02d}": {"youtube_id": f"yt{b}"} for b in sobe}), encoding="utf-8")
+        return True
+    monkeypatch.setattr(cu, "rodar", rodar)
+    import _paths, _publicacao
+    monkeypatch.setattr(_paths, "achar_pasta", lambda stem: pasta)
+    monkeypatch.setattr(_publicacao, "aprovados", lambda p: [{"id": 4}, {"id": 1}])
+    monkeypatch.setattr(_publicacao, "gerar", lambda p: (p / "publicacao.txt", [1, 2]))
+    return cu.processar({**_item("a"), "stem": "renan_x"}), chamadas
+
+
+def test_processar_agenda_longos_e_depois_shorts(raiz, monkeypatch):
+    res, chamadas = _processar_agendando(raiz, monkeypatch)
+    nomes = [c[0] for c in chamadas]
+    assert chamadas[-2:] == [("09_upload.py", "renan_x"), ("09_upload.py", "todos", "--shorts")]
+    assert nomes.index("09_upload.py") > max(i for i, n in enumerate(nomes) if n == "10_shorts.py")
+    assert res["ok"] and res["agendados"] == 2
+    assert not any("agendado" in a or "Shorts" in a for a in res["avisos"])
+
+
+def test_processar_sem_flag_nao_agenda(raiz, monkeypatch):
+    res, chamadas = _processar_agendando(raiz, monkeypatch, ligado=False)
+    assert "09_upload.py" not in [c[0] for c in chamadas] and "agendados" not in res
+
+
+def test_processar_sem_auditoria_nao_agenda(raiz, monkeypatch):
+    res, chamadas = _processar_agendando(raiz, monkeypatch, aprovada=False)
+    assert "09_upload.py" not in [c[0] for c in chamadas]
+
+
+def test_longo_que_nao_subiu_vira_aviso_e_nao_derruba(raiz, monkeypatch):
+    res, chamadas = _processar_agendando(raiz, monkeypatch, sobe=(4,))
+    assert res["ok"] and res["agendados"] == 1
+    assert any("1 longo(s) não agendado(s)" in a and "blocos 1" in a for a in res["avisos"])
+    assert ("09_upload.py", "todos", "--shorts") in chamadas
+
+
+def test_nada_subiu_nao_tenta_shorts(raiz, monkeypatch):
+    res, chamadas = _processar_agendando(raiz, monkeypatch, sobe=())
+    assert res["agendados"] == 0 and ("09_upload.py", "todos", "--shorts") not in chamadas
+
+
+def test_agendar_no_processar_le_config(monkeypatch, tmp_path):
+    monkeypatch.setattr(cu, "ROOT", tmp_path)
+    assert cu.agendar_no_processar() is False                       # sem arquivo
+    (tmp_path / "config").mkdir(exist_ok=True)
+    (tmp_path / "config" / "upload.json").write_text('{"agendar_no_processar": true}', encoding="utf-8")
+    assert cu.agendar_no_processar() is True
+    (tmp_path / "config" / "upload.json").write_text('{"agendar_no_processar": "sim"}', encoding="utf-8")
+    assert cu.agendar_no_processar() is False
+
+
+def test_ids_agendados_ignora_registro_estranho(tmp_path):
+    (tmp_path / "youtube.json").write_text(
+        '{"01": {"youtube_id": "a"}, "02": {"youtube_id": null}, "x": {"youtube_id": "b"}, "03": 5}',
+        encoding="utf-8")
+    assert cu.ids_agendados(tmp_path) == {1}
+    (tmp_path / "youtube.json").write_text("[1]", encoding="utf-8")
+    assert cu.ids_agendados(tmp_path) == set()
+
+
+def test_short_que_falha_no_agendamento_vira_aviso(raiz, monkeypatch):
+    monkeypatch.setattr(cu, "auditoria_aprovada", lambda: True)
+    monkeypatch.setattr(cu, "agendar_no_processar", lambda: True)
+    pasta = raiz / "outputs" / "renan_x"
+    pasta.mkdir(parents=True, exist_ok=True)
+
+    def rodar(s, *a):
+        if a == ("renan_x",):                       # o 09 do longo grava o registro
+            (pasta / "youtube.json").write_text('{"01": {"youtube_id": "y"}}', encoding="utf-8")
+        return not (s == "09_upload.py" and "--shorts" in a)
+    monkeypatch.setattr(cu, "rodar", rodar)
+    res = {"avisos": []}
+    cu.agendar("renan_x", pasta, [1], res)
+    assert res["agendados"] == 1 and any("Shorts falhou" in a for a in res["avisos"])
+
+
+def test_processar_escolhido_grava_mensagem_com_agendados(monkeypatch):
+    gravadas = []
+    monkeypatch.setattr(cu, "gravar_estado", lambda e: None)
+    monkeypatch.setattr(cu, "gravar_sugestao", lambda vid, **kw: gravadas.append(kw))
+    monkeypatch.setattr(cu, "evento", lambda *a, **k: None)
+    monkeypatch.setattr(cu, "processar_seguro",
+                        lambda item: {"ok": True, "aprovados": 3, "agendados": 2, "avisos": []})
+    estado = {"v": {"canal": "c", "url": "u", "titulo": "T", "prefixo": "p", "stem": "p_t"}}
+    monkeypatch.setattr(cu, "_canal_de", lambda cfg, c: {})
+    rodada = {"escolhidos": [], "fila": [], "processados": []}
+    cu.processar_escolhido({}, estado, "v", rodada, "teste")
+    assert gravadas[-1]["status"] == "processada"
+    assert gravadas[-1]["mensagem"] == "3 corte(s) pronto(s) pra publicar, 2 agendado(s) no YouTube"
+
+
+def test_agendados_conta_so_os_desta_rodada(raiz, monkeypatch):
+    pasta = raiz / "outputs" / "renan_x"
+    pasta.mkdir(parents=True, exist_ok=True)
+    (pasta / "youtube.json").write_text('{"04": {"youtube_id": "velho"}}', encoding="utf-8")
+    res, _ = _processar_agendando(raiz, monkeypatch, sobe=(4, 1))
+    assert res["agendados"] == 1

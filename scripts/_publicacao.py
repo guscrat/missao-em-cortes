@@ -168,7 +168,7 @@ def gerar(pasta: Path, agora: datetime | None = None,
                    f"agendado no Studio."]
     if com_shorts:
         linhas += ["# Shorts sobem pela API (09_upload.py <stem> --shorts, 2/dia, depois do longo):",
-                   "# NÃO suba à mão. O vídeo relacionado é marcado no Studio (dia_d.py relacionados).", ""]
+                   "# NÃO suba à mão. O link pro longo vai na descrição do Short.", ""]
     else:
         linhas += ["# Só os vídeos LONGOS: os Shorts ficam prontos e sobem pela API quando a",
                    "# auditoria for aprovada (config/upload.json → auditoria_aprovada).", ""]

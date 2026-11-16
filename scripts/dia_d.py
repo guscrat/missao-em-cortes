@@ -5,7 +5,6 @@ Runbook completo: .claude/skills/youtube-compliance/references/dia-d.md
 Uso:
     uv run py scripts/dia_d.py checar               # SIMULAÇÃO: nada é enviado, nada muda
     uv run py scripts/dia_d.py verificar <id> [<id>...]   # status real no YouTube (só leitura)
-    uv run py scripts/dia_d.py relacionados [--feito=ID,ID]   # Shorts sem vídeo relacionado
 
 checar: credenciais do publisher (projeto certo, token com escopo de upload), cota de hoje,
 o candidato ao teste (1 longo aprovado que ainda não está no YouTube) e o plano dos Shorts —
@@ -16,8 +15,6 @@ verificar: lê o status do vídeo com o token do projeto de MÉTRICAS (youtube.r
 dono do canal enxerga privado/agendado). Privado sem data depois de um upload real = a trava
 da auditoria continua (vídeo bloqueado como privado).
 
-relacionados: a API não tem o campo "vídeo relacionado" do Short; ele é marcado à mão no
-Studio. Lista os Shorts agendados pelo 09 que ainda não foram marcados; --feito=ID marca.
 Custo: US$ 0 (Data API, leitura ≈1 unidade por chamada).
 """
 import importlib
@@ -191,46 +188,13 @@ def verificar(ids: list[str], yt=None) -> int:
     return 1 if pior else 0
 
 
-# ── relacionados ───────────────────────────────────────────────────────────
-
-def relacionados(feitos: set[str] | None = None) -> int:
-    feitos = feitos or set()
-    pendentes = 0
-    for reg in sorted(_paths.OUTPUTS.glob(f"*/{up.SHORTS_JSON}")):
-        dados = up.ler_registro(reg.parent, up.SHORTS_JSON)
-        mudou = False
-        for nn, item in sorted(dados.items()):
-            if item.get("relacionado_ok"):
-                continue
-            if item["youtube_id"] in feitos:
-                item["relacionado_ok"], mudou = True, True
-                print(f"   ok {item['youtube_id']} marcado")
-                continue
-            pendentes += 1
-            print(f"{item['publish_at'][:16].replace('T', ' ')} · {reg.parent.name} #{nn} · "
-                  f"{item['titulo'][:50]}\n"
-                  f"   Short:  https://studio.youtube.com/video/{item['youtube_id']}/edit\n"
-                  f"   Vídeo relacionado → https://youtu.be/{item['longo_id']}")
-        if mudou:
-            up.salvar_registro(reg.parent, dados, up.SHORTS_JSON)
-    print(f"\n{pendentes} Short(s) sem vídeo relacionado." + (
-        " No Studio: Detalhes → Vídeo relacionado → escolha o longo. Depois: "
-        "dia_d.py relacionados --feito=ID,ID" if pendentes else ""))
-    return 0
-
-
 def main(argv: list[str]) -> int:
     pos = [a for a in argv if not a.startswith("--")]
-    flags = dict(a[2:].split("=", 1) if "=" in a else (a[2:], True)
-                 for a in argv if a.startswith("--"))
     cmd = pos[0] if pos else "checar"
     if cmd == "checar":
         return checar()
     if cmd == "verificar":
         return verificar(pos[1:])
-    if cmd == "relacionados":
-        feito = flags.get("feito")
-        return relacionados(set(feito.split(",")) if isinstance(feito, str) else None)
     sys.exit(__doc__)
 
 

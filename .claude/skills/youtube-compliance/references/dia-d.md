@@ -65,7 +65,7 @@ O Gu responde **"ok no Studio"** → passo 4. Problema → Rollback.
 Confirmação final do "público" (no horário agendado + ~30 min): `dia_d.py verificar <id>` →
 `[OK] público`. O 14_canal (rodada do Curador) também marca `publicado`/`postado`.
 
-## 4. Liberar os Shorts (2/dia, com vídeo relacionado)
+## 4. Liberar os Shorts (2/dia)
 
 Até a auditoria o Curador não gera Short: lives processadas com a flag false não têm. Antes do
 09, gere os dos aprovados que ainda vão subir (`10_shorts.py <stem> --bloco=N`, $0, ~1 min cada).
@@ -86,15 +86,8 @@ uv run py scripts/09_upload.py todos --shorts
 - Só Short subido pela API ocupa horário no plano: Short subido à mão (visto só pelo 14) não
   sai do `todos --shorts` e pode colidir no horário. Depois do dia D, nada de Short à mão.
 
-**Vídeo relacionado** — a Data API **não tem** esse campo; é manual no Studio:
-
-```
-uv run py scripts/dia_d.py relacionados              # lista Short → longo que falta marcar
-uv run py scripts/dia_d.py relacionados --feito=ID,ID   # marca como feito
-```
-
-No Studio: editar o Short → Detalhes → **Vídeo relacionado** → escolher o longo. Se o
-longo ainda não aparecer (agendado), voltar depois que ele for ao ar.
+O Short leva pro longo pelo link "Vídeo completo" no topo da descrição; o campo "vídeo
+relacionado" não existe na API nem aparece no Studio do canal (dispensado pelo Gu em 10/11/2026).
 
 ## Rollback
 

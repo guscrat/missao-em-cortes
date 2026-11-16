@@ -24,13 +24,15 @@ O YouTube pune *reused content* desde Jul/2025. O que nos mantém elegíveis é 
 
 **O YouTube encerrou a revisão em 06/11/2026** sem auditoria: segundo eles, vídeo enviado pela API **não fica privado automaticamente** e a cota padrão (10 mil/dia) basta, sem pedir extra. Por isso `"auditoria_aprovada": true` em `config/upload.json` — o nome ficou por compatibilidade; leia como **"upload liberado"**. A liberação seguiu o runbook do dia D (`references/dia-d.md`) com um ajuste do Gu: o teste foi **1 longo + 1 Short** reais agendados públicos, e Shorts (12h/20h) e agendamento automático dos longos só depois do ok dele no YouTube. Se um vídeo da API aparecer travado como privado, é o Rollback do runbook.
 
+**Processar agenda sozinho (10/11/2026, ok do Gu):** com `"agendar_no_processar": true` em `config/upload.json`, o fim de todo processamento do Curador (botão Processar, "Processar link" e rede de segurança) roda `09_upload.py <stem>` (longos aprovados nos slots das 18h) e depois `09_upload.py todos --shorts`. Cota ou falha no upload vira aviso no resumo (os cortes ficam prontos; os Shorts que sobrarem a tarefa das 17h50 sobe). Uma live de 6 longos gasta ~9.900 da cota de 10 mil: os Shorts dela costumam ficar pra rodada das 17h50 do dia seguinte, e uma segunda live no mesmo dia fica com aviso pra rodar o 09 à mão. Desligar = `false`.
+
 Histórico (até 06/11/2026): vídeo enviado por projeto de API **não auditado** fica **bloqueado como privado** no YouTube: não dá pra publicar nem recorrer, só reenviando (queima o vídeo). Por isso `"auditoria_aprovada": false` em `config/upload.json` faz o 09 **recusar** upload real. Exceção: upload de teste (`--bloco=N --teste`). Até a auditoria, Curador e `publicacao.txt` trabalham **só com longos**: o Curador nem gera Short (o `10_shorts` roda à mão no dia D) e eles sobem pela API depois. A flag é lida por `_paths.auditoria_aprovada()`. Virar pra `true` só quando a auditoria for aprovada, seguindo o **runbook do dia D** (`references/dia-d.md`): quando o Gu disser "auditoria aprovada", é executar ele.
 
 ## Dois projetos OAuth, nunca misturar
 
 | Projeto Google Cloud | Uso | Credenciais (em `secrets/`, gitignored, repo público) | Escopos |
 |---|---|---|---|
-| `missao-em-cortes-publisher` | upload (09) | `youtube_client_secret.json` + `youtube_token.json` | upload |
+| `missao-em-cortes-publisher` | upload (09) | `youtube_client_secret.json` + `youtube_token.json` | `youtube.upload` + `youtube.force-ssl` (edição, desde 10/11/2026 com ok do Gu: reagendar Short pelo `videos.update`) |
 | `missao-em-cortes-analytics` | métricas (12/15/17, inclusive o job Reach da Reporting API) e leitura do canal (14) | `analytics_client_secret.json` + `analytics_token.json` | `yt-analytics.readonly` + `youtube.readonly` |
 
 - **Nunca** ativar a Analytics API no publisher: a auditoria dele declara só upload.
@@ -56,7 +58,7 @@ Publicar no YouTube pela primeira vez numa feature nova · rodar upload real (se
 
 ## Onde está o detalhe
 
-- `references/dia-d.md` — **runbook do dia D** da auditoria: `dia_d.py checar` (simulação), virar a flag, teste com 1 vídeo, verificação (script + Studio), liberação dos Shorts (`09 todos --shorts`, 2/dia) e vídeo relacionado, rollback.
+- `references/dia-d.md` — **runbook do dia D** da auditoria: `dia_d.py checar` (simulação), virar a flag, teste com 1 vídeo, verificação (script + Studio), liberação dos Shorts (`09 todos --shorts`, 2/dia), rollback.
 - `references/upload.md` — 09: slots, idempotência, cota, upload de teste, Shorts (`--shorts`).
 - `references/metricas.md` — 12: regra com/sem legenda + **setup do projeto analytics passo a passo**; 15: placar do canal pro YPP.
 - `references/canal-e-publicacao.md` — 14 (casamento por título, status) e `publicacao.txt`.
