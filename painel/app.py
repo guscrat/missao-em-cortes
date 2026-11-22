@@ -167,9 +167,57 @@ def esteira(blocos: pd.DataFrame, eventos: pd.DataFrame) -> None:
     ])
 
 
+# Filtro de período do kanban: só esconde o que já TERMINOU (publicado, descartado e
+# vídeo da curadoria sem bloco). Pendência (quarentena, pronto, agendado, edição) sempre aparece.
+PERIODOS = [7, 30, 90, 0]          # 0 = tudo
+PERIODO_PADRAO = 30
+FINAIS = {"publicado", "descartado"}
+
+
+def recorte_kanban(videos: pd.DataFrame, blocos: pd.DataFrame, dias: int,
+                   hoje_iso: str) -> tuple[pd.DataFrame, pd.DataFrame, int]:
+    """Tira do kanban o que terminou há mais de `dias` (0 = não filtra).
+
+    Data de referência: `publish_at` pro publicado (quando saiu no canal); data da live
+    (prefixo AAAA-MM-DD da pasta) pro descartado e pro vídeo sem bloco. Sem data = fica.
+    Devolve (videos, blocos, quantos itens ficaram escondidos).
+    """
+    if not dias:
+        return videos, blocos, 0
+    corte = (pd.Timestamp(hoje_iso) - pd.Timedelta(days=dias)).strftime("%Y-%m-%d")
+    data_live = {}
+    if not videos.empty and "pasta" in videos:
+        data_live = {s: p[:10] for s, p in zip(videos["stem"], videos["pasta"]) if isinstance(p, str)}
+
+    def antigo(data) -> bool:
+        return isinstance(data, str) and len(data) >= 10 and data[:10] < corte
+
+    com_blocos = set(blocos["stem"]) if not blocos.empty else set()   # antes de filtrar
+    escondidos = 0
+    if not blocos.empty:
+        velho = blocos.apply(lambda b: b["status"] in FINAIS and antigo(
+            b["publish_at"] if b["status"] == "publicado" and isinstance(b["publish_at"], str)
+            else data_live.get(b["stem"])), axis=1).astype(bool)
+        escondidos += int(velho.sum())
+        blocos = blocos[~velho]
+    if not videos.empty:
+        velho = videos.apply(lambda v: v["stem"] not in com_blocos and v["status"] != "descartado"
+                             and antigo(data_live.get(v["stem"])), axis=1).astype(bool)
+        escondidos += int(velho.sum())
+        videos = videos[~velho]
+    return videos, blocos, escondidos
+
+
 def kanban(videos: pd.DataFrame, blocos: pd.DataFrame) -> None:
+    dias = st.segmented_control("Período", PERIODOS, default=PERIODO_PADRAO, key="kanban_periodo",
+                                format_func=lambda d: f"{d} dias" if d else "tudo")
+    com_blocos = set(blocos["stem"]) if not blocos.empty else set()   # antes de filtrar
+    videos, blocos, escondidos = recorte_kanban(videos, blocos, PERIODO_PADRAO if dias is None else dias,
+                                                pd.Timestamp.now().strftime("%Y-%m-%d"))
+    if escondidos:
+        st.caption(f"{escondidos} item(ns) publicado(s)/descartado(s) mais antigo(s) que o período "
+                   "escondido(s). Pendências (quarentena, pronto, agendado) aparecem sempre.")
     cols = st.columns(len(COLUNAS))
-    com_blocos = set(blocos["stem"]) if not blocos.empty else set()
     for col, (nome, dono, status) in zip(cols, COLUNAS):
         with col:
             if status is None:
