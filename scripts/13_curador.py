@@ -207,7 +207,8 @@ def carregar_config() -> dict:
 
 
 def ler_estado() -> dict:
-    """{video_id: {decisao: escolhido|recusado|fila, motivo, titulo, canal, ...}}"""
+    """{video_id: {decisao: escolhido|recusado|fila|falhou|sem_politica, motivo, titulo, canal, ...}}
+    sem_politica = parou no portão de política (_politica, antes do 03): não volta pra fila."""
     try:
         return json.loads(ESTADO.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -734,11 +735,16 @@ ROTULOS = {"01_baixar.py": "baixando", "pipeline.py": "pipeline", "11_revisor.py
            "10_shorts.py": "Shorts", "07b_colagem.py": "thumb colagem", "09_upload.py": "agendando"}
 
 
+ULTIMO_CODIGO = 0   # exit do último rodar(): o processar() distingue o portão (4) de falha
+
+
 def rodar(script: str, *args: str) -> bool:
+    global ULTIMO_CODIGO
     marcar_etapa(ROTULOS.get(script, script))
     print(f"\n>> {script} {' '.join(args)}", flush=True)
-    return subprocess.run([sys.executable, str(SCRIPTS / script), *args],
-                          cwd=ROOT).returncode == 0
+    ULTIMO_CODIGO = subprocess.run([sys.executable, str(SCRIPTS / script), *args],
+                                   cwd=ROOT).returncode
+    return ULTIMO_CODIGO == 0
 
 
 def ja_baixado(stem: str) -> bool:
@@ -810,7 +816,9 @@ def processar(item: dict) -> dict:
                 res["avisos"].append(f"{stem}: thumb colagem falhou, ficou o template atual")
         inicio = datetime.now().isoformat(timespec="seconds")
         if not rodar(script, *args):
-            if script == "pipeline.py" and (motivo := sem_politica(stem)) is not None:
+            # só o exit 4 do pipeline é o portão: politica.json velho não mascara outra falha
+            if script == "pipeline.py" and ULTIMO_CODIGO == _politica.EXIT_SEM_POLITICA \
+                    and (motivo := sem_politica(stem)) is not None:
                 res["sem_politica"] = motivo
                 evento(stem, "curador_pipeline", "ok", agente="curador",
                        mensagem=f"descartada no portão de política: {motivo}")

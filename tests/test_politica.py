@@ -191,10 +191,20 @@ def pasta_curador(raiz, monkeypatch):
     return pasta
 
 
+def _rodar_falso(monkeypatch, codigo_pipeline, chamadas=None):
+    """rodar() do Curador falso: o pipeline sai com `codigo_pipeline`, o resto com 0."""
+    def rodar(s, *a):
+        if chamadas is not None:
+            chamadas.append(s)
+        cu.ULTIMO_CODIGO = codigo_pipeline if s == "pipeline.py" else 0
+        return cu.ULTIMO_CODIGO == 0
+    monkeypatch.setattr(cu, "rodar", rodar)
+
+
 def test_curador_portao_reprovou_nao_e_falha(pasta_curador, monkeypatch, banco):
     _politica.marcar_sem_politica(pasta_curador, "papo de futebol")
     chamadas = []
-    monkeypatch.setattr(cu, "rodar", lambda s, *a: chamadas.append(s) or s != "pipeline.py")
+    _rodar_falso(monkeypatch, 4, chamadas)
     res = cu.processar({**_item("a"), "stem": "renan_x"})
     assert chamadas == ["01_baixar.py", "pipeline.py"]     # revisor nao roda
     assert "erro" not in res and res["sem_politica"] == "papo de futebol" and not res["ok"]
@@ -202,8 +212,16 @@ def test_curador_portao_reprovou_nao_e_falha(pasta_curador, monkeypatch, banco):
     assert banco("SELECT 1 FROM eventos WHERE etapa='curador_pipeline' AND status='ok'")
 
 
+def test_curador_politica_json_velho_nao_mascara_outra_falha(pasta_curador, monkeypatch, banco):
+    # reprovado numa rodada antiga, mas agora o pipeline falhou por outro motivo (exit 1)
+    _politica.marcar_sem_politica(pasta_curador, "papo de futebol")
+    _rodar_falso(monkeypatch, 1)
+    res = cu.processar({**_item("a"), "stem": "renan_x"})
+    assert "sem_politica" not in res and "pipeline.py falhou" in res["erro"]
+
+
 def test_curador_pipeline_falhou_sem_politica_json_continua_falha(pasta_curador, monkeypatch, banco):
-    monkeypatch.setattr(cu, "rodar", lambda s, *a: s != "pipeline.py")
+    _rodar_falso(monkeypatch, 4)
     res = cu.processar({**_item("a"), "stem": "renan_x"})
     assert "sem_politica" not in res and "pipeline.py falhou" in res["erro"]
     assert banco("SELECT 1 FROM eventos WHERE agente='curador' AND status='falha'")
@@ -212,14 +230,14 @@ def test_curador_pipeline_falhou_sem_politica_json_continua_falha(pasta_curador,
 def test_curador_pipeline_falhou_com_portao_aprovado_continua_falha(pasta_curador, monkeypatch, banco):
     (pasta_curador / "politica.json").write_text(
         json.dumps({"passa": True, "temas": [], "minutos": 9, "motivo": "ok"}), encoding="utf-8")
-    monkeypatch.setattr(cu, "rodar", lambda s, *a: s != "pipeline.py")
+    _rodar_falso(monkeypatch, 4)
     res = cu.processar({**_item("a"), "stem": "renan_x"})
     assert "sem_politica" not in res and "erro" in res
 
 
 def test_curador_processar_escolhido_expira_a_sugestao(pasta_curador, monkeypatch, banco):
     _politica.marcar_sem_politica(pasta_curador, "papo de futebol")
-    monkeypatch.setattr(cu, "rodar", lambda s, *a: s != "pipeline.py")
+    _rodar_falso(monkeypatch, 4)
     cu.gravar_sugestao("a", titulo="Live Alfa", canal="Renan Santos", url="https://x/a",
                        data="2026-11-21", prioridade=5, motivo="m")
     e = {"titulo": "Live Alfa", "canal": "Renan Santos", "url": "https://x/a", "prefixo": "renan",

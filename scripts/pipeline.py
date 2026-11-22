@@ -127,8 +127,9 @@ for num, script, sargs in steps:
         # não é falha: a live não tem a política que o canal corta (o 03 explicou no terminal)
         evento(stem, etapa, "ok", mensagem="parado no portão: live sem política",
                duracao_s=time.time() - t_step)
-        print(f"\n[x] Pipeline parado no step 3: live sem política (nada pago depois). "
-              f"Pra cortar mesmo assim: pipeline.py {alvo} --sem-portao")
+        print(f"\n[x] Pipeline parado no step 3: live sem política (motivo acima; nada pago "
+              f"depois). Se foi o portão e você quer cortar mesmo assim: "
+              f"pipeline.py {alvo} --sem-portao")
         sys.exit(EXIT_SEM_POLITICA)
     if codigo != 0:
         evento(stem, etapa, "falha", mensagem=f"exit {codigo}" + (f": {erro}" if erro else ""),
