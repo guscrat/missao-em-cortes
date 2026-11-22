@@ -215,8 +215,8 @@ def kanban(videos: pd.DataFrame, blocos: pd.DataFrame) -> None:
     videos, blocos, escondidos = recorte_kanban(videos, blocos, PERIODO_PADRAO if dias is None else dias,
                                                 pd.Timestamp.now().strftime("%Y-%m-%d"))
     if escondidos:
-        st.caption(f"{escondidos} item(ns) publicado(s)/descartado(s) mais antigo(s) que o período "
-                   "escondido(s). Pendências (quarentena, pronto, agendado) aparecem sempre.")
+        st.caption(f"{escondidos} item(ns) antigo(s) escondido(s) (publicado, descartado ou "
+                   "vídeo sem corte). Pendências (quarentena, pronto, agendado) aparecem sempre.")
     cols = st.columns(len(COLUNAS))
     for col, (nome, dono, status) in zip(cols, COLUNAS):
         with col:
