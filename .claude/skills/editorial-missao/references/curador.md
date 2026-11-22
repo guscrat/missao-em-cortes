@@ -26,9 +26,9 @@ Os novos vão numa **única** chamada pro Claude (`claude-opus-5-5`, effort low,
 
 ## 2b. Já cortado pelos canais de corte grandes? (31/10/2026)
 
-O espaço do canal está no que os canais de corte grandes do ecossistema **não** cortam: convidados menores, entrevistas em outros canais, podcasts. Duas peças:
+O espaço do canal está no que os canais de corte grandes do ecossistema **não** cortam: entrevistas e participações em outros canais **sobre política**. Duas peças:
 
-- **Prompt do Claude** (`SISTEMA`): entrevista, podcast, participação em outro canal ou convidado menos conhecido tem prioridade maior que a live principal do mesmo dia.
+- **Prompt do Claude** (`SISTEMA`): o **assunto** decide, não o formato (22/11/2026). O prompt traz a régua `_politica.CRITERIO`; podcast de variedades ou convidado fora da política não vale, mesmo com o Arthur ou o Renan apresentando (caso real: o podcast com o Fernando Gil custou US$ 3,48 e só rendeu Flamengo e swing). Entrevista ou participação em outro canal sobre política continua valendo.
 - **Checagem no código** ($0, `cortes_publicados` + `marcar_cortados`): `config/canais.json` → `canais_corte` (`[{nome, url}]`, os canais de corte grandes) e `cortes_por_canal` (padrão 30). A cada rodada, depois da avaliação, o Curador lista os `cortes_por_canal` vídeos mais recentes de cada um **com o yt-dlp** (aba videos, flat) e lê a descrição de cada corte novo (1 vez só, cache em `state/cortes_terceiros.json`) atrás de links de vídeo do YouTube. Live da fila citada na descrição de um corte = já cortada.
   - **Nunca pela API do YouTube**: os projetos Google (publisher e analytics) declaram que não acessam dados de outros canais (skill `youtube-compliance`). Só yt-dlp, como a leitura dos canais monitorados.
   - Já cortada → `cortado_por` = "Canal X (2), Canal Y (1)" (no `curadoria.json`, na sugestão do banco e no painel: "já cortado por …"; conferido e ninguém cortou = "ninguém cortou ainda") e a prioridade cai `PENALIDADE_CORTADO` (3, mín. 1) a partir da do Claude (`prioridade_llm`). Refeito pra **fila inteira** a cada rodada (o corte costuma sair 1-2 dias depois da live); se o corte some da listagem, a prioridade volta.

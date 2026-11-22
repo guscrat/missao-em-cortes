@@ -32,9 +32,11 @@ e responde 4 checagens em JSON estruturado:
   7. capitulos_errados: capítulos da descrição ("MM:SS Título") cujo título não bate com o
      trecho dele (a transcrição vai com marcas [CAPÍTULO ...]) → saem sozinhos do descricoes.txt
      e do blocos.json ($0); sem o de 00:00 ou com menos de 3, a seção inteira sai
+  8. fora_de_pauta: o assunto central não é a política que o canal corta (_politica.CRITERIO,
+     a régua do Gu de 22/11/2026: futebol, relacionamento, teoria...) → "descartado"
 
 Quem decide é o código, não o modelo (regra de produto da quarentena):
-  - problema de CONTEÚDO (3, 4 ou 6) → "descartado" com o motivo; não sobe, não chama ninguém
+  - problema de CONTEÚDO (3, 4, 6 ou 8) → "descartado" com o motivo; não sobe, não chama ninguém
   - título reprovado → o EDITOR (_editor.py) reescreve título + texto da thumb, refaz a
     thumb/Short e o revisor reavalia; no máx. 2 reescritas. Reprovou nas 2 → "quarentena"
     e vira decisão do Gu (faixa amarela na tarefa do MISSAO_TAREFA, se houver)
@@ -73,6 +75,7 @@ from datetime import date
 from pathlib import Path
 
 import _atualidade
+import _politica
 import _capitulos
 import _colagem
 import _custo
@@ -111,10 +114,13 @@ SCHEMA = {
         "datado_problema": {"type": "string"},
         "momentos_fora": {"type": "array", "items": {"type": "string"}},
         "capitulos_errados": {"type": "array", "items": {"type": "string"}},
+        "fora_de_pauta": {"type": "boolean"},
+        "pauta_problema": {"type": "string"},
     },
     "required": ["titulo_fiel", "titulo_problema", "thumb_ok", "thumb_problema",
                  "thumb_texto_incoerente", "tela_compartilhada", "tela_problema", "corte_sem_sentido", "sentido_problema",
-                 "datado", "datado_problema", "momentos_fora", "capitulos_errados"],
+                 "datado", "datado_problema", "momentos_fora", "capitulos_errados",
+                 "fora_de_pauta", "pauta_problema"],
     "additionalProperties": False,
 }
 
@@ -204,7 +210,11 @@ ok). Liste, copiando o item EXATAMENTE como veio, cada um que não está: fala d
 da live, inventada ou distorcida. Lista vazia [] quando todos estão (ou não há itens).
 6. datado: """ + _atualidade.CRITERIO + """ Use as datas da mensagem (DATA DA LIVE e HOJE; o \
 corte vai ao ar nos próximos dias). true → diga em datado_problema do que o trecho depende.
-7. capitulos_errados: se a transcrição traz marcas [CAPÍTULO MM:SS: título], cada título tem \nque descrever o que é dito no trecho dele (da marca até a próxima). Liste, copiando o título \nEXATAMENTE como veio na marca, cada um que fala de outra coisa, promete o que o trecho não \nentrega ou destaca palavrão/termo ofensivo. Rótulo genérico mas correto é ok. Lista vazia [] \nquando todos batem (ou não há marcas)."""
+7. capitulos_errados: se a transcrição traz marcas [CAPÍTULO MM:SS: título], cada título tem \nque descrever o que é dito no trecho dele (da marca até a próxima). Liste, copiando o título \nEXATAMENTE como veio na marca, cada um que fala de outra coisa, promete o que o trecho não \nentrega ou destaca palavrão/termo ofensivo. Rótulo genérico mas correto é ok. Lista vazia [] \nquando todos batem (ou não há marcas).
+8. fora_de_pauta: """ + _politica.CRITERIO + """ O assunto CENTRAL do trecho está fora disso? \
+Isso é true (ex.: futebol, relacionamento, história de vida do convidado, teoria sobre o \
+comunismo). Comentário político de passagem num trecho sobre outra coisa não salva: true. \
+true → diga em pauta_problema qual é o assunto."""
 
 
 def ler_imagem_b64(path: Path, largura: int = LARGURA_IMG) -> str:
@@ -328,6 +338,8 @@ def decidir(checagens: dict | None) -> tuple[str, str | None]:
         conteudo.append(f"corte sem sentido: {checagens.get('sentido_problema') or 'não se sustenta sozinho'}")
     if checagens.get("datado"):
         conteudo.append(f"datado: {checagens.get('datado_problema') or 'depende de algo já resolvido'}")
+    if checagens.get("fora_de_pauta"):
+        conteudo.append(f"fora de pauta: {checagens.get('pauta_problema') or 'assunto não é política'}")
     if conteudo:
         return "descartado", "; ".join(conteudo)
     problemas = []

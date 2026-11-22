@@ -1,6 +1,11 @@
 """Lê a transcrição, manda pro Claude e gera JSON com blocos temáticos.
 
-Uso: uv run py scripts/03_segmentar.py <stem> [--refazer | --reaproveitar]
+Uso: uv run py scripts/03_segmentar.py <stem> [--refazer | --reaproveitar] [--sem-portao]
+
+Portão de política (_politica.py, 22/11/2026): antes da segmentação paga, o Haiku lê a
+transcrição (~US$ 0,01) e diz se a live tem a política que o canal corta. Não tem → sai com
+_politica.EXIT_SEM_POLITICA sem gastar mais nada. --sem-portao pula (o Gu quer a live assim mesmo).
+Reaproveitar blocos já pagos não passa pelo portão.
 
 Os tempos do LLM não são confiáveis em live longa (na de 3h20 do Renan erraram ~10 min na
 segunda metade). Por isso cada ponta é ANCORADA PELO TEXTO: a frase literal que o LLM cita
@@ -28,6 +33,7 @@ import _atualidade
 import _capitulos
 import _custo
 import _fronteira as fr
+import _politica
 from _paths import achar_pasta, stem_de
 from _eventos import evento, upsert_bloco
 
@@ -41,6 +47,7 @@ DESVIO_AVISO_S = 60   # âncora longe disso do tempo do LLM: avisa (o LLM errou 
 args = [a for a in sys.argv[1:] if not a.startswith("--")]
 reaproveitar = "--reaproveitar" in sys.argv[1:]
 refazer = "--refazer" in sys.argv[1:]
+sem_portao = "--sem-portao" in sys.argv[1:]
 input_arg = args[0] if args else "live_teste"
 PASTA = achar_pasta(input_arg)
 stem = stem_de(PASTA)
@@ -272,6 +279,16 @@ if acao == "reaproveitar":
     if avisar:
         print(f"[aviso] {motivo}")
 else:
+    if not sem_portao:
+        print("Portão de política (antes da segmentação paga)...")
+        veredito = _politica.checar(stem, PASTA)
+        if not veredito["passa"]:
+            print(f"[x] Live sem a política que o canal corta: {veredito['motivo']}\n"
+                  f"    Nada foi segmentado. Pra cortar mesmo assim: "
+                  f"03_segmentar.py {stem} --sem-portao")
+            sys.exit(_politica.EXIT_SEM_POLITICA)
+        print(f"  passou: {', '.join(veredito['temas']) or veredito['motivo']} "
+              f"(~{veredito['minutos']} min de política)")
     print(f"Segmentando com a API ({motivo})")
     # cache de 1 h só quando outra rodada paga na mesma hora é provável (--refazer, retomada)
     data = chamar_llm(cache_1h=refazer or BRUTA_PARCIAL.exists())
@@ -279,6 +296,11 @@ data.pop("_assinatura", None)   # não vai pro blocos.json
 
 # Validação mínima
 assert "blocos" in data, "Resposta sem chave 'blocos'"
+if not data["blocos"]:
+    # a régua do canal manda devolver zero blocos quando não há política: para limpo
+    _politica.marcar_sem_politica(PASTA, "a segmentação não achou nenhum trecho político")
+    print("[x] Nenhum bloco político na live — nada a cortar.")
+    sys.exit(_politica.EXIT_SEM_POLITICA)
 print(f"\nOK {len(data['blocos'])} blocos identificados:\n")
 
 for b in data["blocos"]:

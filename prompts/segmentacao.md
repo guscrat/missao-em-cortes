@@ -50,6 +50,7 @@ Identifique os blocos temáticos CONTÍNUOS da live (não compilação de trecho
 
 ## REGRAS RÍGIDAS
 
+- **Só política (a régua do canal)**: o canal corta SÓ a confusão do mundo político brasileiro, que é o que dá visualização — brigas e rachas entre políticos e partidos, problemas internos de partido, escândalos, crimes e corrupção de políticos, prisões e solturas ("Daniel Vorcaro vai ser solto?"), investigações, votações polêmicas, eleição e candidatos, crise do governo e previsões concretas de crise ("Lula terá colapso fiscal em 2027?"). NÃO crie bloco com trecho fora disso, mesmo que encoste em política: teoria e ideologia abstrata (o que é o comunismo), história, economia de livro, comportamento e costumes, vida pessoal, relacionamento, futebol, religião, entretenimento, humor, histórias de vida do convidado. Pule esses trechos e cite em `observacoes`. Se a live inteira não tem esse tipo de assunto, retorne `"blocos": []` — zero blocos é a resposta certa, não "o melhor que deu".
 - NÃO incluir bate-papo introdutório ("e aí galera, bem-vindos", agradecimento a viewers).
 - NÃO incluir despedidas, "vamos pro próximo tema", encerramento da live.
 - NÃO criar bloco de leitura de superchat, chat ou perguntas da audiência que pula de assunto em assunto (moto, investimento, IA, comida...) sem fio condutor: isso não é um assunto, é uma sequência de respostas soltas. Pule esse trecho. Exceção: uma pergunta do chat que puxa um raciocínio longo sobre UM assunto e fecha sozinho vira bloco normal, começando na leitura da pergunta.
@@ -57,7 +58,7 @@ Identifique os blocos temáticos CONTÍNUOS da live (não compilação de trecho
 - **Atualidade**: trecho cujo valor depende de algo que JÁ SE RESOLVEU (ou que terá se resolvido quando o corte for ao ar, nos próximos dias) — previsão ou aposta sobre resultado já conhecido (eleição, votação, julgamento), debate de uma eleição já encerrada, apuração ou cobertura ao vivo de resultado, pesquisa de intenção de voto superada pelo resultado — NÃO vira bloco: pule e cite em `observacoes`. Use a DATA DA LIVE e HOJE da mensagem e o que a própria live diz. Se mesmo assim criar um bloco cujo valor envelhece rápido, dê `score_potencial` baixo (no máximo 3). NÃO é datado: opinião, análise ou crítica que continua valendo depois do resultado (balanço de uma derrota, lição tirada dela, tese sobre um político), mesmo que cite a eleição. Na dúvida, não é datado.
 - NÃO cortar no meio de exemplo, história, dado ou raciocínio. Fechar o raciocínio é mais importante que qualquer duração — só não estique pra encaixar assunto novo.
 - NÃO sobrepor blocos (as partes 1 e 2 de um assunto são contíguas e não se sobrepõem).
-- Se a live não tem material de qualidade, retorne só os blocos que existem (1 bloco vale).
+- Se a live não tem material de qualidade, retorne só os blocos que existem (1 bloco vale; nenhum também vale).
 - NÃO inventar timestamps — use estritamente os da transcrição de input.
 
 ## OUTPUT
