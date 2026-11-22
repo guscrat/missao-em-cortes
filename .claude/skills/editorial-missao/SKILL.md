@@ -5,6 +5,18 @@ description: Linha editorial do canal Missão em Cortes (cortes do Partido Miss�
 
 # Editorial — Missão em Cortes
 
+## Regra nº 0: só política, e o filtro vem antes do custo (22/11/2026)
+
+O canal corta **só a confusão do mundo político brasileiro**, que é o que dá view: brigas e rachas entre políticos e partidos, problemas de partido, escândalos, crimes, prisões e solturas ("Daniel Vorcaro vai ser solto?"), investigações, votações polêmicas, eleição, crise do governo e previsões concretas de crise ("Lula terá colapso fiscal em 2027?"). **Não conta**, mesmo encostando em política: teoria e ideologia abstrata ("o comunismo jamais existiu"), história, economia de livro, comportamento, vida pessoal, relacionamento, futebol, religião, entretenimento. **Live sem esses temas não gera corte nenhum.**
+
+Texto único da régua: `_politica.CRITERIO`. Ela entra em quatro lugares, do mais barato pro mais caro:
+1. **Curador (13)**: o prompt traz a régua; o assunto decide, não o formato (podcast de variedades não vale).
+2. **Portão (`_politica.checar`, começo do 03, antes da segmentação paga)**: o Haiku 5.5 lê a transcrição compactada por minuto (~50K tokens, **~US$ 0,005** por live de 2-3h) e decide se há 3+ min seguidos desse tipo de tema. Não passou → o 03 sai com `EXIT_SEM_POLITICA` (4), o `pipeline.py` para **sem falha**, o Curador marca a sugestão `expirada` ("descartada no portão: …"). Veredito em `<pasta>/politica.json` (hash da transcrição + critério: não paga de novo). Reaproveitar blocos já pagos não passa pelo portão. Furar: `pipeline.py <stem> --sem-portao`.
+3. **03**: regra rígida "Só política" no `prompts/segmentacao.md`; zero blocos é resposta válida (o 03 também para com `EXIT_SEM_POLITICA`).
+4. **Revisor (11)**: checagem `fora_de_pauta` → `descartado`.
+
+Caso real: o podcast do Arthur do Val com o Fernando Gil (162 min) custou US$ 3,48 e virou cortes sobre Flamengo, swing, traição e "prima da namorada".
+
 O canal pega lives/entrevistas longas das figuras do Partido Missão (legenda 14) — Renan Santos, Kim Kataguiri, Arthur do Val, Guto Zacarias, Amanda Vettorazzo — e gera vários cortes de **3 a 30 min** (a duração é a do assunto, sem alvo), cada um sobre **um único assunto**, mais um Short por bloco. Tudo o que é texto público (título, thumb, descrição) segue as regras abaixo, e os agentes (revisor, editor, Curador) existem pra aplicá-las sem o Gu precisar olhar cada vídeo.
 
 ## Regra nº 1: coerência acima da duração (26/10/2026, alta prioridade)
@@ -92,6 +104,6 @@ Quem decide é o **código**, a partir das checagens do revisor:
 - `references/revisor-editor.md` — step 11 completo (entrada, checagens, loop do editor, colagem aplicada, custos, flags).
 - `references/segmentacao-descricao.md` — prompt de segmentação (03) e gerador de descrições (08).
 - `references/grafias.md` — grafias oficiais: onde entram e como acrescentar personagem.
-- `references/curador.md` — agente Curador (13): fila, estoque, processamento, falhas, agendamento no Windows, **"já cortado" pelos canais de corte grandes** (prioridade pro que eles não cortaram: convidados menores, entrevistas em outros canais, podcasts).
+- `references/curador.md` — agente Curador (13): fila, estoque, processamento, falhas, agendamento no Windows, **"já cortado" pelos canais de corte grandes** (prioridade pro que eles não cortaram: entrevistas e participações em outros canais sobre política).
 
 Ao mexer em qualquer prompt de LLM: logue custo estimado e registre evento com o `agente` certo (skill `painel-eventos`).

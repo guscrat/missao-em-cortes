@@ -1,7 +1,7 @@
 """Roda o pipeline completo pra um stem: (02) -> 03 -> 04 -> (04b) -> (04c) -> 05 -> 06 -> 07 -> 08.
 
 Uso: uv run py scripts/pipeline.py <stem> [--polir] [--sem-llm] [--sem-legendas] [--desde=N]
-                                          [--refazer]
+                                          [--refazer] [--sem-portao]
 
   --polir     inclui o polimento (04b, ~$0.20 de API) e monta com --polido
   --sem-llm   com --polir: 04b só remove silêncios programáticos (custo $0,
@@ -13,6 +13,9 @@ Uso: uv run py scripts/pipeline.py <stem> [--polir] [--sem-llm] [--sem-legendas]
               depois de recalibrar o zoom, sem re-segmentar.
   --refazer   o 03 segmenta de novo pela API mesmo com a transcrição igual (pago). Sem ele,
               rodar de novo reaproveita os blocos já escolhidos ($0) e só reajusta os cortes.
+  --sem-portao  o 03 pula o portão de política (_politica.py): a live é cortada mesmo sem
+              a política que o canal corta. Sem ele, live que não passa para no step 3
+              (exit 4, sem falha no painel) e nada pago roda depois.
   --bloco=N   refaz SÓ esse bloco, só os steps que dependem dos tempos dele (4, 4b, 4c, 6).
               Usado pelo revisor (11) quando reajusta o ponto de corte. Card, thumb e
               descrição ficam como estão.
@@ -33,6 +36,7 @@ from pathlib import Path
 from _paths import stem_de
 from _eventos import evento
 from _rodar import rodar
+from _politica import EXIT_SEM_POLITICA
 
 ROOT = Path(__file__).parent.parent
 SCRIPTS = Path(__file__).parent
@@ -52,6 +56,7 @@ polir = "--polir" in flags
 sem_llm = "--sem-llm" in flags
 legendas = "--sem-legendas" not in flags   # padrão: ligada
 refazer = "--refazer" in flags
+sem_portao = "--sem-portao" in flags
 
 desde = None
 so_bloco = None
@@ -90,7 +95,8 @@ if desde <= 2 and not VIDEO.is_file():
 # (numero, script, args) — o 4b/4c/6 mudam conforme --polir/--sem-legendas
 steps = [
     (2.0, "02_transcribe.py", [str(VIDEO)]),
-    (3.0, "03_segmentar.py", [alvo] + (["--refazer"] if refazer else [])),
+    (3.0, "03_segmentar.py", [alvo] + (["--refazer"] if refazer else [])
+                             + (["--sem-portao"] if sem_portao else [])),
     (4.0, "04_cortar.py", [alvo]),
     *([(4.5, "04b_polir.py", [alvo] + (["--sem-llm"] if sem_llm else []))] if polir else []),
     *([(4.7, "04c_legendas.py", [alvo] + (["--polido"] if polir else []))] if legendas else []),
@@ -117,6 +123,14 @@ for num, script, sargs in steps:
     etapa = script.removesuffix(".py")
     evento(stem, etapa, "inicio")
     codigo, erro = rodar([sys.executable, str(SCRIPTS / script), *sargs])
+    if num == 3.0 and codigo == EXIT_SEM_POLITICA:
+        # não é falha: a live não tem a política que o canal corta (o 03 explicou no terminal)
+        evento(stem, etapa, "ok", mensagem="parado no portão: live sem política",
+               duracao_s=time.time() - t_step)
+        print(f"\n[x] Pipeline parado no step 3: live sem política (motivo acima; nada pago "
+              f"depois). Se foi o portão e você quer cortar mesmo assim: "
+              f"pipeline.py {alvo} --sem-portao")
+        sys.exit(EXIT_SEM_POLITICA)
     if codigo != 0:
         evento(stem, etapa, "falha", mensagem=f"exit {codigo}" + (f": {erro}" if erro else ""),
                duracao_s=time.time() - t_step)

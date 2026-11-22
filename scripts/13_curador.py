@@ -86,6 +86,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import _custo
+import _politica
 from _eventos import (evento, upsert_video, conectar, em_alta_atual, termos_semana,
                       gravar_sugestao, listar_sugestoes, pedir_sugestao)
 from _paths import auditoria_aprovada, curador_modo, modo_evento
@@ -156,20 +157,26 @@ SCHEMA = {
     "additionalProperties": False,
 }
 
-SISTEMA = """Você é o curador do canal "Missão em Cortes", que publica cortes de 3-30 min \
+SISTEMA = f"""Você é o curador do canal "Missão em Cortes", que publica cortes de 3-30 min \
 de lives, entrevistas e debates do Partido Missão (legenda 14, direita liberal, ligado ao \
 MBL): Renan Santos, Kim Kataguiri, Arthur do Val, Guto Zacarias e Amanda Vettorazzo.
 
 Você recebe vídeos novos dos canais monitorados e decide quais valem virar cortes.
 
+{_politica.CRITERIO}
+
+O ASSUNTO decide, não o formato: live, entrevista, podcast ou participação em outro canal só \
+valem se o título ou a descrição apontam esse tipo de tema político. Podcast de variedades, \
+bate-papo de comportamento ou convidado que não é da política (humorista, influenciador, \
+atleta) não vale, mesmo com o Arthur do Val ou o Renan Santos apresentando. Na dúvida, \
+vale = false: uma live errada custa US$ 2-3 de API e vira cortes que o público não quer.
+
 Vale (prioridade alta) quando:
-- uma dessas figuras fala bastante: análise política, eleição, escândalo, debate, \
-entrevista, podcast com convidado relevante
+- uma dessas figuras fala bastante sobre esse tipo de tema
 - o tema é quente agora (rende cliques nos próximos dias)
-- tem cara de render blocos de 3-30 min, cada um com um assunto que se sustenta sozinho
-- é entrevista, podcast, participação em outro canal ou traz convidado menos conhecido: os \
-canais de corte grandes costumam cortar só as lives principais, e é no que eles não cortam \
-que o nosso canal tem espaço (prioridade maior que a live principal do mesmo dia)
+- tem cara de render blocos de 3-30 min, cada um com um assunto político que se sustenta sozinho
+- é entrevista ou participação em outro canal SOBRE política: os canais de corte grandes \
+costumam cortar só as lives principais, e é no que eles não cortam que o nosso canal tem espaço
 
 Fonte de terceiros (canal marcado "terceiros", ex.: Flow, Inteligência Ltda): só vale se \
 alguém do grupo (Renan Santos, Arthur do Val, Kim Kataguiri, Guto Zacarias, Amanda Vettorazzo, \
@@ -177,7 +184,8 @@ MBL/Missão) é convidado ou participa de verdade do episódio; senão, vale = f
 
 Não vale quando:
 - jingle, paródia, trailer, aviso, corte já editado, compilação ou reprise
-- o assunto é fora de política (jogos, religião pessoal, entretenimento) ou a figura do \
+- o assunto é fora de política (jogos, religião pessoal, entretenimento, futebol, \
+relacionamento, história de vida do convidado), é teoria/ideologia abstrata, ou a figura do \
 partido quase não fala
 - é o mesmo conteúdo de outro vídeo da lista (fique com o mais completo)
 
@@ -199,7 +207,8 @@ def carregar_config() -> dict:
 
 
 def ler_estado() -> dict:
-    """{video_id: {decisao: escolhido|recusado|fila, motivo, titulo, canal, ...}}"""
+    """{video_id: {decisao: escolhido|recusado|fila|falhou|sem_politica, motivo, titulo, canal, ...}}
+    sem_politica = parou no portão de política (_politica, antes do 03): não volta pra fila."""
     try:
         return json.loads(ESTADO.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -726,11 +735,16 @@ ROTULOS = {"01_baixar.py": "baixando", "pipeline.py": "pipeline", "11_revisor.py
            "10_shorts.py": "Shorts", "07b_colagem.py": "thumb colagem", "09_upload.py": "agendando"}
 
 
+ULTIMO_CODIGO = 0   # exit do último rodar(): o processar() distingue o portão (4) de falha
+
+
 def rodar(script: str, *args: str) -> bool:
+    global ULTIMO_CODIGO
     marcar_etapa(ROTULOS.get(script, script))
     print(f"\n>> {script} {' '.join(args)}", flush=True)
-    return subprocess.run([sys.executable, str(SCRIPTS / script), *args],
-                          cwd=ROOT).returncode == 0
+    ULTIMO_CODIGO = subprocess.run([sys.executable, str(SCRIPTS / script), *args],
+                                   cwd=ROOT).returncode
+    return ULTIMO_CODIGO == 0
 
 
 def ja_baixado(stem: str) -> bool:
@@ -759,6 +773,18 @@ def causa_da_falha(stem: str, desde: str) -> str:
         return ""
     msg = re.sub(r"^exit -?\d+:?\s*", "", r["mensagem"] or "").removeprefix("[!] ").strip()
     return f"{r['etapa']}: {msg}" if msg else r["etapa"]
+
+
+def sem_politica(stem: str) -> str | None:
+    """Motivo do portão (_politica) se a live parou nele; None se passou ou não chegou lá."""
+    from _paths import achar_pasta
+    try:
+        veredito = _politica.ler(achar_pasta(stem))
+    except (SystemExit, Exception):  # noqa: BLE001 — sem pasta = não chegou no portão
+        return None
+    if veredito is None or veredito["passa"]:
+        return None
+    return veredito.get("motivo") or "live sem política"
 
 
 def processar(item: dict) -> dict:
@@ -790,6 +816,13 @@ def processar(item: dict) -> dict:
                 res["avisos"].append(f"{stem}: thumb colagem falhou, ficou o template atual")
         inicio = datetime.now().isoformat(timespec="seconds")
         if not rodar(script, *args):
+            # só o exit 4 do pipeline é o portão: politica.json velho não mascara outra falha
+            if script == "pipeline.py" and ULTIMO_CODIGO == _politica.EXIT_SEM_POLITICA \
+                    and (motivo := sem_politica(stem)) is not None:
+                res["sem_politica"] = motivo
+                evento(stem, "curador_pipeline", "ok", agente="curador",
+                       mensagem=f"descartada no portão de política: {motivo}")
+                return res
             causa = causa_da_falha(stem, inicio)
             res["erro"] = f"{script} falhou" + (f": {causa}" if causa else "")
             evento(stem, "curador_pipeline", "falha", agente="curador", mensagem=res["erro"])
@@ -1083,6 +1116,12 @@ def processar_escolhido(cfg: dict, estado: dict, vid: str, rodada: dict, porque:
         if "agendados" in res:
             msg += f", {res['agendados']} agendado(s) no YouTube"
         gravar_sugestao(vid, status="processada", mensagem=msg)
+        return res
+    if "sem_politica" in res:     # não é falha: sai da fila e do painel (custou só centavos)
+        e["decisao"] = "sem_politica"
+        gravar_estado(estado)
+        gravar_sugestao(vid, status="expirada",
+                        mensagem=f"descartada no portão: {res['sem_politica']}"[:300])
         return res
     if not (INPUTS / f"{item['stem']}.url").exists():
         # nem baixou: volta pra fila (sem nova chamada de LLM) até MAX_TENTATIVAS
