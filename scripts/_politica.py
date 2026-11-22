@@ -26,6 +26,10 @@ MODELO = "claude-haiku-5-5"
 ARQUIVO = "politica.json"
 EXIT_SEM_POLITICA = 4     # código de saída do 03 quando a live não passa no portão
 MAX_CHARS = 280_000       # ~70K tokens: fica abaixo da faixa cara do Haiku (100K)
+# O código também decide (o modelo é generoso: no podcast do Gil disse "passa" com 25 de 162
+# min). Passa só com o "passa" do modelo E minutos de política >= os dois limites. Chute.
+FRACAO_MIN = 0.4          # parte da live que precisa ser política
+MINUTOS_MIN = 15
 
 CRITERIO = """O canal corta SÓ a confusão do mundo político brasileiro, que é o que dá \
 visualização: brigas e rachas entre políticos e partidos, problemas internos de partido, \
@@ -44,12 +48,16 @@ e decide se ela tem material pro canal.
 
 {CRITERIO}
 
-passa = true só se a live tem PELO MENOS UM trecho de 3+ minutos seguidos sobre esse tipo de \
-tema, com a conversa realmente nele (não uma menção de passagem). Podcast de variedades em que \
-política é só um comentário solto: passa = false.
-temas: os assuntos políticos que renderiam corte (vazio se não passa), no máximo 8, cada um \
-em poucas palavras e concreto ("racha no PL sobre a candidatura do Flávio").
-minutos: estimativa de quantos minutos da live são sobre esse tipo de tema.
+Seja rígido: o dono do canal prefere perder uma live a pagar por cortes fora da régua.
+minutos: quantos minutos da live são sobre esse tipo de tema, com a conversa realmente nele \
+(não menção de passagem). NÃO conte história (eleição de 1989, ditadura, Collor), teoria \
+(comunismo, liberalismo), economia de livro ou histórica (hiperinflação, milagre econômico), \
+nem o convidado contando a vida dele, mesmo que cite políticos.
+passa = true só se a live é PREDOMINANTEMENTE sobre esse tipo de tema (uma live de análise \
+política, entrevista sobre política). Podcast de variedades, bate-papo ou entrevista de vida \
+com alguns trechos políticos: passa = false.
+temas: os assuntos que contam e renderiam corte, no máximo 8, cada um em poucas palavras e \
+concreto ("racha no PL sobre a candidatura do Flávio"); vazio se não há nenhum.
 motivo: uma frase curta em português que aparece no painel pro dono do canal."""
 
 SCHEMA = {
@@ -95,6 +103,29 @@ def compactar(transcricao: str, max_chars: int = MAX_CHARS) -> str:
     passo = len(texto) / max_chars                     # pega 1 a cada `passo` minutos
     escolhidas = [linhas[int(i * passo)] for i in range(int(len(linhas) / passo))]
     return "\n".join(escolhidas)[:max_chars]
+
+
+def duracao_min(transcricao: str) -> int:
+    """Último minuto com fala na transcrição (≈ duração da live)."""
+    ultimo = 0
+    for linha in transcricao.splitlines():
+        m = RE_LINHA.match(linha.strip())
+        if m:
+            ultimo = max(ultimo, int(m.group(1)) * 60 + int(m.group(2)))
+    return ultimo
+
+
+def decidir(dados: dict, duracao: int) -> dict:
+    """Veredito final: o "passa" do modelo E minutos de política acima dos dois limites."""
+    minutos = int(dados.get("minutos") or 0)
+    minimo = max(MINUTOS_MIN, round(FRACAO_MIN * duracao))
+    motivo = (dados.get("motivo") or "").strip()
+    passa = bool(dados.get("passa")) and minutos >= minimo
+    if dados.get("passa") and not passa:
+        motivo = (f"só ~{minutos} de {duracao} min são política (mínimo {minimo})"
+                  + (f": {motivo}" if motivo else ""))
+    return {"passa": passa, "temas": [str(t) for t in dados.get("temas") or []][:8],
+            "minutos": minutos, "duracao_min": duracao, "motivo": motivo}
 
 
 def _hash(texto: str) -> str:
@@ -148,11 +179,8 @@ def checar(stem: str, pasta: Path) -> dict:
         raise RuntimeError("o modelo recusou avaliar a política da live")
     bruto = next((b.text for b in resp.content if b.type == "text"), "{}")
     dados = json.loads(bruto)
-    veredito = {"passa": bool(dados.get("passa")),
-                "temas": [str(t) for t in dados.get("temas") or []][:8],
-                "minutos": int(dados.get("minutos") or 0),
-                "motivo": (dados.get("motivo") or "").strip(),
-                "_assinatura": sig}
+    veredito = decidir(dados, duracao_min(transcricao))
+    veredito["_assinatura"] = sig
     (pasta / ARQUIVO).write_text(json.dumps(veredito, ensure_ascii=False, indent=2),
                                  encoding="utf-8")
     return veredito
