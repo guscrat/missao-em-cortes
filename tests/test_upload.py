@@ -155,6 +155,7 @@ class FakeYouTube:
 @pytest.fixture
 def cenario(projeto, monkeypatch, tmp_path):
     """Vídeo com 3 blocos finalizados + descricoes.txt + YouTube falso."""
+    monkeypatch.setattr(up.time, "sleep", lambda s: None)   # backoff do retry: 62 s reais por falha 5xx
     pasta = projeto.video("v", blocos=[1, 2, 3], finalizados=[1, 2, 3], thumbs=["01_a", "02_c"])
     (pasta / "descricoes.txt").write_text(
         _txt_descricoes({i: {"titulo": f"Título {i}"} for i in (1, 2, 3)}), encoding="utf-8")
