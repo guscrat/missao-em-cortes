@@ -200,6 +200,8 @@ def rodada(raiz, monkeypatch):
     reg["aviso_placar"] = None
     monkeypatch.setattr(cu, "atualizar_placar",
                         lambda: reg["placar"].append(1) or reg["aviso_placar"])
+    # sem isso o 17_analytics chama a API real quando há token em secrets/ (travava local)
+    monkeypatch.setattr(cu, "coletar_analytics", lambda hoje: (None, []))
     monkeypatch.setattr(cu, "listar_canal", lambda canal, n: reg["listar"].get(canal["prefixo"], []))
     monkeypatch.setattr(cu, "detalhar", lambda item: item)
 
