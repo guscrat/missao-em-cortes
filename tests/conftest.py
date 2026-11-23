@@ -4,6 +4,7 @@ Regra: teste nunca toca o state/ nem o outputs/ reais, nunca baixa vídeo, nunca
 roda whisper/ffmpeg e nunca chama API paga (use mock).
 """
 import json
+import socket
 import sqlite3
 
 import pytest
@@ -12,6 +13,33 @@ import _custo
 import _eventos
 import _paths
 import sincronizar_estado
+
+_LOCAL = {"127.0.0.1", "::1", "localhost"}
+_connect_real = socket.socket.connect
+_connect_ex_real = socket.socket.connect_ex
+
+
+def _so_local(addr) -> None:
+    host = addr[0] if isinstance(addr, tuple) else addr
+    if host not in _LOCAL:
+        raise OSError(f"teste tentou sair pra rede ({addr}): use mock")
+
+
+@pytest.fixture(autouse=True)
+def _sem_rede(monkeypatch):
+    """Teste nunca sai pra rede. Na máquina com token em secrets/ o código chamava as APIs
+    do Google de verdade (o Curador travava a suíte no 17_analytics); no CI, sem token,
+    passava. Com a trava os dois ambientes se comportam igual."""
+    def connect(self, addr):
+        _so_local(addr)
+        return _connect_real(self, addr)
+
+    def connect_ex(self, addr):
+        _so_local(addr)
+        return _connect_ex_real(self, addr)
+
+    monkeypatch.setattr(socket.socket, "connect", connect)
+    monkeypatch.setattr(socket.socket, "connect_ex", connect_ex)
 
 
 @pytest.fixture(autouse=True)
